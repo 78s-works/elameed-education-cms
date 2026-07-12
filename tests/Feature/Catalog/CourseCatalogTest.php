@@ -5,9 +5,13 @@ namespace Tests\Feature\Catalog;
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Unit;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Media\Enums\MediaType;
+use App\Modules\Media\Models\MediaAsset;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Services\TenantContext;
@@ -59,6 +63,43 @@ class CourseCatalogTest extends TestCase
         return $course;
     }
 
+    public function test_lesson_has_many_assets_and_one_video(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        Sanctum::actingAs($this->makeTeacher($tenant));
+        $h = ['X-Tenant' => 'demo'];
+
+        $course = $this->makeCourse($tenant, ['visibility' => ContentVisibility::Visible->value]);
+        $unit = new Unit(['course_id' => $course->id, 'title' => 'U']);
+        $unit->tenant_id = $tenant->id;
+        $unit->save();
+        $lesson = new Lesson(['unit_id' => $unit->id, 'course_id' => $course->id, 'title' => 'L']);
+        $lesson->tenant_id = $tenant->id;
+        $lesson->save();
+
+        // The ONE video (also carries lesson_id, like the real upload flow).
+        $video = new MediaAsset(['lesson_id' => $lesson->id, 'type' => MediaType::HlsVideo->value, 'status' => 'ready', 'title' => 'vid']);
+        $video->tenant_id = $tenant->id;
+        $video->save();
+        $lesson->update(['video_asset_id' => $video->id]);
+
+        // Two of the MANY assets (attachments) via the API.
+        $this->withHeaders($h)->postJson("/api/v1/teacher/lessons/{$lesson->id}/attachments", ['type' => 'link', 'title' => 'Slides', 'url' => 'https://ex.com/s'])->assertStatus(201);
+
+        // Relations: attachments/assets exclude the video; video/videoAsset is the one video.
+        $this->assertSame(1, $lesson->attachments()->count());   // the link only — NOT the video
+        $this->assertSame(1, $lesson->assets()->count());
+        $this->assertSame($video->id, $lesson->videoAsset->id);
+        $this->assertSame($video->id, $lesson->video->id);
+
+        // API: the lesson exposes `video` (one) separately from `attachments` (many).
+        $row = $this->withHeaders($h)->getJson("/api/v1/teacher/units/{$unit->id}/lessons")->assertOk()->json('data.0');
+        $this->assertTrue($row['has_video']);
+        $this->assertSame('hls_video', $row['video']['type']);
+        $this->assertCount(1, $row['attachments']);
+        $this->assertNotContains('hls_video', array_column($row['attachments'], 'type'));
+    }
+
     public function test_teacher_can_create_course_and_build_structure(): void
     {
         $tenant = $this->makeTenant('demo');
@@ -87,6 +128,35 @@ class CourseCatalogTest extends TestCase
         ])->assertStatus(201)
             ->assertJsonPath('data.is_free_preview', true)
             ->assertJsonPath('data.course_id', $unit['course_id']);
+    }
+
+    public function test_course_descriptive_fields_persist_and_show_in_public_detail(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        Sanctum::actingAs($this->makeTeacher($tenant));
+        $h = ['X-Tenant' => 'demo'];
+
+        $slug = $this->withHeaders($h)->postJson('/api/v1/teacher/courses', [
+            'title' => 'Physics',
+            'subtitle' => 'Mechanics for beginners',
+            'visibility' => 'visible',
+            'learning_outcomes' => ['Understand forces', 'Solve motion problems'],
+            'requirements' => ['Basic algebra'],
+            'audience' => ['Grade 10 students'],
+            'parts' => [['title' => 'Kinematics', 'lessons_count' => 6, 'duration_min' => 90]],
+            'promo_video_url' => 'https://youtu.be/demo',
+        ])->assertStatus(201)
+            ->assertJsonPath('data.subtitle', 'Mechanics for beginners')
+            ->assertJsonPath('data.promo_video_url', 'https://youtu.be/demo')
+            ->json('data.slug');
+
+        // Public course detail exposes the rich marketing fields.
+        $this->withHeaders($h)->getJson("/api/v1/courses/{$slug}")
+            ->assertOk()
+            ->assertJsonPath('data.subtitle', 'Mechanics for beginners')
+            ->assertJsonPath('data.learning_outcomes.0', 'Understand forces')
+            ->assertJsonPath('data.parts.0.title', 'Kinematics')
+            ->assertJsonPath('data.promo_video_url', 'https://youtu.be/demo');
     }
 
     public function test_arabic_title_gets_usable_slug(): void

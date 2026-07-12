@@ -3,6 +3,7 @@
 namespace App\Modules\Catalog\Models;
 
 use App\Modules\Catalog\Enums\ContentVisibility;
+use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Models\MediaAsset;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Builder;
@@ -54,16 +55,31 @@ class Lesson extends Model
         return $this->belongsTo(Course::class);
     }
 
-    /** Attachments (pdf/file/link) linked to this lesson. */
+    /**
+     * The MANY assets of a lesson — its supporting materials (pdf/file/link).
+     * Excludes the video, which is the single `videoAsset` below.
+     */
     public function attachments(): HasMany
     {
-        return $this->hasMany(MediaAsset::class);
+        return $this->hasMany(MediaAsset::class)->where('type', '!=', MediaType::HlsVideo->value);
     }
 
-    /** The primary video asset, if transcoded (set by the Media step). */
+    /** Alias of attachments() — reads as "a lesson HAS MANY assets". */
+    public function assets(): HasMany
+    {
+        return $this->attachments();
+    }
+
+    /** The ONE video of a lesson (referenced by lessons.video_asset_id). */
     public function videoAsset(): BelongsTo
     {
         return $this->belongsTo(MediaAsset::class, 'video_asset_id');
+    }
+
+    /** Alias of videoAsset() — reads as "a lesson HAS ONE video". */
+    public function video(): BelongsTo
+    {
+        return $this->videoAsset();
     }
 
     public function scopePublished(Builder $query): Builder

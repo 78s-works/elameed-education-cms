@@ -33,7 +33,7 @@ class MediaUploadTest extends TestCase
     {
         parent::setUp();
         Cache::flush();
-        Storage::fake('public');
+        Storage::fake('local');   // media source lives on the PRIVATE disk now
         $this->tenant = Tenant::create(['slug' => 'demo', 'name' => 'Demo', 'status' => TenantStatus::Active]);
         $this->h = ['X-Tenant' => 'demo'];
         Sanctum::actingAs($this->teacher());
@@ -80,12 +80,13 @@ class MediaUploadTest extends TestCase
         $this->assertNotNull($res->json('data.media.uuid'));   // id is present (no "undefined")
         $this->assertNull($res->json('data.upload'));
 
-        // Stored on disk + linked as the lesson's video.
-        Storage::disk('public')->assertExists(MediaAsset::withoutGlobalScopes()->first()->source_key);
+        // Stored on the PRIVATE disk + linked as the lesson's video.
+        $asset = MediaAsset::withoutGlobalScopes()->first();
+        Storage::disk('local')->assertExists($asset->source_key);
         $this->assertNotNull($lesson->fresh()->video_asset_id);
     }
 
-    public function test_uploaded_video_has_a_playable_signed_url_that_streams_the_file(): void
+    public function test_uploaded_video_is_not_directly_downloadable(): void
     {
         $file = UploadedFile::fake()->create('lecture.mp4', 512, 'video/mp4');
 
@@ -93,18 +94,16 @@ class MediaUploadTest extends TestCase
             'file' => $file,
         ], ['Accept' => 'application/json'])->assertStatus(201);
 
-        $url = $res->json('data.media.url');
-        $this->assertNotNull($url);                                  // no longer null
-        $this->assertStringContainsString('/api/v1/media/file/', $url);
+        // No direct URL is exposed for a video — playback must go through the
+        // token-gated encrypted-HLS flow. The old raw-file route is gone.
+        $this->assertNull($res->json('data.media.url'));
+        $this->assertArrayNotHasKey('media.file', app('router')->getRoutes()->getRoutesByName());
 
-        // The signed URL streams the stored file with a video content-type (a plain
-        // <video> element can load it — the signature is in the query, no headers).
-        $stream = $this->get($url)->assertOk();
-        $this->assertStringContainsString('video', strtolower((string) $stream->headers->get('Content-Type')));
-
-        // Same path without the signature → rejected.
-        $uuid = $res->json('data.media.uuid');
-        $this->get("/api/v1/media/file/{$uuid}")->assertStatus(403);
+        // The source sits on the private disk, not the web-served public disk.
+        $asset = MediaAsset::withoutGlobalScopes()->first();
+        $this->assertStringStartsWith('media/source/', $asset->source_key);
+        Storage::disk('local')->assertExists($asset->source_key);
+        Storage::disk('public')->assertMissing($asset->source_key);
     }
 
     public function test_async_signed_upload_url_receives_raw_file_and_becomes_ready(): void
@@ -126,9 +125,9 @@ class MediaUploadTest extends TestCase
         $this->call('PUT', $uploadUrl, [], [], [], ['CONTENT_TYPE' => 'video/mp4', 'HTTP_ACCEPT' => 'application/json'], 'FAKE-MP4-BYTES')
             ->assertStatus(200)->assertJsonPath('data.status', MediaStatus::Ready->value);
 
-        // 3) Asset is ready, stored, and linked as the lesson's video.
+        // 3) Asset is ready, stored on the private disk, and linked as the lesson's video.
         $asset = MediaAsset::withoutGlobalScopes()->where('uuid', $uuid)->first();
-        Storage::disk('public')->assertExists($asset->source_key);
+        Storage::disk('local')->assertExists($asset->source_key);
         $this->assertSame($asset->id, $lesson->fresh()->video_asset_id);
 
         // 4) The follow-up complete call is idempotent (stays ready).

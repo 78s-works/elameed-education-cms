@@ -11,7 +11,9 @@ use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -127,21 +129,80 @@ class TeacherProfileTest extends TestCase
         $this->assertSame(['#BBBBBB'], TeacherProfile::query()->pluck('primary_color')->all());
     }
 
-    public function test_landing_update_and_context_reflects_visible_sections(): void
+    public function test_landing_authoring_saves_layout_and_typed_sections(): void
     {
         $tenant = $this->makeTenant('demo');
         Sanctum::actingAs($this->makeMember($tenant, TenantUserRole::Teacher));
 
         $this->withHeader('X-Tenant', 'demo')->putJson('/api/v1/teacher/landing', [
-            'landing_sections' => [
-                ['key' => 'courses', 'visible' => true],
-                ['key' => 'about', 'visible' => false],
+            'layout' => 'grid',
+            'sections' => [
+                ['key' => 'hero', 'type' => 'hero', 'visible' => true, 'order' => 1,
+                    'content' => ['eyebrow' => 'Hi', 'title_html' => 'Learn <span>fast</span>']],
+                ['key' => 'courses', 'type' => 'courses', 'visible' => true, 'order' => 2,
+                    'content' => ['title' => 'My courses'], 'config' => ['source' => 'all', 'limit' => 8]],
             ],
-        ])->assertOk();
+        ])->assertOk()
+            ->assertJsonPath('data.layout', 'grid')
+            ->assertJsonPath('data.sections.0.content.eyebrow', 'Hi')
+            ->assertJsonPath('data.sections.1.config.source', 'all');
 
-        // Public context returns only visible section keys, in order.
-        $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/tenant/context')
+        // GET authoring reflects the save (config on dynamic sections, no items).
+        $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/teacher/landing')
             ->assertOk()
-            ->assertJsonPath('data.branding.landing_sections', ['courses']);
+            ->assertJsonPath('data.layout', 'grid')
+            ->assertJsonPath('data.sections.1.config.limit', 8);
+    }
+
+    public function test_landing_rejects_unknown_type_bad_layout_and_bad_config(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        Sanctum::actingAs($this->makeMember($tenant, TenantUserRole::Teacher));
+        $h = ['X-Tenant' => 'demo'];
+
+        // Unknown section type.
+        $this->withHeaders($h)->putJson('/api/v1/teacher/landing', [
+            'sections' => [['key' => 'x', 'type' => 'bogus', 'visible' => true]],
+        ])->assertStatus(422);
+
+        // Invalid layout.
+        $this->withHeaders($h)->putJson('/api/v1/teacher/landing', [
+            'layout' => 'layout_9',
+            'sections' => [['key' => 'hero', 'type' => 'hero', 'visible' => true]],
+        ])->assertStatus(422);
+
+        // Dynamic config: bad source + out-of-range limit.
+        $this->withHeaders($h)->putJson('/api/v1/teacher/landing', [
+            'sections' => [['key' => 'courses', 'type' => 'courses', 'visible' => true,
+                'config' => ['source' => 'nope', 'limit' => 99]]],
+        ])->assertStatus(422);
+    }
+
+    public function test_hero_title_html_is_sanitized_to_span_only(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        Sanctum::actingAs($this->makeMember($tenant, TenantUserRole::Teacher));
+
+        $html = $this->withHeader('X-Tenant', 'demo')->putJson('/api/v1/teacher/landing', [
+            'sections' => [['key' => 'hero', 'type' => 'hero', 'visible' => true,
+                'content' => ['title_html' => 'Hi <span onclick="x()">there</span><script>alert(1)</script>']]],
+        ])->assertOk()->json('data.sections.0.content.title_html');
+
+        $this->assertStringNotContainsString('<script', $html);
+        $this->assertStringNotContainsString('onclick', $html);
+        $this->assertStringContainsString('<span>there</span>', $html);
+    }
+
+    public function test_landing_media_upload_returns_public_url(): void
+    {
+        Storage::fake('public');
+        $tenant = $this->makeTenant('demo');
+        Sanctum::actingAs($this->makeMember($tenant, TenantUserRole::Teacher));
+
+        $res = $this->withHeader('X-Tenant', 'demo')->post('/api/v1/teacher/landing/media', [
+            'file' => UploadedFile::fake()->image('logo.png', 200, 200),
+        ], ['Accept' => 'application/json'])->assertOk();
+
+        $this->assertNotNull($res->json('data.url'));
     }
 }

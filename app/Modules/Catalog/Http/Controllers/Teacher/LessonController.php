@@ -19,7 +19,7 @@ class LessonController
     public function index(Unit $unit): AnonymousResourceCollection
     {
         return LessonResource::collection(
-            $unit->lessons()->with('attachments')->orderBy('sort_order')->get()
+            $unit->lessons()->with(['videoAsset', 'attachments'])->orderBy('sort_order')->get()
         );
     }
 
@@ -29,7 +29,7 @@ class LessonController
             $request->validated() + ['course_id' => $unit->course_id]
         );
 
-        return (new LessonResource($lesson))->response()->setStatusCode(201);
+        return (new LessonResource($lesson->load(['videoAsset', 'attachments'])))->response()->setStatusCode(201);
     }
 
     public function update(LessonRequest $request, Unit $unit, Lesson $lesson): LessonResource
@@ -37,7 +37,7 @@ class LessonController
         $this->assertOwnership($unit, $lesson);
         $lesson->update($request->validated());
 
-        return new LessonResource($lesson);
+        return new LessonResource($lesson->load(['videoAsset', 'attachments']));
     }
 
     public function destroy(Unit $unit, Lesson $lesson): Response

@@ -1,0 +1,95 @@
+{
+  "data": {
+    "layout": "classic",
+    "nav": {
+      "links": [
+        { "label": "Why my academy", "target": "#features" },
+        { "label": "About Mr. Ahmed", "target": "#about" },
+        { "label": "Featured courses", "target": "#courses" },
+        { "label": "How it works", "target": "#how" },
+        { "label": "What students say", "target": "#testimonials" },
+        { "label": "Contact us", "target": "#contact" }
+      ]
+    },
+    "sections": [
+      {
+        "key": "hero", "type": "hero", "visible": true, "order": 1,
+        "content": {
+          "eyebrow": "Top-rated Physics teacher",
+          "title_html": "Master Physics with <span>Mr. Ahmed</span>",
+          "description": "Clear, exam-focused lessons for secondary students.",
+          "note": "New batch starts every month.",
+          "primary_cta": { "label": "Start now" },
+          "secondary_cta": { "label": "Browse courses" },
+          "teacher": {
+            "name": "Ahmed Hassan", "role": "Physics — Senior 3",
+            "image_url": "https://cdn.example.com/landing/1/teacher.jpg",
+            "card_stats": [
+              { "value": "12k+", "label": "Students" },
+              { "value": "4.9", "label": "Rating" }
+            ]
+          },
+          "chips": [
+            { "text": "Live support", "type": "green" },
+            { "text": "Limited seats", "type": "red" }
+          ]
+        }
+      },
+      { "key": "stats", "type": "stats", "visible": true, "order": 2,
+        "content": { "items": [
+          { "value": "12,000+", "label": "Students" },
+          { "value": "95%", "label": "Pass rate" },
+          { "value": "120", "label": "Lessons" }
+        ] } },
+      { "key": "features", "type": "features", "visible": true, "order": 3,
+        "content": { "title": "Why my academy", "subtitle": "Everything you need to excel",
+          "items": [
+            { "icon": "fa-video", "title": "HD lessons", "desc": "Encrypted, watermarked video." },
+            { "icon": "fa-file", "title": "Rich notes", "desc": "Downloadable PDFs per lesson." }
+          ] } },
+      { "key": "about", "type": "about", "visible": true, "order": 4,
+        "content": { "badge": "Since 2015", "title": "About Mr. Ahmed",
+          "body": "10 years teaching Physics with a track record of top results.",
+          "image_url": "https://cdn.example.com/landing/1/about.jpg",
+          "points": ["Exam-focused", "Weekly quizzes", "Parent reports"] } },
+      { "key": "courses", "type": "courses", "visible": true, "order": 5,
+        "content": { "title": "Featured courses", "subtitle": "Pick where to start" },
+        "items": [
+          { "id": 12, "uuid": "0192a…", "slug": "physics-mechanics", "title": "Mechanics",
+            "cover_url": "https://cdn.example.com/courses/12.jpg", "grade": "Senior 3", "type": "online",
+            "price": { "amount_minor": 30000, "currency": "EGP" }, "is_free": false,
+            "lessons_count": 8, "duration_label": "3h 20m", "rating": 4.8, "students_count": 210, "enrolled": false },
+          { "id": 15, "uuid": "0192b…", "slug": "physics-waves", "title": "Waves & Optics",
+            "cover_url": null, "grade": "Senior 3", "type": "center",
+            "price": { "amount_minor": 0, "currency": "EGP" }, "is_free": true,
+            "lessons_count": 5, "duration_label": "1h 45m", "rating": null, "students_count": 64, "enrolled": true }
+        ] },
+      { "key": "how", "type": "steps", "visible": true, "order": 6,
+        "content": { "title": "How it works", "subtitle": "Three simple steps",
+          "items": [
+            { "n": "1", "title": "Create account", "desc": "Sign up with your phone." },
+            { "n": "2", "title": "Enroll", "desc": "Pay by wallet or card." },
+            { "n": "3", "title": "Learn", "desc": "Watch anywhere, anytime." }
+          ] } },
+      { "key": "testimonials", "type": "testimonials", "visible": true, "order": 7,
+        "content": { "title": "What students say", "subtitle": "Real reviews" },
+        "items": [
+          { "id": 1, "student_name": "Mona A.", "course_title": "Mechanics", "rating": 5,
+            "comment": "Explained everything so clearly!", "created_at": "2026-06-02T10:00:00+00:00" },
+          { "id": 2, "student_name": "Youssef K.", "course_title": "Waves & Optics", "rating": 4,
+            "comment": "Great teacher, tough quizzes.", "created_at": "2026-05-28T14:30:00+00:00" }
+        ] },
+      { "key": "packages", "type": "packages", "visible": false, "order": 8,
+        "content": { "title": "Subscription packages", "subtitle": "Save more with a plan",
+          "items": [
+            { "id": 1, "name": "Monthly", "badge": null,
+              "price": { "amount_minor": 20000, "currency": "EGP" }, "period": "month",
+              "featured": false, "features": ["All courses", "Cancel anytime"] }
+          ] } },
+      { "key": "cta", "type": "cta", "visible": true, "order": 9,
+        "content": { "title": "Ready to start?", "subtitle": "Join today", "cta": { "label": "Subscribe now" } } },
+      { "key": "contact", "type": "contact", "visible": true, "order": 10,
+        "content": { "title": "Contact us", "subtitle": "We reply within a day" } }
+    ]
+  }
+}

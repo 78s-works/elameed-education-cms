@@ -11,6 +11,7 @@ use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Models\TenantDomain;
+use App\Modules\Tenancy\Support\LandingSchema;
 use Illuminate\Database\Seeder;
 
 /**
@@ -79,11 +80,8 @@ class TenantSeeder extends Seeder
                 'secondary_color' => '#9333EA',
                 'bio' => 'أكاديمية تجريبية', // "Demo academy"
                 'socials' => ['youtube' => 'https://youtube.com/@demo'],
-                'landing_sections' => [
-                    ['key' => 'courses', 'visible' => true],
-                    ['key' => 'about', 'visible' => true],
-                    ['key' => 'testimonials', 'visible' => false],
-                ],
+                'layout' => 'classic',
+                'landing_sections' => LandingSchema::defaults(),
             ]);
             $profile->tenant_id = $tenant->id;
             $profile->save();

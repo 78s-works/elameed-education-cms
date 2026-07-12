@@ -2,6 +2,7 @@
 
 namespace App\Modules\Tenancy\Models;
 
+use App\Modules\Tenancy\Support\LandingSchema;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 
@@ -22,8 +23,8 @@ class TeacherProfile extends Model
 {
     use BelongsToTenant;
 
-    /** Landing sections a teacher can show/hide/reorder (FR-M02-04). */
-    public const LANDING_SECTION_KEYS = ['courses', 'offers', 'about', 'testimonials'];
+    /** Landing sections a teacher can show/hide/reorder + author (FR-M02-04). */
+    public const LANDING_SECTION_KEYS = LandingSchema::TYPES;
 
     protected $fillable = [
         'logo_url',
@@ -34,7 +35,12 @@ class TeacherProfile extends Model
         'contact',
         'socials',
         'landing_sections',
+        'layout',
         'hide_ranking',
+    ];
+
+    protected $attributes = [
+        'layout' => 'classic',
     ];
 
     protected $casts = [

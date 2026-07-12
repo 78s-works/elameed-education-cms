@@ -1,0 +1,4961 @@
+{
+  "info": {
+    "name": "Elameed Education API (v1)",
+    "_postman_id": "00000000-0000-4000-8000-elameedapi01",
+    "description": "# Elameed Education API — v1\n\nMulti-tenant teaching-platform API (Laravel). Generated from `routes/api.php`.\n\n## Quick start\n1. Select this collection's variables (or import the matching **Environment**).\n2. Set `{{tenant}}` to a tenant slug — dev resolves the tenant from the `X-Tenant` header (non-production only). In prod the tenant comes from the host `<slug>.elameed.app`, so set `{{base_url}}` accordingly and the header is ignored.\n3. Run **04 · Auth → Login** (or **Verify OTP**). The token is auto-saved into `{{token}}`; all authenticated requests inherit it as a Bearer token.\n4. Fill in id/uuid path variables (e.g. `{{course_uuid}}`) as you go.\n\n## Conventions\n- Success envelope: `{ \"data\": ... }`. Error envelope: `{ \"error\": { \"code\", \"message\", \"details\" } }`.\n- `{{token}}` = student/teacher/parent token; `{{admin_token}}` = platform-admin token (folder 01, no tenant).\n- Request bodies are realistic examples derived from the FormRequest validation rules — trim optional fields as needed.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "00 · Platform (host-level: webhooks & media tokens)",
+      "item": [
+        {
+          "name": "Paymob payment webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/webhooks/paymob",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "webhooks",
+                "paymob"
+              ]
+            },
+            "description": "Gateway-defined, HMAC-verified server-side. Tenant is resolved from the referenced order, not the Host header. Throttled 120/min.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"TRANSACTION\",\n  \"obj\": {\n    \"id\": 123456789,\n    \"success\": true,\n    \"amount_cents\": 15000,\n    \"order\": {\n      \"id\": 987654321\n    },\n    \"hmac\": \"computed-hmac-signature\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get AES key (by token)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/media/key/{{media_token}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "media",
+                "key",
+                "{{media_token}}"
+              ]
+            },
+            "description": "Token-authenticated AES-128 key release for encrypted HLS. Re-checks access before releasing the key.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "HLS manifest (by token)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/media/stream/{{media_token}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "media",
+                "stream",
+                "{{media_token}}"
+              ]
+            },
+            "description": "Token carried in the URL because a <video>/hls.js request cannot send headers.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "HLS segment (by token)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/media/segment/{{media_token}}/{{segment}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "media",
+                "segment",
+                "{{media_token}}",
+                "{{segment}}"
+              ]
+            },
+            "description": "AES-128 encrypted .ts segment. Segment name must match seg_[0-9]+\\.ts.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Internal: media authz",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/internal/media/authz",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "internal",
+                "media",
+                "authz"
+              ]
+            },
+            "description": "Internal media-tier endpoint (edge/authz check).",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Internal: transcode callback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Transcode-Secret",
+                "value": "{{transcode_secret}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/internal/transcode/callback",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "internal",
+                "transcode",
+                "callback"
+              ]
+            },
+            "description": "Called by the transcode worker. Requires the X-Transcode-Secret header to match config(media.transcode_secret). status in ready|failed.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"media_uuid\": \"{{media_uuid}}\",\n  \"status\": \"ready\",\n  \"hls_path\": \"media/hls/{{media_uuid}}/index.m3u8\",\n  \"renditions\": [\n    {\n      \"height\": 720,\n      \"bandwidth\": 2500000,\n      \"dir\": \"720p\"\n    },\n    {\n      \"height\": 480,\n      \"bandwidth\": 1200000,\n      \"dir\": \"480p\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Signed upload receiver (dev)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/media/upload/{{upload_uuid}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "media",
+                "upload",
+                "{{upload_uuid}}"
+              ]
+            },
+            "description": "Local-dev upload receiver. The signature query params from the startUpload `upload_url` are the auth (add `?expires=...&signature=...`). Accepts multipart `file` or the raw body. Also matches PUT. Prod uses a real object-storage presigned target instead.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Not tenant-scoped and not bearer-authenticated. Payment webhooks, token-gated encrypted-HLS delivery, and internal media-tier callbacks. Auth is the URL token / request signature / shared secret, not a user session."
+    },
+    {
+      "name": "01 · Platform Admin (cross-tenant)",
+      "item": [
+        {
+          "name": "List tenants",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/tenants?page=1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "tenants"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create tenant",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/tenants",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "tenants"
+              ]
+            },
+            "description": "slug matches ^[a-z0-9-]+$ and is unique. status in active|suspended|under_review|expired. owner object optional.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Nile Academy\",\n  \"slug\": \"nile-academy\",\n  \"status\": \"active\",\n  \"owner\": {\n    \"name\": \"Ahmed Teacher\",\n    \"phone\": \"+201001234567\",\n    \"email\": \"owner@nile-academy.com\",\n    \"password\": \"Str0ngPass!\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Show tenant",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/tenants/{{tenant_uuid}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "tenants",
+                "{{tenant_uuid}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update tenant",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/tenants/{{tenant_uuid}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "tenants",
+                "{{tenant_uuid}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Nile Academy (Updated)\",\n  \"status\": \"suspended\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reports overview",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/reports/overview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "reports",
+                "overview"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Audit logs (admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/audit-logs?page=1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "audit-logs"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Requires a platform-admin bearer token ({{admin_token}}). NOT tenant-scoped — no X-Tenant header."
+    },
+    {
+      "name": "02 · Tenant Context & Landing",
+      "item": [
+        {
+          "name": "Tenant context & branding",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/tenant/context",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "tenant",
+                "context"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Public landing (resolved)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/tenant/landing",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "tenant",
+                "landing"
+              ]
+            },
+            "description": "Optional auth: send a bearer token to get the `enrolled` view.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Public, tenant-scoped. Resolve branding/context and the public landing page for the current tenant ({{tenant}})."
+    },
+    {
+      "name": "03 · Public Catalog",
+      "item": [
+        {
+          "name": "List published courses",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/courses?page=1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "courses"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Show course",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/courses/{{course_slug}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "courses",
+                "{{course_slug}}"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List course reviews",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/courses/{{course_slug}}/reviews?page=1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "courses",
+                "{{course_slug}}",
+                "reviews"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Public, tenant-scoped. Published courses of the current tenant."
+    },
+    {
+      "name": "04 · Auth & Identity",
+      "item": [
+        {
+          "name": "Register (student self-signup)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Returns requires_otp=true; then call OTP verify. Throttled.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Mohamed Ali Hassan Ibrahim\",\n  \"phone\": \"+201112223334\",\n  \"email\": \"student@example.com\",\n  \"password\": \"Passw0rd!\",\n  \"password_confirmation\": \"Passw0rd!\",\n  \"locale\": \"ar\",\n  \"gender\": \"male\",\n  \"governorate\": \"Cairo\",\n  \"region\": \"Nasr City\",\n  \"academic_year\": \"Grade 12\",\n  \"education_type\": \"general\",\n  \"guardian_phone\": \"+201009998887\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Request OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/otp/request",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "otp",
+                "request"
+              ]
+            },
+            "description": "purpose in register|login|reset.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"+201112223334\",\n  \"purpose\": \"register\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Verify OTP -> token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/otp/verify",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "otp",
+                "verify"
+              ]
+            },
+            "description": "purpose in register|login. On success, saves data.token to {{token}}.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"+201112223334\",\n  \"purpose\": \"register\",\n  \"code\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.data && res.data.token) {",
+                  "  pm.collectionVariables.set('token', res.data.token);",
+                  "  console.log('Saved bearer token to {{token}}');",
+                  "} else if (res && res.data && res.data.otp_required) {",
+                  "  console.log('OTP required — verify the code, then this saves the token.');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (password) -> token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "May return otp_required=true instead of a token. On success, saves data.token to {{token}}.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"+201112223334\",\n  \"password\": \"Passw0rd!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.data && res.data.token) {",
+                  "  pm.collectionVariables.set('token', res.data.token);",
+                  "  console.log('Saved bearer token to {{token}}');",
+                  "} else if (res && res.data && res.data.otp_required) {",
+                  "  console.log('OTP required — verify the code, then this saves the token.');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Forgot password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/password/forgot",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "password",
+                "forgot"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"+201112223334\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reset password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/password/reset",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"+201112223334\",\n  \"code\": \"123456\",\n  \"password\": \"NewPassw0rd!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Revokes the current access token (bearer required)."
+          },
+          "response": []
+        },
+        {
+          "name": "Me (current user)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "OTP/password auth (M11), tenant-scoped. verify/login responses include data.token — the Tests script here auto-saves it into the {{token}} collection variable."
+    },
+    {
+      "name": "05 · Account & Learning",
+      "item": [
+        {
+          "name": "Rate a course (upsert)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/courses/{{course_slug}}/reviews",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "courses",
+                "{{course_slug}}",
+                "reviews"
+              ]
+            },
+            "description": "rating 1-5 required; comment nullable (max 2000).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 5,\n  \"comment\": \"Excellent course, very clear explanations.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Redeem activation/recharge code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/codes/redeem",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "codes",
+                "redeem"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"ABC123XYZ789\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Wallet balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/wallet",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "wallet"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Wallet ledger",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/wallet/ledger?page=1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "wallet",
+                "ledger"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Checkout quote",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/checkout/quote",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "checkout",
+                "quote"
+              ]
+            },
+            "description": "items 1-50; each type in course|wallet_topup. Prices resolved server-side.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"type\": \"course\",\n      \"course\": \"{{course_uuid}}\"\n    },\n    {\n      \"type\": \"wallet_topup\",\n      \"amount_minor\": 5000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/checkout/order",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "checkout",
+                "order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"type\": \"course\",\n      \"course\": \"{{course_uuid}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Pay order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/checkout/pay",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "checkout",
+                "pay"
+              ]
+            },
+            "description": "method in wallet|paymob. Throttled.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order\": \"{{order_uuid}}\",\n  \"method\": \"wallet\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Authorize playback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/media/lessons/{{lesson_id}}/playback",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "media",
+                "lessons",
+                "{{lesson_id}}",
+                "playback"
+              ]
+            },
+            "description": "Body optional. Issues a short-lived playback token (manifest_url + key_url).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_fingerprint\": \"web-chrome-1a2b3c4d\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Save lesson progress",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/lessons/{{lesson_id}}/progress",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "lessons",
+                "{{lesson_id}}",
+                "progress"
+              ]
+            },
+            "description": "watch_percent 0-100 required.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"watch_percent\": 65,\n  \"watch_seconds\": 780,\n  \"last_position_sec\": 780\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "My activity",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/activity",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "activity"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Resume (continue watching)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/resume",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "resume"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List favorites",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/favorites",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "favorites"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Add favorite",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/favorites",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "favorites"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"course\": \"{{course_uuid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Remove favorite",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/favorites/{{course_uuid}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "favorites",
+                "{{course_uuid}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "My points",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/points",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "points"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "My badges",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/badges",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "badges"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Leaderboard",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/leaderboard",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "leaderboard"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List notifications",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "notifications"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark notification read",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/notifications/{{notification_id}}/read",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "notifications",
+                "{{notification_id}}",
+                "read"
+              ]
+            },
+            "description": "No body."
+          },
+          "response": []
+        },
+        {
+          "name": "List exams (student)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/exams",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "exams"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Start attempt",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/exams/{{exam_uuid}}/attempts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "exams",
+                "{{exam_uuid}}",
+                "attempts"
+              ]
+            },
+            "description": "No body. Returns questions without the answer key."
+          },
+          "response": []
+        },
+        {
+          "name": "Submit attempt",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/exams/{{exam_uuid}}/attempts/{{attempt_id}}/submit",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "exams",
+                "{{exam_uuid}}",
+                "attempts",
+                "{{attempt_id}}",
+                "submit"
+              ]
+            },
+            "description": "answers keyed by question_id; value shape varies by type.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answers\": {\n    \"101\": 1,\n    \"102\": true,\n    \"103\": \"My essay answer text.\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Attempt result",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/exams/{{exam_uuid}}/attempts/{{attempt_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "exams",
+                "{{exam_uuid}}",
+                "attempts",
+                "{{attempt_id}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "My courses (dashboard)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me/courses",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "courses"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Authenticated student surface (bearer + active membership). Wallet, checkout, playback, progress, favorites, gamification, notifications, exams."
+    },
+    {
+      "name": "06 · Parent Portal",
+      "item": [
+        {
+          "name": "My children",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/parent/children",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "parent",
+                "children"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Child progress",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/parent/children/{{student_uuid}}/progress",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "parent",
+                "children",
+                "{{student_uuid}}",
+                "progress"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Child results",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/parent/children/{{student_uuid}}/results",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "parent",
+                "children",
+                "{{student_uuid}}",
+                "results"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Requires the parent role in the current tenant (bearer). Read-only views of the linked children."
+    },
+    {
+      "name": "07 · Teacher",
+      "description": "Requires the teacher role in the current tenant (bearer). Full authoring + management surface.",
+      "item": [
+        {
+          "name": "Profile & Landing",
+          "item": [
+            {
+              "name": "Get profile",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/profile",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "profile"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update profile",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/profile",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "profile"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"logo_url\": \"https://cdn.example.com/logo.png\",\n  \"cover_url\": \"https://cdn.example.com/cover.jpg\",\n  \"primary_color\": \"#1E88E5\",\n  \"secondary_color\": \"#FFB300\",\n  \"bio\": \"Physics teacher with 10 years of experience.\",\n  \"contact\": {\n    \"phone\": \"+201001234567\",\n    \"email\": \"teacher@example.com\",\n    \"whatsapp\": \"+201001234567\",\n    \"address\": \"12 Tahrir St, Cairo\"\n  },\n  \"socials\": {\n    \"facebook\": \"https://facebook.com/teacher\",\n    \"youtube\": \"https://youtube.com/@teacher\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get landing (editor)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/landing",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "landing"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update landing",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/landing",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "landing"
+                  ]
+                },
+                "description": "sections max 30; type in hero|stats|features|about|steps|courses|testimonials|packages|cta|contact. Dynamic types (courses/testimonials) need a config object.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"layout\": \"classic\",\n  \"sections\": [\n    {\n      \"key\": \"hero\",\n      \"type\": \"hero\",\n      \"visible\": true,\n      \"order\": 1,\n      \"content\": {\n        \"eyebrow\": \"Welcome\",\n        \"title_html\": \"Master <span>Physics</span>\",\n        \"description\": \"Top-rated lessons for your grade.\",\n        \"note\": \"New batch starting soon\",\n        \"primary_cta\": {\n          \"label\": \"Start now\"\n        },\n        \"secondary_cta\": {\n          \"label\": \"Browse courses\"\n        },\n        \"teacher\": {\n          \"name\": \"Mr. Ahmed\",\n          \"role\": \"Physics Teacher\",\n          \"image_url\": \"https://cdn.example.com/teacher.jpg\",\n          \"card_stats\": [\n            {\n              \"value\": \"10k+\",\n              \"label\": \"Students\"\n            }\n          ]\n        },\n        \"chips\": [\n          {\n            \"text\": \"Certified\",\n            \"type\": \"green\"\n          }\n        ]\n      }\n    },\n    {\n      \"key\": \"about\",\n      \"type\": \"about\",\n      \"visible\": true,\n      \"order\": 2,\n      \"content\": {\n        \"badge\": \"About\",\n        \"title\": \"Who am I\",\n        \"body\": \"Long-form bio text.\",\n        \"image_url\": \"https://cdn.example.com/about.jpg\",\n        \"points\": [\n          \"10 years experience\",\n          \"Exam-focused\"\n        ]\n      }\n    },\n    {\n      \"key\": \"courses\",\n      \"type\": \"courses\",\n      \"visible\": true,\n      \"order\": 3,\n      \"content\": {\n        \"title\": \"My Courses\",\n        \"subtitle\": \"Pick a track\"\n      },\n      \"config\": {\n        \"source\": \"featured\",\n        \"category_id\": null,\n        \"course_ids\": [],\n        \"limit\": 6\n      }\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Upload landing media",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/landing/media",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "landing",
+                    "media"
+                  ]
+                },
+                "description": "multipart/form-data. file: image (jpeg/png/webp/gif/svg), max 5 MB. Returns a public URL.",
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "file",
+                      "type": "file",
+                      "src": ""
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Catalog",
+          "item": [
+            {
+              "name": "List categories",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/categories",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "categories"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create category",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/categories",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "categories"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Physics\",\n  \"grade\": \"Grade 12\",\n  \"subject\": \"Physics\",\n  \"level\": \"Advanced\",\n  \"section\": \"Science\",\n  \"sort_order\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update category",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/categories/{{category_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "categories",
+                    "{{category_id}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Physics (Updated)\",\n  \"grade\": \"Grade 12\",\n  \"subject\": \"Physics\",\n  \"sort_order\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete category",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/categories/{{category_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "categories",
+                    "{{category_id}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List courses",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/courses?page=1",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "courses"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "disabled": true
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create course",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/courses",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "courses"
+                  ]
+                },
+                "description": "title required. arrays max 30; parts max 50. visibility in visible|hidden|scheduled.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Complete Physics - Grade 12\",\n  \"subtitle\": \"Mechanics to Modern Physics\",\n  \"description\": \"Full year coverage with solved problems.\",\n  \"learning_outcomes\": [\n    \"Solve kinematics problems\",\n    \"Understand electromagnetism\"\n  ],\n  \"requirements\": [\n    \"Basic algebra\"\n  ],\n  \"audience\": [\n    \"Grade 12 science students\"\n  ],\n  \"parts\": [\n    {\n      \"title\": \"Mechanics\",\n      \"lessons_count\": 12,\n      \"duration_min\": 480\n    }\n  ],\n  \"category_id\": 1,\n  \"price_minor\": 50000,\n  \"currency\": \"EGP\",\n  \"access_days\": 365,\n  \"visibility\": \"visible\",\n  \"publish_at\": \"2026-08-01T09:00:00Z\",\n  \"is_free\": false,\n  \"purchase_enabled\": true,\n  \"is_center\": false,\n  \"cover_url\": \"https://cdn.example.com/course-cover.jpg\",\n  \"promo_video_url\": \"https://youtube.com/watch?v=abc123\",\n  \"points\": 100\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Show course",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/courses/{{course_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "courses",
+                    "{{course_uuid}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update course",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/courses/{{course_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "courses",
+                    "{{course_uuid}}"
+                  ]
+                },
+                "description": "title stays required on update.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Complete Physics - Grade 12 (2026)\",\n  \"price_minor\": 60000,\n  \"currency\": \"EGP\",\n  \"visibility\": \"visible\",\n  \"is_free\": false,\n  \"purchase_enabled\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete course",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/courses/{{course_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "courses",
+                    "{{course_uuid}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List units",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/courses/{{course_uuid}}/units",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "courses",
+                    "{{course_uuid}}",
+                    "units"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create unit",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/courses/{{course_uuid}}/units",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "courses",
+                    "{{course_uuid}}",
+                    "units"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Unit 1: Kinematics\",\n  \"sort_order\": 1,\n  \"visibility\": \"visible\",\n  \"publish_at\": \"2026-08-01T09:00:00Z\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update unit",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/courses/{{course_uuid}}/units/{{unit_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "courses",
+                    "{{course_uuid}}",
+                    "units",
+                    "{{unit_id}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Unit 1: Kinematics (Revised)\",\n  \"sort_order\": 1,\n  \"visibility\": \"visible\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete unit",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/courses/{{course_uuid}}/units/{{unit_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "courses",
+                    "{{course_uuid}}",
+                    "units",
+                    "{{unit_id}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List lessons",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/units/{{unit_id}}/lessons",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "units",
+                    "{{unit_id}}",
+                    "lessons"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create lesson",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/units/{{unit_id}}/lessons",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "units",
+                    "{{unit_id}}",
+                    "lessons"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Lesson 1: Displacement & Velocity\",\n  \"description\": \"Intro to motion concepts.\",\n  \"sort_order\": 1,\n  \"duration_sec\": 1800,\n  \"max_views\": 5,\n  \"is_free_preview\": true,\n  \"visibility\": \"visible\",\n  \"publish_at\": \"2026-08-02T09:00:00Z\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update lesson",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/units/{{unit_id}}/lessons/{{lesson_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "units",
+                    "{{unit_id}}",
+                    "lessons",
+                    "{{lesson_id}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Lesson 1: Displacement & Velocity (Updated)\",\n  \"duration_sec\": 1900,\n  \"is_free_preview\": false,\n  \"visibility\": \"visible\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete lesson",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/units/{{unit_id}}/lessons/{{lesson_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "units",
+                    "{{unit_id}}",
+                    "lessons",
+                    "{{lesson_id}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List attachments",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/lessons/{{lesson_id}}/attachments",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "lessons",
+                    "{{lesson_id}}",
+                    "attachments"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Add attachment",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/lessons/{{lesson_id}}/attachments",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "lessons",
+                    "{{lesson_id}}",
+                    "attachments"
+                  ]
+                },
+                "description": "multipart. type in pdf|file|link. For type=link send `url` instead of `file`. file max 20 MB.",
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "type",
+                      "type": "text",
+                      "value": "pdf"
+                    },
+                    {
+                      "key": "title",
+                      "type": "text",
+                      "value": "Chapter 1 Notes"
+                    },
+                    {
+                      "key": "downloadable",
+                      "type": "text",
+                      "value": "true"
+                    },
+                    {
+                      "key": "file",
+                      "type": "file",
+                      "src": ""
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete attachment",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/lessons/{{lesson_id}}/attachments/{{attachment_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "lessons",
+                    "{{lesson_id}}",
+                    "attachments",
+                    "{{attachment_uuid}}"
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Media (self-hosted video)",
+          "item": [
+            {
+              "name": "Start upload",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/media/uploads",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "media",
+                    "uploads"
+                  ]
+                },
+                "description": "Async (JSON): filename required_without file -> returns a signed upload_url. Direct: send multipart `file` (video, up to ~1 GB) instead.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"lesson_id\": 42,\n  \"title\": \"Lesson 1 Video\",\n  \"filename\": \"lesson1.mp4\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Complete upload",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/media/uploads/{{media_uuid}}/complete",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "media",
+                    "uploads",
+                    "{{media_uuid}}",
+                    "complete"
+                  ]
+                },
+                "description": "No body. Marks the asset ready and links it to its lesson."
+              },
+              "response": []
+            },
+            {
+              "name": "Media status",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/media/{{media_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "media",
+                    "{{media_uuid}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Teacher preview",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/media/{{media_uuid}}/preview",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "media",
+                    "{{media_uuid}}",
+                    "preview"
+                  ]
+                },
+                "description": "No body. Returns { manifest_url, key_url, token, expires_at }."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Exams & Grading",
+          "item": [
+            {
+              "name": "List exams",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/courses/{{course_uuid}}/exams",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "courses",
+                    "{{course_uuid}}",
+                    "exams"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create exam",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/courses/{{course_uuid}}/exams",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "courses",
+                    "{{course_uuid}}",
+                    "exams"
+                  ]
+                },
+                "description": "type in exam|assignment. ends_at after_or_equal starts_at.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Midterm Exam - Mechanics\",\n  \"lesson_id\": null,\n  \"type\": \"exam\",\n  \"pass_percent\": 60,\n  \"duration_min\": 90,\n  \"attempts_allowed\": 2,\n  \"question_order\": \"fixed\",\n  \"scoring\": \"best\",\n  \"starts_at\": \"2026-09-01T09:00:00Z\",\n  \"ends_at\": \"2026-09-01T12:00:00Z\",\n  \"result_visibility\": \"immediate\",\n  \"show_answers\": true,\n  \"depends_on_exam_id\": null,\n  \"mode\": \"standard\",\n  \"is_published\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Show exam",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/exams/{{exam_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "exams",
+                    "{{exam_uuid}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update exam",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/exams/{{exam_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "exams",
+                    "{{exam_uuid}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Midterm Exam - Mechanics (v2)\",\n  \"type\": \"exam\",\n  \"pass_percent\": 65,\n  \"duration_min\": 120,\n  \"attempts_allowed\": 1,\n  \"is_published\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete exam",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/exams/{{exam_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "exams",
+                    "{{exam_uuid}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List questions",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/exams/{{exam_uuid}}/questions",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "exams",
+                    "{{exam_uuid}}",
+                    "questions"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create question",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/exams/{{exam_uuid}}/questions",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "exams",
+                    "{{exam_uuid}}",
+                    "questions"
+                  ]
+                },
+                "description": "type in mcq|true_false|short|essay|file. mcq needs options+correct.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"type\": \"mcq\",\n  \"body\": \"What is the SI unit of force?\",\n  \"points\": 2,\n  \"sort_order\": 1,\n  \"options\": [\n    \"Joule\",\n    \"Newton\",\n    \"Watt\",\n    \"Pascal\"\n  ],\n  \"correct\": [\n    1\n  ],\n  \"book_ref\": {\n    \"book\": \"Physics G12\",\n    \"page\": 45,\n    \"qno\": 3\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update question",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/exams/{{exam_uuid}}/questions/{{question_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "exams",
+                    "{{exam_uuid}}",
+                    "questions",
+                    "{{question_id}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"type\": \"true_false\",\n  \"body\": \"Force equals mass times acceleration.\",\n  \"points\": 1,\n  \"sort_order\": 2,\n  \"correct\": [\n    true\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete question",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/exams/{{exam_uuid}}/questions/{{question_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "exams",
+                    "{{exam_uuid}}",
+                    "questions",
+                    "{{question_id}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List submissions",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/exams/{{exam_uuid}}/submissions",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "exams",
+                    "{{exam_uuid}}",
+                    "submissions"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Grade attempt",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/exams/{{exam_uuid}}/attempts/{{attempt_id}}/grade",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "exams",
+                    "{{exam_uuid}}",
+                    "attempts",
+                    "{{attempt_id}}",
+                    "grade"
+                  ]
+                },
+                "description": "grades: map of question_id -> awarded points (manual grading).",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"grades\": {\n    \"103\": 4,\n    \"104\": 0\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Gamification",
+          "item": [
+            {
+              "name": "List badges",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/badges",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "badges"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create badge",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/badges",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "badges"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Fast Learner\",\n  \"description\": \"Awarded for completing 10 lessons.\",\n  \"icon\": \"trophy\",\n  \"points_threshold\": 100\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete badge",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/badges/{{badge_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "badges",
+                    "{{badge_id}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Gamification settings",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/gamification",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "gamification"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update settings",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/gamification",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "gamification"
+                  ]
+                },
+                "description": "hide_ranking required boolean.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"hide_ranking\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Reports & Audit",
+          "item": [
+            {
+              "name": "Sales report",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/reports/sales",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "reports",
+                    "sales"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Students report",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/reports/students",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "reports",
+                    "students"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Audit logs (teacher)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/audit-logs?page=1",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "audit-logs"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "disabled": true
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Centers",
+          "item": [
+            {
+              "name": "List centers",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/centers",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "centers"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create center",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/centers",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "centers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Downtown Branch\",\n  \"address\": \"5 Talaat Harb St, Cairo\",\n  \"phone\": \"+20221234567\",\n  \"is_active\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update center",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/centers/{{center_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "centers",
+                    "{{center_uuid}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Downtown Branch (Renamed)\",\n  \"address\": \"10 Talaat Harb St, Cairo\",\n  \"phone\": \"+20221234567\",\n  \"is_active\": false\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete center",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/centers/{{center_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "centers",
+                    "{{center_uuid}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Offline sync",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/centers/sync",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "centers",
+                    "sync"
+                  ]
+                },
+                "description": "events 1-500; each needs kind (attendance|redeem) + external_ref (idempotency key).",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"events\": [\n    {\n      \"kind\": \"attendance\",\n      \"external_ref\": \"device-001-evt-1001\",\n      \"center_uuid\": \"{{center_uuid}}\",\n      \"student_uuid\": \"{{student_uuid}}\",\n      \"attended_on\": \"2026-07-09\",\n      \"status\": \"present\"\n    },\n    {\n      \"kind\": \"redeem\",\n      \"external_ref\": \"device-001-evt-1002\",\n      \"student_phone\": \"+201112223334\",\n      \"code\": \"ABC123XYZ789\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List attendance",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/centers/{{center_uuid}}/attendance",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "centers",
+                    "{{center_uuid}}",
+                    "attendance"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Mark attendance",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/centers/{{center_uuid}}/attendance",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "centers",
+                    "{{center_uuid}}",
+                    "attendance"
+                  ]
+                },
+                "description": "students: 1-500 student uuids.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"attended_on\": \"2026-07-09\",\n  \"status\": \"present\",\n  \"course_id\": 12,\n  \"students\": [\n    \"{{student_uuid}}\"\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List activation codes",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/codes",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "codes"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Generate codes batch",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/codes/batch",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "codes",
+                    "batch"
+                  ]
+                },
+                "description": "type in wallet|course. count 1-1000.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"type\": \"wallet\",\n  \"count\": 50,\n  \"amount_minor\": 10000,\n  \"center_id\": 3,\n  \"batch\": \"SUMMER-2026\",\n  \"expires_at\": \"2026-12-31T23:59:59Z\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Disable code",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/codes/{{code_uuid}}/disable",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "codes",
+                    "{{code_uuid}}",
+                    "disable"
+                  ]
+                },
+                "description": "No body."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Students",
+          "item": [
+            {
+              "name": "List students",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students?page=1",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "disabled": true
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create student",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students"
+                  ]
+                },
+                "description": "name+phone required. password optional (a temp one is generated + returned once if omitted).",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Sara Kamal\",\n  \"phone\": \"+201223334445\",\n  \"email\": \"sara@example.com\",\n  \"password\": \"TempPass123\",\n  \"gender\": \"female\",\n  \"governorate\": \"Giza\",\n  \"region\": \"Dokki\",\n  \"academic_year\": \"Grade 11\",\n  \"education_type\": \"general\",\n  \"guardian_phone\": \"+201009998887\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Show student",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update student",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}"
+                  ]
+                },
+                "description": "All fields optional (sometimes). status in active|suspended.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Sara Kamal Ahmed\",\n  \"phone\": \"+201223334446\",\n  \"email\": \"sara.new@example.com\",\n  \"status\": \"active\",\n  \"academic_year\": \"Grade 12\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete student",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Reset student password",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/reset-password",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "reset-password"
+                  ]
+                },
+                "description": "password optional; if omitted, a temp one is generated + returned once and sessions are revoked.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"NewTempPass123\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Export student",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/export",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "export"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List enrollments",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/enrollments",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "enrollments"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Enroll in course",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/enrollments",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "enrollments"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"course\": \"{{course_uuid}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Remove enrollment",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/enrollments/{{enrollment_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "enrollments",
+                    "{{enrollment_id}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Student wallet",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/wallet",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "wallet"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Student wallet ledger",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/wallet/ledger",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "wallet",
+                    "ledger"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Adjust wallet",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/wallet/adjust",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "wallet",
+                    "adjust"
+                  ]
+                },
+                "description": "direction in credit|debit.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount_minor\": 5000,\n  \"direction\": \"credit\",\n  \"reason\": \"Loyalty bonus\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Set wallet balance",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/wallet/set",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "wallet",
+                    "set"
+                  ]
+                },
+                "description": "Posts the difference vs current balance.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"balance_minor\": 25000,\n  \"reason\": \"Manual correction\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Student orders",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/orders",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "orders"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Student progress",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/progress",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "progress"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Student activity",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/activity",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "activity"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Notify student",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/notify",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "notify"
+                  ]
+                },
+                "description": "message required (max 1000).",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Reminder\",\n  \"message\": \"Your next live session is tomorrow at 6 PM.\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List parents",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/parents",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "parents"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Link parent",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/parents",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "parents"
+                  ]
+                },
+                "description": "name+phone required. relation in father|mother|guardian.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Kamal Sami\",\n  \"phone\": \"+201004445556\",\n  \"email\": \"parent@example.com\",\n  \"relation\": \"father\",\n  \"password\": \"ParentPass1\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Unlink parent",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Tenant",
+                    "value": "{{tenant}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/teacher/students/{{student_uuid}}/parents/{{parent_uuid}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "teacher",
+                    "students",
+                    "{{student_uuid}}",
+                    "parents",
+                    "{{parent_uuid}}"
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost/api",
+      "description": "API root incl. /api prefix. Prod: https://<slug>.elameed.app/api"
+    },
+    {
+      "key": "tenant",
+      "value": "demo",
+      "description": "X-Tenant slug (dev header override; non-production only)"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "description": "Student/teacher/parent bearer token (auto-filled by login/verify)"
+    },
+    {
+      "key": "admin_token",
+      "value": "",
+      "description": "Platform-admin bearer token"
+    },
+    {
+      "key": "transcode_secret",
+      "value": "",
+      "description": "X-Transcode-Secret for the transcode callback"
+    },
+    {
+      "key": "course_slug",
+      "value": "sample-course"
+    },
+    {
+      "key": "course_uuid",
+      "value": ""
+    },
+    {
+      "key": "category_id",
+      "value": "1"
+    },
+    {
+      "key": "unit_id",
+      "value": "1"
+    },
+    {
+      "key": "lesson_id",
+      "value": "1"
+    },
+    {
+      "key": "exam_uuid",
+      "value": ""
+    },
+    {
+      "key": "attempt_id",
+      "value": "1"
+    },
+    {
+      "key": "question_id",
+      "value": "1"
+    },
+    {
+      "key": "student_uuid",
+      "value": ""
+    },
+    {
+      "key": "parent_uuid",
+      "value": ""
+    },
+    {
+      "key": "enrollment_id",
+      "value": "1"
+    },
+    {
+      "key": "center_uuid",
+      "value": ""
+    },
+    {
+      "key": "code_uuid",
+      "value": ""
+    },
+    {
+      "key": "badge_id",
+      "value": "1"
+    },
+    {
+      "key": "notification_id",
+      "value": "1"
+    },
+    {
+      "key": "media_uuid",
+      "value": ""
+    },
+    {
+      "key": "upload_uuid",
+      "value": "",
+      "description": "MediaAsset uuid for the signed dev upload receiver"
+    },
+    {
+      "key": "attachment_uuid",
+      "value": ""
+    },
+    {
+      "key": "order_uuid",
+      "value": ""
+    },
+    {
+      "key": "tenant_uuid",
+      "value": "",
+      "description": "Tenant uuid (admin endpoints)"
+    },
+    {
+      "key": "media_token",
+      "value": "",
+      "description": "Playback URL token (from authorize/preview)"
+    },
+    {
+      "key": "segment",
+      "value": "seg_00001.ts"
+    }
+  ]
+}

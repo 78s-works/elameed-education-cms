@@ -5,6 +5,7 @@ namespace App\Modules\Catalog\Http\Controllers\Teacher;
 use App\Modules\Catalog\Http\Requests\AttachmentRequest;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Media\Enums\MediaStatus;
+use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Http\Resources\MediaAssetResource;
 use App\Modules\Media\Models\MediaAsset;
 use Illuminate\Http\JsonResponse;
@@ -56,6 +57,7 @@ class LessonAttachmentController
     public function destroy(Lesson $lesson, MediaAsset $attachment): Response
     {
         abort_unless($attachment->lesson_id === $lesson->id, 404);
+        abort_if($attachment->type === MediaType::HlsVideo, 404); // the video isn't an attachment
 
         if ($attachment->source_key !== null) {
             Storage::disk('public')->delete($attachment->source_key);

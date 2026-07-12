@@ -37,6 +37,12 @@ class StudentCoursesController
 
             $total = (int) $course->lessons_count;
 
+            $precent = LessonProgress::query()
+                ->where('user_id', $userId)
+                ->where('tenant_id', $course->tenant_id)
+                ->whereIn('lesson_id', $course->lessons()->pluck('id'))
+                ->first('watch_percent');
+
             return [
                 'uuid' => $course->uuid,
                 'title' => $course->title,
@@ -44,6 +50,7 @@ class StudentCoursesController
                 'cover_url' => $course->cover_url,
                 'lessons_total' => $total,
                 'lessons_completed' => $completed,
+                'watch_precent' => $precent ? $precent->watch_percent : 0,
                 'progress_percent' => $total > 0 ? (int) round($completed / $total * 100) : 0,
             ];
         });

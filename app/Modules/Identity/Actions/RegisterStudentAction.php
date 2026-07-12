@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\OtpPurpose;
 use App\Modules\Identity\Enums\TenantUserRole;
+use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Identity\Services\OtpService;
 use App\Modules\Tenancy\Models\Tenant;
@@ -52,6 +53,12 @@ class RegisterStudentAction
                 'role' => TenantUserRole::Student->value,
                 'status' => MembershipStatus::Pending->value,
             ]);
+
+            // Per-academy registration details from the sign-up form.
+            $profile = new StudentProfile(StudentProfile::fields($data));
+            $profile->tenant_id = $tenant->getKey();
+            $profile->user_id = $user->getKey();
+            $profile->save();
 
             return $user;
         });

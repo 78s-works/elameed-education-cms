@@ -7,23 +7,23 @@ use App\Modules\Media\Contracts\MediaProvider;
 use App\Modules\Media\Enums\MediaStatus;
 use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Http\Resources\MediaAssetResource;
-use App\Modules\Media\Jobs\TranscodeVideoJob;
 use App\Modules\Media\Models\MediaAsset;
+use App\Modules\Media\Services\PlaybackService;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Teacher video pipeline (M04).
+ * Teacher video pipeline (M04). The uploaded source is stored on a PRIVATE disk
+ * and is never served directly. Playback (teacher preview or student) goes
+ * through the token-gated, AES-128-encrypted HLS flow with a per-student
+ * burned-in watermark; the source is transcoded per viewer on first play.
  *
  * Two upload paths, both returning `{ data: { media, upload } }` (so the client
  * always reads the id at `data.media.uuid`):
- *   • Direct (dev/local): send the `file` (multipart) → stored on the local disk
- *     and transcoded (stub) in this one request → returns a READY asset,
- *     `upload` = null. No follow-up call needed.
+ *   • Direct (dev/local): send the `file` (multipart) → stored, marked ready.
  *   • Async (production): send no file → returns a signed `upload` target; the
  *     client uploads straight to object storage, then calls `.../complete`.
  */
@@ -32,6 +32,7 @@ class TeacherMediaController
     public function __construct(
         private readonly TenantContext $context,
         private readonly MediaProvider $provider,
+        private readonly PlaybackService $playback,
     ) {}
 
     public function startUpload(Request $request): JsonResponse
@@ -55,14 +56,13 @@ class TeacherMediaController
         $asset->tenant_id = $tenantId;
 
         if ($request->hasFile('file')) {
-            // Direct local upload: store + transcode (stub) synchronously → ready.
-            $asset->source_key = $request->file('file')->store('media/source', 'public');
-            $asset->status = MediaStatus::Transcoding->value;
+            // Direct local upload: store the source privately and mark it ready.
+            // The encrypted, watermarked HLS is produced per viewer on first play.
+            $asset->source_key = $request->file('file')->store('media/source', $this->disk());
+            $asset->status = MediaStatus::Ready->value;
             $asset->save();
-            $asset->update(['url' => URL::signedRoute('media.file', ['uuid' => $asset->uuid])]);
 
             $this->linkLessonVideo($lesson, $asset);
-            TranscodeVideoJob::dispatchSync($asset->id);
 
             return response()->json([
                 'data' => ['media' => (new MediaAssetResource($asset->fresh()))->resolve($request), 'upload' => null],
@@ -79,9 +79,8 @@ class TeacherMediaController
 
     /**
      * Async-pipeline receiver for the signed `upload_url` (dev stub for a cloud
-     * presigned PUT). No tenant/bearer — the URL signature is the auth. Accepts
-     * the raw request body or a multipart `file`, stores it, transcodes (stub) →
-     * ready, and links the lesson video.
+     * presigned PUT). No tenant/bearer — the URL signature is the auth. Stores the
+     * raw body (or a multipart `file`) privately and marks the asset ready.
      */
     public function receiveUpload(Request $request, string $uuid): JsonResponse
     {
@@ -96,31 +95,22 @@ class TeacherMediaController
         }
 
         $path = "media/source/{$uuid}.mp4";
-        Storage::disk('public')->put($path, $bytes);
+        Storage::disk($this->disk())->put($path, $bytes);
 
-        $asset->forceFill([
-            'source_key' => $path,
-            'status' => MediaStatus::Transcoding->value,
-            'url' => URL::signedRoute('media.file', ['uuid' => $asset->uuid]),
-        ])->save();
+        $asset->forceFill(['source_key' => $path, 'status' => MediaStatus::Ready->value])->save();
 
         if ($asset->lesson_id) {
             Lesson::withoutGlobalScopes()->whereKey($asset->lesson_id)->update(['video_asset_id' => $asset->getKey()]);
         }
-
-        TranscodeVideoJob::dispatchSync($asset->id);
 
         return response()->json(['data' => (new MediaAssetResource($asset->fresh()))->resolve($request)]);
     }
 
     public function completeUpload(Request $request, MediaAsset $media): JsonResponse
     {
-        // Idempotent: if the async receiver already made the asset ready, this is
-        // just a confirming read — don't reset it back to transcoding.
         if ($media->status !== MediaStatus::Ready) {
-            $media->update(['status' => MediaStatus::Transcoding->value]);
+            $media->update(['status' => MediaStatus::Ready->value]);
             $this->linkLessonVideo($media->lesson_id ? Lesson::query()->find($media->lesson_id) : null, $media);
-            TranscodeVideoJob::dispatchSync($media->id);
         }
 
         return response()->json(['data' => (new MediaAssetResource($media->fresh()))->resolve($request)]);
@@ -129,6 +119,22 @@ class TeacherMediaController
     public function show(Request $request, MediaAsset $media): MediaAssetResource
     {
         return new MediaAssetResource($media);
+    }
+
+    /**
+     * Teacher preview → same encrypted-HLS flow as students, watermarked with the
+     * teacher's own name. Returns { manifest_url, key_url, token, expires_at }.
+     */
+    public function preview(Request $request, MediaAsset $media): JsonResponse
+    {
+        $result = $this->playback->issuePreview(
+            $this->context->tenantOrFail()->getKey(),
+            $request->user(),
+            $media,
+            $request->ip(),
+        );
+
+        return response()->json(['data' => $result]);
     }
 
     private function resolveLesson(?int $lessonId): ?Lesson
@@ -150,5 +156,10 @@ class TeacherMediaController
         if ($lesson !== null) {
             Lesson::query()->whereKey($lesson->getKey())->update(['video_asset_id' => $asset->getKey()]);
         }
+    }
+
+    private function disk(): string
+    {
+        return (string) config('media.disk', 'local');
     }
 }

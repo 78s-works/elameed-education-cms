@@ -48,6 +48,11 @@ class AuthTest extends TestCase
             'name' => 'Sara',
             'phone' => '01000000001',
             'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'gender' => 'أنثى',
+            'governorate' => 'القاهرة',
+            'academic_year' => 'الثالث الثانوي',
+            'guardian_phone' => '01099999999',
         ]);
 
         $register->assertStatus(202)->assertJsonPath('data.requires_otp', true);
@@ -69,6 +74,11 @@ class AuthTest extends TestCase
         $verify->assertOk()->assertJsonStructure(['data' => ['token', 'user']]);
         $this->assertNotNull($user->fresh()->phone_verified_at);
         $this->assertSame(MembershipStatus::Active, $membership->fresh()->status);
+
+        // Registration captured the sign-up form's extra fields.
+        $this->assertDatabaseHas('student_profiles', [
+            'user_id' => $user->id, 'gender' => 'أنثى', 'governorate' => 'القاهرة', 'academic_year' => 'الثالث الثانوي',
+        ]);
     }
 
     public function test_register_rejects_duplicate_phone(): void
@@ -79,6 +89,7 @@ class AuthTest extends TestCase
             'name' => 'Dup',
             'phone' => '01000000002',
             'password' => 'password123',
+            'password_confirmation' => 'password123',
         ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
     }
 

@@ -3,22 +3,26 @@
 namespace App\Modules\Media\Http\Controllers;
 
 use App\Modules\Catalog\Models\Lesson;
-use App\Modules\Media\Models\MediaAsset;
 use App\Modules\Media\Services\PlaybackService;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
- * Protected playback (M04/M22). POST issues a short-lived token + signed manifest
- * for an authorized enrollment; the key endpoint releases the AES key only after
- * re-checking access.
+ * Protected playback (M04/M22). `authorize` issues a short-lived token; the
+ * delivery endpoints then serve AES-128-encrypted HLS:
  *
- * The `stream`/`file` endpoints are the dev (LocalMediaProvider) fallback that
- * serves the stored source file directly, range-enabled, so uploaded videos play
- * in a <video> element. Prod serves encrypted HLS from the edge instead.
+ *   • stream/{token}          → the .m3u8 playlist, with key + segment URIs
+ *                               rewritten to carry the token (never the raw MP4)
+ *   • segment/{token}/{seg}   → an encrypted .ts segment (useless without the key)
+ *   • key/{token}             → the raw 16-byte AES key, released ONLY after the
+ *                               enrollment (or teacher-preview) gate is re-checked
+ *
+ * The source and segments live on a private disk, so nothing is reachable except
+ * through these token-gated routes.
  */
 class PlaybackController
 {
@@ -40,42 +44,51 @@ class PlaybackController
         return response()->json(['data' => $result]);
     }
 
-    public function key(string $token): JsonResponse
+    /** The encrypted HLS playlist, with key + segment URIs bound to this token. */
+    public function stream(string $token): Response
     {
-        return response()->json(['data' => ['key' => $this->playback->resolveKey($token)]]);
+        $rendition = $this->playback->renditionForToken($token);
+        $playlist = Storage::disk($this->disk())->get($rendition->hls_dir.'/index.m3u8');
+
+        $keyUrl = url("/api/v1/media/key/{$token}");
+        $segBase = url("/api/v1/media/segment/{$token}");
+
+        // Point the #EXT-X-KEY at our token-gated key endpoint, and each relative
+        // segment name at the token-gated segment endpoint.
+        $playlist = preg_replace('/URI="[^"]*"/', 'URI="'.$keyUrl.'"', (string) $playlist, 1);
+        $playlist = preg_replace_callback('/^(seg_\d+\.ts)$/m', fn ($m) => $segBase.'/'.$m[1], (string) $playlist);
+
+        return response($playlist, 200, [
+            'Content-Type' => 'application/vnd.apple.mpegurl',
+            'Cache-Control' => 'no-store',
+        ]);
     }
 
-    /** Student playback: stream the source for a valid, access-checked token. */
-    public function stream(string $token): BinaryFileResponse
+    /** A single encrypted segment (range-enabled). Decryptable only with the key. */
+    public function segment(string $token, string $segment): BinaryFileResponse
     {
-        return $this->serve($this->playback->assetForToken($token));
+        abort_unless((bool) preg_match('/^seg_\d+\.ts$/', $segment), 404);
+
+        $rendition = $this->playback->renditionForToken($token);
+        $disk = Storage::disk($this->disk());
+        $path = $rendition->hls_dir.'/'.$segment;
+
+        abort_unless($disk->exists($path), 404);
+
+        return response()->file($disk->path($path), ['Content-Type' => 'video/mp2t']);
     }
 
-    /** Teacher preview: stream the source via a URL-signed link (no headers needed). */
-    public function file(string $uuid): BinaryFileResponse
+    /** Raw 16-byte AES key — released only after access is re-checked. */
+    public function key(string $token): Response
     {
-        return $this->serve(MediaAsset::withoutGlobalScopes()->where('uuid', $uuid)->first());
+        return response($this->playback->resolveKey($token), 200, [
+            'Content-Type' => 'application/octet-stream',
+            'Cache-Control' => 'no-store',
+        ]);
     }
 
-    private function serve(?MediaAsset $asset): BinaryFileResponse
+    private function disk(): string
     {
-        abort_if(
-            $asset === null || ! $asset->source_key || ! Storage::disk('public')->exists($asset->source_key),
-            404,
-            'No source file for this media.'
-        );
-
-        $ext = strtolower(pathinfo($asset->source_key, PATHINFO_EXTENSION));
-        $type = match ($ext) {
-            'mp4', 'm4v' => 'video/mp4',
-            'mov' => 'video/quicktime',
-            'webm' => 'video/webm',
-            'mkv' => 'video/x-matroska',
-            default => 'application/octet-stream',
-        };
-
-        // response()->file() honours the Range header (206 partial) so the browser
-        // can seek; explicit Content-Type avoids finfo mis-detecting the container.
-        return response()->file(Storage::disk('public')->path($asset->source_key), ['Content-Type' => $type]);
+        return (string) config('media.disk', 'local');
     }
 }

@@ -25,6 +25,13 @@ class StudentResource extends JsonResource
             'status' => $this->status->value,
             'joined_at' => $this->joined_at?->toIso8601String(),
             'enrolled_courses' => (int) ($this->enrolled_courses ?? 0),
+            // Per-academy registration details (preloaded by the controller).
+            'gender' => $this->student_profile?->gender,
+            'governorate' => $this->student_profile?->governorate,
+            'region' => $this->student_profile?->region,
+            'academic_year' => $this->student_profile?->academic_year,
+            'education_type' => $this->student_profile?->education_type,
+            'guardian_phone' => $this->student_profile?->guardian_phone,
         ];
     }
 }

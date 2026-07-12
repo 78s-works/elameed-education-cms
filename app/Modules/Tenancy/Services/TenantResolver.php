@@ -4,6 +4,7 @@ namespace App\Modules\Tenancy\Services;
 
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Models\TenantDomain;
+use App\Modules\Tenancy\Support\HostNormalizer;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -35,8 +36,9 @@ class TenantResolver
             }
         }
 
-        // 2–4. Host-based resolution.
-        $host = Str::lower($request->getHost());
+        // 2–4. Host-based resolution. Normalised (lower-cased, port/trailing-dot
+        // stripped, leading "www." removed) so www and non-www share a mapping.
+        $host = HostNormalizer::normalize($request->getHost());
 
         if ($host === '') {
             return null;
@@ -76,34 +78,22 @@ class TenantResolver
     /** Resolve a host to a tenant id via an exact domain row or the subdomain label. */
     private function lookupHost(string $host): ?int
     {
-        $domain = TenantDomain::query()->where('host', $host)->first();
+        // Match a stored domain with or without a "www." prefix.
+        $domain = TenantDomain::query()
+            ->whereIn('host', HostNormalizer::candidates($host))
+            ->first();
 
         if ($domain !== null) {
             return (int) $domain->tenant_id;
         }
 
-        $label = $this->subdomainLabel($host);
+        $label = HostNormalizer::subdomainLabel($host, (string) config('tenancy.base_domain', 'elameed.app'));
 
         if ($label !== null) {
             return Tenant::query()->where('slug', $label)->value('id');
         }
 
         return null;
-    }
-
-    /** Return the first label if $host is a direct subdomain of the base domain. */
-    private function subdomainLabel(string $host): ?string
-    {
-        $base = Str::lower((string) config('tenancy.base_domain', 'elameed.app'));
-
-        if ($base === '' || ! Str::endsWith($host, '.'.$base)) {
-            return null;
-        }
-
-        $label = Str::beforeLast($host, '.'.$base);
-
-        // Only a single-label subdomain ("ahmed"), not "a.b" or the apex itself.
-        return ($label !== '' && ! Str::contains($label, '.')) ? $label : null;
     }
 
     private function findBySlug(string $slug): ?Tenant

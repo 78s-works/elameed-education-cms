@@ -1,5 +1,7 @@
 <?php
 
+$baseDomain = env('TENANCY_BASE_DOMAIN', 'elameed.app');
+
 return [
 
     /*
@@ -14,7 +16,7 @@ return [
     |
     */
 
-    'base_domain' => env('TENANCY_BASE_DOMAIN', 'elameed.app'),
+    'base_domain' => $baseDomain,
 
     /*
     |--------------------------------------------------------------------------
@@ -64,5 +66,49 @@ return [
     */
 
     'rls_session_var' => 'app.tenant_id',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Registered-domain gate (EnsureRegisteredDomain middleware)
+    |--------------------------------------------------------------------------
+    |
+    | Every tenant-scoped request must arrive on a host that maps to an ACTIVE
+    | tenant — a `tenant_domains` row, or "<slug>.<base_domain>". Unknown or
+    | suspended hosts are rejected before any tenant routing runs. The host is
+    | read via Request::getHost() (X-Forwarded-Host is only trusted from trusted
+    | proxies) so a spoofed Host cannot bypass the gate. See 02_Architecture.md
+    | §4.3.
+    |
+    */
+
+    'guard' => [
+
+        // Platform/central/admin hosts allowed through without a tenant lookup.
+        // The base-domain apex is always treated as central in addition to these.
+        'central_domains' => array_values(array_filter(array_map(
+            static fn (string $host): string => strtolower(trim($host)),
+            explode(',', (string) env('TENANCY_CENTRAL_DOMAINS', 'admin.'.$baseDomain))
+        ))),
+
+        // Local/dev hosts exempt from the gate. Only honoured outside production,
+        // so a spoofed "Host: localhost" cannot bypass the gate on a live host.
+        'local_domains' => ['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'],
+        'local_suffixes' => ['.localhost', '.test'],
+        'trust_local_domains' => env('TENANCY_TRUST_LOCAL_DOMAINS', env('APP_ENV') !== 'production'),
+
+        // Route names / path globs the gate must never block (health checks etc.).
+        'except_routes' => [],
+        'except_paths' => ['up'],
+
+        // Response codes: unknown host vs registered-but-inactive tenant.
+        'unregistered_status' => (int) env('TENANCY_UNREGISTERED_STATUS', 404),
+        'inactive_status' => (int) env('TENANCY_INACTIVE_STATUS', 403),
+
+        // Decision cache (seconds). Reuses the tenancy cache store; invalidated by
+        // the Tenant/TenantDomain observers on any add/update/delete/activate.
+        'cache_prefix' => 'tenant_domain_guard:',
+        'cache_ttl' => (int) env('TENANCY_DOMAIN_CACHE_TTL', 3600),
+        'negative_cache_ttl' => (int) env('TENANCY_DOMAIN_NEGATIVE_CACHE_TTL', 60),
+    ],
 
 ];

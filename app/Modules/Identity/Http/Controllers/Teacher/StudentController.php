@@ -13,6 +13,7 @@ use App\Modules\Identity\Http\Controllers\Teacher\Concerns\ManagesTenantStudents
 use App\Modules\Identity\Http\Requests\CreateStudentRequest;
 use App\Modules\Identity\Http\Requests\UpdateStudentRequest;
 use App\Modules\Identity\Http\Resources\StudentResource;
+use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Modules\Wallet\Services\LedgerService;
@@ -57,6 +58,7 @@ class StudentController
             ->paginate(30);
 
         $this->attachEnrolledCounts($page->getCollection(), $tenantId);
+        $this->attachProfiles($page->getCollection(), $tenantId);
 
         return StudentResource::collection($page);
     }
@@ -76,6 +78,7 @@ class StudentController
             'email' => $student->email,
             'status' => $membership->status->value,
             'joined_at' => $membership->joined_at?->toIso8601String(),
+            ...$this->profileArray($this->profileFor($tenantId, $student->getKey())),
             'summary' => [
                 'enrolled_courses' => Enrollment::withoutGlobalScopes()
                     ->where('tenant_id', $tenantId)->where('user_id', $student->getKey())
@@ -134,6 +137,8 @@ class StudentController
             return $user;
         });
 
+        $this->syncProfile($tenantId, $student->id, $data);
+
         return response()->json(['data' => array_filter([
             'uuid' => $student->uuid,
             'name' => $student->name,
@@ -141,6 +146,7 @@ class StudentController
             'email' => $student->email,
             'status' => MembershipStatus::Active->value,
             'temporary_password' => $temporaryPassword, // present only if generated
+            ...StudentProfile::fields($data),
         ], fn ($v) => $v !== null)], 201);
     }
 
@@ -149,10 +155,85 @@ class StudentController
     {
         $tenantId = $this->context->tenantOrFail()->getKey();
         $membership = $this->membershipOrFail($tenantId, $student);
+        $data = $request->validated();
 
-        $membership->update(['status' => $request->validated('status')]);
+        $identity = array_intersect_key($data, array_flip(['name', 'phone', 'email']));
+        if ($identity !== []) {
+            $student->fill($identity)->save();
+        }
 
-        return response()->json(['data' => ['uuid' => $student->uuid, 'status' => $membership->status->value]]);
+        if (array_key_exists('status', $data)) {
+            $membership->update(['status' => $data['status']]);
+            app(AuditLogger::class)->log('student.status_changed', [
+                'student_id' => $student->getKey(), 'status' => $data['status'],
+            ], $tenantId, 'user', $student->getKey());
+        }
+
+        if (StudentProfile::fields($data) !== []) {
+            $this->syncProfile($tenantId, $student->getKey(), $data);
+        }
+
+        return response()->json(['data' => [
+            'uuid' => $student->uuid,
+            'name' => $student->name,
+            'phone' => $student->phone,
+            'email' => $student->email,
+            'status' => $membership->fresh()->status->value,
+            ...$this->profileArray($this->profileFor($tenantId, $student->getKey())),
+        ]]);
+    }
+
+    /** Force a password reset. Returns the new password only if we generated it. */
+    public function resetPassword(Request $request, User $student): JsonResponse
+    {
+        $tenantId = $this->context->tenantOrFail()->getKey();
+        $this->membershipOrFail($tenantId, $student);
+
+        $validated = $request->validate([
+            'password' => ['nullable', 'string', 'min:8', 'max:72'],
+        ]);
+
+        $generated = ! isset($validated['password']);
+        $password = $validated['password'] ?? Str::password(10);
+
+        $student->update(['password' => $password]); // hashed by cast
+        $student->tokens()->delete();                // drop existing sessions
+
+        app(AuditLogger::class)->log('student.password_reset', [
+            'student_id' => $student->getKey(),
+        ], $tenantId, 'user', $student->getKey());
+
+        return response()->json(['data' => array_filter([
+            'uuid' => $student->uuid,
+            'temporary_password' => $generated ? $password : null,
+        ], fn ($v) => $v !== null)]);
+    }
+
+    /** Export everything this academy holds on the student (data-portability). */
+    public function export(User $student): JsonResponse
+    {
+        $tenantId = $this->context->tenantOrFail()->getKey();
+        $membership = $this->membershipOrFail($tenantId, $student);
+        $scoped = fn (string $model) => $model::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)->where('user_id', $student->getKey());
+
+        return response()->json(['data' => [
+            'profile' => [
+                'uuid' => $student->uuid,
+                'name' => $student->name,
+                'phone' => $student->phone,
+                'email' => $student->email,
+                ...$this->profileArray($this->profileFor($tenantId, $student->getKey())),
+            ],
+            'membership' => [
+                'status' => $membership->status->value,
+                'joined_at' => $membership->joined_at?->toIso8601String(),
+            ],
+            'enrollments' => $scoped(Enrollment::class)->get(['course_id', 'status', 'expires_at']),
+            'orders' => $scoped(Order::class)->get(['uuid', 'status', 'total_minor', 'created_at']),
+            'progress' => $scoped(LessonProgress::class)->get(['lesson_id', 'watch_percent', 'completed_at']),
+            'wallet_balance_minor' => $this->ledger->balance($this->ledger->walletFor($tenantId, $student->getKey())),
+        ]]);
     }
 
     /** Remove the student from this academy: drop membership + cancel access. */
@@ -191,5 +272,43 @@ class StudentController
             ->pluck('total', 'user_id');
 
         $memberships->each(fn ($m) => $m->enrolled_courses = (int) ($counts[$m->user_id] ?? 0));
+    }
+
+    private function attachProfiles($memberships, int $tenantId): void
+    {
+        $profiles = StudentProfile::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->whereIn('user_id', $memberships->pluck('user_id'))
+            ->get()->keyBy('user_id');
+
+        $memberships->each(fn ($m) => $m->student_profile = $profiles->get($m->user_id));
+    }
+
+    /** Create/update the student's per-academy registration profile. */
+    private function syncProfile(int $tenantId, int $userId, array $data): void
+    {
+        StudentProfile::withoutGlobalScopes()->updateOrCreate(
+            ['tenant_id' => $tenantId, 'user_id' => $userId],
+            StudentProfile::fields($data),
+        );
+    }
+
+    private function profileFor(int $tenantId, int $userId): ?StudentProfile
+    {
+        return StudentProfile::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)->where('user_id', $userId)->first();
+    }
+
+    /** @return array<string, mixed> */
+    private function profileArray(?StudentProfile $profile): array
+    {
+        return [
+            'gender' => $profile?->gender,
+            'governorate' => $profile?->governorate,
+            'region' => $profile?->region,
+            'academic_year' => $profile?->academic_year,
+            'education_type' => $profile?->education_type,
+            'guardian_phone' => $profile?->guardian_phone,
+        ];
     }
 }

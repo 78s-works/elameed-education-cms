@@ -10,11 +10,17 @@ use App\Modules\Catalog\Http\Controllers\Teacher\CourseController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonAttachmentController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonController;
 use App\Modules\Catalog\Http\Controllers\Teacher\UnitController;
+use App\Modules\Centers\Http\Controllers\RedeemCodeController;
+use App\Modules\Centers\Http\Controllers\Teacher\ActivationCodeController;
+use App\Modules\Centers\Http\Controllers\Teacher\AttendanceController;
+use App\Modules\Centers\Http\Controllers\Teacher\CenterController;
+use App\Modules\Centers\Http\Controllers\Teacher\CenterSyncController;
 use App\Modules\Commerce\Http\Controllers\CheckoutController;
 use App\Modules\Commerce\Http\Controllers\PaymentWebhookController;
 use App\Modules\Engagement\Http\Controllers\FavoriteController;
 use App\Modules\Engagement\Http\Controllers\GamificationController;
 use App\Modules\Engagement\Http\Controllers\ProgressController;
+use App\Modules\Engagement\Http\Controllers\ReviewController;
 use App\Modules\Engagement\Http\Controllers\Teacher\BadgeController;
 use App\Modules\Identity\Http\Controllers\AuthController;
 use App\Modules\Identity\Http\Controllers\MeController;
@@ -36,6 +42,7 @@ use App\Modules\Reporting\Http\Controllers\TeacherReportsController;
 use App\Modules\Tenancy\Http\Controllers\TeacherLandingController;
 use App\Modules\Tenancy\Http\Controllers\TeacherProfileController;
 use App\Modules\Tenancy\Http\Controllers\TenantContextController;
+use App\Modules\Tenancy\Http\Controllers\TenantLandingController;
 use App\Modules\Wallet\Http\Controllers\WalletController;
 use Illuminate\Support\Facades\Route;
 
@@ -55,13 +62,12 @@ Route::prefix('v1')->group(function (): void {
     Route::get('/internal/media/authz', [InternalMediaController::class, 'authz']);
     Route::post('/internal/transcode/callback', [InternalMediaController::class, 'transcodeCallback']);
 
-    // Dev (LocalMediaProvider) file serving so uploaded videos actually play in a
-    // <video> element — range-enabled. Both carry their auth in the URL (no
-    // headers), which a media element can't send: `stream` uses the playback
-    // token (student, access re-checked); `file` uses a URL signature (teacher
-    // preview). Prod serves encrypted HLS from the edge instead of these.
+    // Token-gated encrypted-HLS delivery. The token is carried in the URL (a
+    // <video>/hls.js request can't send headers); segments are AES-128 encrypted
+    // and the key endpoint re-checks access before releasing the key. The raw
+    // source is never exposed — it lives on a private disk.
     Route::get('/media/stream/{token}', [PlaybackController::class, 'stream']);
-    Route::get('/media/file/{uuid}', [PlaybackController::class, 'file'])->middleware('signed')->name('media.file');
+    Route::get('/media/segment/{token}/{segment}', [PlaybackController::class, 'segment'])->where('segment', 'seg_[0-9]+\.ts');
 
     // Local dev upload receiver for the async pipeline: the client PUTs the raw
     // file (or multipart `file`) to the signed `upload_url` from startUpload. The
@@ -101,10 +107,13 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
 
     // Tenant context & branding
     Route::get('/tenant/context', TenantContextController::class);
+    // Public landing page (resolved: layout + nav + sections). Optional auth → `enrolled`.
+    Route::get('/tenant/landing', TenantLandingController::class);
 
     // Public catalogue (M04) — published courses of the resolved tenant
     Route::get('/courses', [PublicCatalogController::class, 'index']);
     Route::get('/courses/{course:slug}', [PublicCatalogController::class, 'show']);
+    Route::get('/courses/{course:slug}/reviews', [ReviewController::class, 'index']);
 
     // Identity, auth & OTP (M11) — public
     Route::post('/auth/register', [AuthController::class, 'register'])->middleware('throttle:otp');
@@ -114,10 +123,16 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
     Route::post('/auth/password/forgot', [AuthController::class, 'forgotPassword'])->middleware('throttle:otp');
     Route::post('/auth/password/reset', [AuthController::class, 'resetPassword'])->middleware('throttle:otp');
 
-    // Authenticated
-    Route::middleware('auth:sanctum')->group(function (): void {
+    // Authenticated — must be an ACTIVE member of this tenant (suspend blocks here).
+    Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
         Route::post('/auth/logout', [AuthController::class, 'logout']);
         Route::get('/me', MeController::class);
+
+        // Course reviews — a student with access rates their course (upsert)
+        Route::post('/courses/{course:slug}/reviews', [ReviewController::class, 'store']);
+
+        // Redeem an activation/recharge code (M12) → wallet credit or course enroll
+        Route::post('/codes/redeem', RedeemCodeController::class);
 
         // Wallet, checkout & payments (M05, M06)
         Route::get('/wallet', [WalletController::class, 'show']);
@@ -170,6 +185,7 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::put('/teacher/profile', [TeacherProfileController::class, 'update']);
             Route::get('/teacher/landing', [TeacherLandingController::class, 'show']);
             Route::put('/teacher/landing', [TeacherLandingController::class, 'update']);
+            Route::post('/teacher/landing/media', [TeacherLandingController::class, 'media']);
 
             // Catalog (M04) — course taxonomy + structure. Courses bind by uuid
             // (no id enumeration); nested units/lessons bind by id (own data).
@@ -202,6 +218,8 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::post('/teacher/media/uploads', [TeacherMediaController::class, 'startUpload']);
             Route::post('/teacher/media/uploads/{media:uuid}/complete', [TeacherMediaController::class, 'completeUpload']);
             Route::get('/teacher/media/{media:uuid}', [TeacherMediaController::class, 'show']);
+            // Teacher self-preview → same encrypted-HLS flow (returns manifest_url + key_url).
+            Route::post('/teacher/media/{media:uuid}/preview', [TeacherMediaController::class, 'preview']);
 
             // Exams & assignments — teacher authoring + grading (M08)
             Route::get('/teacher/courses/{course:uuid}/exams', [ExamController::class, 'index']);
@@ -232,12 +250,26 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             // Audit log (M18)
             Route::get('/teacher/audit-logs', [AuditLogController::class, 'teacher']);
 
+            // Centers (M12) — branches, activation codes, attendance, offline sync
+            Route::get('/teacher/centers', [CenterController::class, 'index']);
+            Route::post('/teacher/centers', [CenterController::class, 'store']);
+            Route::put('/teacher/centers/{center:uuid}', [CenterController::class, 'update']);
+            Route::delete('/teacher/centers/{center:uuid}', [CenterController::class, 'destroy']);
+            Route::post('/teacher/centers/sync', CenterSyncController::class);
+            Route::get('/teacher/centers/{center:uuid}/attendance', [AttendanceController::class, 'index']);
+            Route::post('/teacher/centers/{center:uuid}/attendance', [AttendanceController::class, 'store']);
+            Route::get('/teacher/codes', [ActivationCodeController::class, 'index']);
+            Route::post('/teacher/codes/batch', [ActivationCodeController::class, 'batch']);
+            Route::post('/teacher/codes/{code:uuid}/disable', [ActivationCodeController::class, 'disable']);
+
             // Students (M17) — the teacher's full control over their own students.
             Route::get('/teacher/students', [StudentController::class, 'index']);
             Route::post('/teacher/students', [StudentController::class, 'store']);
             Route::get('/teacher/students/{student:uuid}', [StudentController::class, 'show']);
             Route::patch('/teacher/students/{student:uuid}', [StudentController::class, 'update']);
             Route::delete('/teacher/students/{student:uuid}', [StudentController::class, 'destroy']);
+            Route::post('/teacher/students/{student:uuid}/reset-password', [StudentController::class, 'resetPassword']);
+            Route::get('/teacher/students/{student:uuid}/export', [StudentController::class, 'export']);
 
             // Access (enrollments)
             Route::get('/teacher/students/{student:uuid}/enrollments', [StudentEnrollmentController::class, 'index']);
@@ -246,11 +278,14 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
 
             // Money
             Route::get('/teacher/students/{student:uuid}/wallet', [StudentFinanceController::class, 'wallet']);
+            Route::get('/teacher/students/{student:uuid}/wallet/ledger', [StudentFinanceController::class, 'ledger']);
             Route::post('/teacher/students/{student:uuid}/wallet/adjust', [StudentFinanceController::class, 'adjust']);
+            Route::post('/teacher/students/{student:uuid}/wallet/set', [StudentFinanceController::class, 'setBalance']);
             Route::get('/teacher/students/{student:uuid}/orders', [StudentFinanceController::class, 'orders']);
 
             // Activity
             Route::get('/teacher/students/{student:uuid}/progress', [StudentActivityController::class, 'progress']);
+            Route::get('/teacher/students/{student:uuid}/activity', [StudentActivityController::class, 'history']);
             Route::post('/teacher/students/{student:uuid}/notify', [StudentActivityController::class, 'notify']);
 
             // Parents (M13)

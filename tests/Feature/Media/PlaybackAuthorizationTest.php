@@ -15,6 +15,7 @@ use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Media\Enums\MediaStatus;
 use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Models\MediaAsset;
+use App\Modules\Media\Models\MediaRendition;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -23,6 +24,10 @@ use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
+/**
+ * Access control + encrypted-HLS delivery shape. A ready rendition is seeded so
+ * these run without FFmpeg; the real transcode is exercised in EncryptedHlsTest.
+ */
 class PlaybackAuthorizationTest extends TestCase
 {
     use RefreshDatabase;
@@ -33,6 +38,7 @@ class PlaybackAuthorizationTest extends TestCase
     {
         parent::setUp();
         Cache::flush();
+        Storage::fake('local');
         $this->tenant = Tenant::create(['slug' => 'demo', 'name' => 'Demo', 'status' => TenantStatus::Active]);
     }
 
@@ -65,20 +71,43 @@ class PlaybackAuthorizationTest extends TestCase
         $lesson->tenant_id = $this->tenant->id;
         $lesson->save();
 
-        $asset = new MediaAsset(['type' => MediaType::HlsVideo->value, 'status' => MediaStatus::Ready->value]);
+        $asset = new MediaAsset(['type' => MediaType::HlsVideo->value, 'status' => MediaStatus::Ready->value, 'source_key' => 'media/source/x.mp4']);
         $asset->tenant_id = $this->tenant->id;
         $asset->save();
+        Storage::disk('local')->put('media/source/x.mp4', 'SOURCE');
 
         $lesson->update(['video_asset_id' => $asset->id]);
 
         return $lesson->fresh();
     }
 
-    public function test_enrolled_student_gets_playback_token_and_key(): void
+    /** Seed a ready encrypted rendition for (asset, user) so issue() skips FFmpeg. */
+    private function seedRendition(int $assetId, int $userId): MediaRendition
+    {
+        $asset = MediaAsset::withoutGlobalScopes()->find($assetId);
+        $dir = "media/hls/{$asset->uuid}/{$userId}";
+        Storage::disk('local')->put("{$dir}/index.m3u8",
+            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n"
+            .'#EXT-X-KEY:METHOD=AES-128,URI="__KEYURI__",IV=0x'.str_repeat('0', 32)."\n"
+            ."#EXTINF:6.0,\nseg_000.ts\n#EXT-X-ENDLIST\n");
+        Storage::disk('local')->put("{$dir}/seg_000.ts", 'ENCRYPTED-SEGMENT-BYTES');
+
+        $r = new MediaRendition;
+        $r->tenant_id = $this->tenant->id;
+        $r->media_asset_id = $assetId;
+        $r->user_id = $userId;
+        $r->fill(['status' => 'ready', 'hls_dir' => $dir, 'enc_key' => base64_encode(random_bytes(16)), 'iv' => str_repeat('0', 32), 'segment_count' => 1]);
+        $r->save();
+
+        return $r;
+    }
+
+    public function test_enrolled_student_streams_encrypted_hls_and_gets_raw_key(): void
     {
         $student = $this->student();
         $lesson = $this->lessonWithVideo();
         app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+        $this->seedRendition($lesson->video_asset_id, $student->id);
 
         Sanctum::actingAs($student);
         $res = $this->withHeader('X-Tenant', 'demo')
@@ -87,38 +116,23 @@ class PlaybackAuthorizationTest extends TestCase
             ->assertJsonStructure(['data' => ['token', 'manifest_url', 'key_url', 'expires_at']]);
 
         $token = $res->json('data.token');
+        $manifest = $res->json('data.manifest_url');
+        $this->assertStringContainsString("/api/v1/media/stream/{$token}", $manifest);
 
-        // Key endpoint releases the AES key for a valid token.
-        $this->getJson("/api/v1/media/key/{$token}")
-            ->assertOk()
-            ->assertJsonStructure(['data' => ['key']]);
+        // Playlist is encrypted HLS with the key + segment bound to the token — not raw MP4.
+        $playlist = $this->get($manifest)->assertOk()
+            ->assertHeader('Content-Type', 'application/vnd.apple.mpegurl')->getContent();
+        $this->assertStringContainsString('#EXT-X-KEY:METHOD=AES-128', $playlist);
+        $this->assertStringContainsString("/api/v1/media/key/{$token}", $playlist);
+        $this->assertStringContainsString("/api/v1/media/segment/{$token}/seg_000.ts", $playlist);
+
+        // Segment is served (encrypted); key endpoint returns exactly 16 raw bytes.
+        $this->get("/api/v1/media/segment/{$token}/seg_000.ts")->assertOk()->assertHeader('Content-Type', 'video/mp2t');
+        $key = $this->get("/api/v1/media/key/{$token}")->assertOk()->assertHeader('Content-Type', 'application/octet-stream');
+        $this->assertSame(16, strlen($key->getContent()));
 
         // nginx authz accepts the token.
         $this->getJson("/api/v1/internal/media/authz?token={$token}")->assertNoContent();
-    }
-
-    public function test_enrolled_student_streams_the_video_via_manifest_url(): void
-    {
-        Storage::fake('public');
-        $student = $this->student();
-        $lesson = $this->lessonWithVideo();
-
-        $asset = MediaAsset::withoutGlobalScopes()->find($lesson->video_asset_id);
-        Storage::disk('public')->put($path = "media/source/{$asset->uuid}.mp4", 'FAKE-MP4-BYTES');
-        $asset->update(['source_key' => $path]);
-
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
-        Sanctum::actingAs($student);
-
-        $manifest = $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/media/lessons/{$lesson->id}/playback")
-            ->assertOk()->json('data.manifest_url');
-
-        $this->assertStringContainsString('/api/v1/media/stream/', $manifest);
-
-        // The manifest URL (token in the path) actually streams the video.
-        $stream = $this->get($manifest)->assertOk();
-        $this->assertStringContainsString('video', strtolower((string) $stream->headers->get('Content-Type')));
     }
 
     public function test_unenrolled_student_is_denied_playback(): void
@@ -136,6 +150,7 @@ class PlaybackAuthorizationTest extends TestCase
     {
         $student = $this->student();
         $lesson = $this->lessonWithVideo(freePreview: true);
+        $this->seedRendition($lesson->video_asset_id, $student->id);
 
         Sanctum::actingAs($student);
         $this->withHeader('X-Tenant', 'demo')
@@ -145,13 +160,32 @@ class PlaybackAuthorizationTest extends TestCase
 
     public function test_invalid_token_key_and_authz_are_denied(): void
     {
-        $this->getJson('/api/v1/media/key/not-a-real-token')->assertStatus(403);
+        $this->get('/api/v1/media/key/not-a-real-token')->assertStatus(403);
+        $this->get('/api/v1/media/stream/not-a-real-token')->assertStatus(403);
         $this->getJson('/api/v1/internal/media/authz?token=nope')->assertStatus(403);
+    }
+
+    public function test_stolen_token_key_stops_working_once_enrollment_lapses(): void
+    {
+        $student = $this->student();
+        $lesson = $this->lessonWithVideo();
+        $enroll = app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+        $this->seedRendition($lesson->video_asset_id, $student->id);
+
+        Sanctum::actingAs($student);
+        $token = $this->withHeader('X-Tenant', 'demo')
+            ->postJson("/api/v1/media/lessons/{$lesson->id}/playback")->assertOk()->json('data.token');
+
+        // Key works while enrolled…
+        $this->get("/api/v1/media/key/{$token}")->assertOk();
+
+        // …revoke access; the SAME token can no longer fetch the key.
+        $enroll->delete();
+        $this->get("/api/v1/media/key/{$token}")->assertStatus(403);
     }
 
     public function test_cross_tenant_lesson_playback_is_404(): void
     {
-        // Lesson belongs to `demo`; a student of another tenant requests it.
         $lesson = $this->lessonWithVideo();
         $other = Tenant::create(['slug' => 'other', 'name' => 'Other', 'status' => TenantStatus::Active]);
         $intruder = User::factory()->create();
@@ -163,6 +197,6 @@ class PlaybackAuthorizationTest extends TestCase
         Sanctum::actingAs($intruder);
         $this->withHeader('X-Tenant', 'other')
             ->postJson("/api/v1/media/lessons/{$lesson->id}/playback")
-            ->assertStatus(404); // route-model binding scoped to `other` → not found
+            ->assertStatus(404);
     }
 }

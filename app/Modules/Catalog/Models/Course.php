@@ -28,8 +28,13 @@ class Course extends Model
 
     protected $fillable = [
         'title',
+        'subtitle',
         'slug',
         'description',
+        'learning_outcomes',
+        'requirements',
+        'audience',
+        'parts',
         'category_id',
         'price_minor',
         'currency',
@@ -40,6 +45,7 @@ class Course extends Model
         'purchase_enabled',
         'is_center',
         'cover_url',
+        'promo_video_url',
         'points',
     ];
 
@@ -51,6 +57,10 @@ class Course extends Model
         'is_center' => 'boolean',
         'price_minor' => 'integer',
         'points' => 'integer',
+        'learning_outcomes' => 'array',
+        'requirements' => 'array',
+        'audience' => 'array',
+        'parts' => 'array',
     ];
 
     public function uniqueIds(): array

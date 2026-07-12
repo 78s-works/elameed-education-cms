@@ -27,6 +27,8 @@ class LessonResource extends JsonResource
             'has_video' => $this->video_asset_id !== null,
             'visibility' => $this->visibility?->value,
             'publish_at' => $this->publish_at?->toIso8601String(),
+            // One video (when loaded) + the many attachments (pdf/file/link).
+            'video' => $this->whenLoaded('videoAsset', fn () => new MediaAssetResource($this->videoAsset)),
             'attachments' => MediaAssetResource::collection($this->whenLoaded('attachments')),
         ];
     }

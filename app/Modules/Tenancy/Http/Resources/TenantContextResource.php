@@ -31,12 +31,8 @@ class TenantContextResource extends JsonResource
                 'secondary_color' => $profile?->secondary_color,
                 'bio' => $profile?->bio,
                 'socials' => $profile?->socials ?? (object) [],
-                // Only visible sections, in configured order, for public render.
-                'landing_sections' => collect($profile?->landing_sections ?? [])
-                    ->filter(fn ($s) => ($s['visible'] ?? false) === true)
-                    ->pluck('key')
-                    ->values()
-                    ->all(),
+                // Landing content moved to GET /tenant/landing (LANDING_CONTRACT_V2.md).
+                // `layout`/`landing_sections` are no longer served here.
             ],
             'locale' => [
                 'default' => 'ar',       // Arabic default, RTL (PRD §9 / NFRs)

@@ -21,7 +21,20 @@ class CourseRequest extends FormRequest
 
         return [
             'title' => ['required', 'string', 'max:255'],
+            'subtitle' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
+            // Marketing copy — plain string lists the frontend renders as bullets.
+            'learning_outcomes' => ['nullable', 'array', 'max:30'],
+            'learning_outcomes.*' => ['string', 'max:300'],
+            'requirements' => ['nullable', 'array', 'max:30'],
+            'requirements.*' => ['string', 'max:300'],
+            'audience' => ['nullable', 'array', 'max:30'],
+            'audience.*' => ['string', 'max:300'],
+            // Teacher-authored curriculum outline (separate from the real units→lessons tree).
+            'parts' => ['nullable', 'array', 'max:50'],
+            'parts.*.title' => ['required', 'string', 'max:255'],
+            'parts.*.lessons_count' => ['nullable', 'integer', 'min:0'],
+            'parts.*.duration_min' => ['nullable', 'integer', 'min:0'],
             // Category must belong to THIS tenant.
             'category_id' => ['nullable', Rule::exists('course_categories', 'id')->where('tenant_id', $tenantId)],
             'price_minor' => ['nullable', 'integer', 'min:0'],
@@ -33,6 +46,7 @@ class CourseRequest extends FormRequest
             'purchase_enabled' => ['boolean'],
             'is_center' => ['boolean'],
             'cover_url' => ['nullable', 'url', 'max:2048'],
+            'promo_video_url' => ['nullable', 'url', 'max:2048'], // public teaser (YouTube/hosted)
             'points' => ['nullable', 'integer', 'min:0'],
         ];
     }

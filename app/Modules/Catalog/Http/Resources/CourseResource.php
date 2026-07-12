@@ -16,6 +16,7 @@ class CourseResource extends JsonResource
         return [
             'uuid' => $this->uuid,
             'title' => $this->title,
+            'subtitle' => $this->subtitle,
             'slug' => $this->slug,
             'description' => $this->description,
             'category' => $this->whenLoaded('category', fn () => $this->category ? [
@@ -31,6 +32,7 @@ class CourseResource extends JsonResource
             'purchase_enabled' => $this->purchase_enabled,
             'is_center' => $this->is_center,
             'cover_url' => $this->cover_url,
+            'promo_video_url' => $this->promo_video_url,
             'points' => $this->points,
         ];
     }
