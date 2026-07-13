@@ -169,7 +169,6 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::post('/exams/{exam:uuid}/attempts/{attempt}/submit', [AttemptController::class, 'submit']);
         Route::get('/exams/{exam:uuid}/attempts/{attempt}', [AttemptController::class, 'result']);
 
-        // Student dashboard (M10)
         Route::get('/me/courses', [StudentCoursesController::class, 'index']);
 
         // Parent portal (M13) — parent role in the current tenant
