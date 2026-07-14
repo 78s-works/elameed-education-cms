@@ -7,13 +7,11 @@ return [
     | Cross-Origin Resource Sharing (CORS)
     |--------------------------------------------------------------------------
     |
-    | CORS is handled by App\Support\Http\HandleDynamicCors (it replaces the
-    | framework's static HandleCors). `allowed_origins` below is still the source
-    | of the ALWAYS-allowed origins — the shared SPA and local dev. On top of
-    | that list the middleware also allows any subdomain of tenancy.base_domain
-    | and any registered, active tenant custom domain (tenant_domains). So this
-    | list is only for fixed, non-tenant origins; tenant domains are dynamic.
-    | Auth is via Sanctum BEARER tokens (not cookies), so credentials stay off.
+    | The Vue SPA runs on a different origin (its own host:port), so the browser
+    | enforces CORS on every API call. We allow the SPA origin(s) explicitly.
+    | Auth is via Sanctum BEARER tokens (not cookies), so credentials support is
+    | off and a specific origin list is fine. `X-Tenant` is covered by the `*`
+    | allowed headers.
     |
     */
 
