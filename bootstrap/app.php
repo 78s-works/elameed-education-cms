@@ -6,9 +6,11 @@ use App\Modules\PlatformAdmin\Http\Middleware\EnsurePlatformAdmin;
 use App\Modules\Tenancy\Http\Middleware\EnsureRegisteredDomain;
 use App\Modules\Tenancy\Http\Middleware\ResolveTenant;
 use App\Support\Http\ApiExceptionRenderer;
+use App\Support\Http\HandleDynamicCors;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Middleware\HandleCors;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 
@@ -20,6 +22,12 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Dynamic multi-tenant CORS: reflects the caller's Origin when it is a
+        // configured origin, a base-domain subdomain, or a registered tenant
+        // custom domain. Replaces the static HandleCors in its (first) slot so
+        // the preflight is answered ahead of the domain gate / auth.
+        $middleware->replace(HandleCors::class, HandleDynamicCors::class);
+
         $middleware->alias([
             'role' => EnsureTenantRole::class,
             'admin' => EnsurePlatformAdmin::class,
