@@ -5,6 +5,7 @@ namespace App\Modules\Media\Services;
 use App\Models\User;
 use App\Modules\Media\Models\MediaAsset;
 use App\Modules\Media\Models\MediaRendition;
+use App\Modules\Media\Support\MediaPaths;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
@@ -56,7 +57,7 @@ class HlsTranscoder
 
         $key = random_bytes(16);
         $iv = bin2hex(random_bytes(16));
-        $dir = "media/hls/{$asset->uuid}/{$viewer->getKey()}";
+        $dir = MediaPaths::hlsDir($asset, $viewer->getKey());
 
         $rendition ??= new MediaRendition;
         $rendition->tenant_id = $asset->tenant_id;
@@ -80,28 +81,29 @@ class HlsTranscoder
     private function transcode(string $sourceKey, string $dir, string $key, string $iv, string $watermark): int
     {
         $disk = Storage::disk($this->disk);
-        $disk->makeDirectory($dir);
-
-        // Per-transcode scratch dir. FFmpeg RUNS from here, so the drawtext filter
-        // references font/text by bare relative names — avoiding the Windows
-        // drive-letter colon that FFmpeg's filtergraph parser can't escape cleanly.
-        $tmp = 'media/tmp/'.bin2hex(random_bytes(8));
-        $disk->makeDirectory($tmp);
-
         $norm = static fn (string $p): string => str_replace('\\', '/', $p);
-        $source = $norm($disk->path($sourceKey));
-        $outDir = $norm($disk->path($dir));
-        $tmpDir = $norm($disk->path($tmp));
 
-        copy((string) config('media.watermark.font'), $tmpDir.'/font.ttf');
-        file_put_contents($tmpDir.'/wm.txt', $watermark);
-        file_put_contents($tmpDir.'/enc.key', $key); // FFmpeg reads the raw key to encrypt
-        // key_info: line1 = URI placeholder (rewritten per-request at serve time),
-        // line2 = key file, line3 = IV hex.
-        file_put_contents($tmpDir.'/keyinfo', "__KEYURI__\n".$tmpDir."/enc.key\n".$iv."\n");
+        // FFmpeg only speaks real local files, so everything happens in a LOCAL
+        // scratch dir; only the encrypted playlist + segments are then uploaded to
+        // the media store. FFmpeg RUNS from $work, so the drawtext filter and
+        // key_info reference font/text/key by bare relative names — dodging the
+        // Windows drive-letter colon its filtergraph parser can't escape.
+        $work = storage_path('app/media-scratch/'.bin2hex(random_bytes(8)));
+        $out = $work.'/out';
+        @mkdir($out, 0775, true);
 
         try {
-            $result = Process::path($tmpDir)->timeout(600)->run([
+            $source = $norm($this->localSource($disk, $sourceKey, $work));
+
+            copy((string) config('media.watermark.font'), $work.'/font.ttf');
+            file_put_contents($work.'/wm.txt', $watermark);
+            file_put_contents($work.'/enc.key', $key); // FFmpeg reads the raw key to encrypt
+            // key_info: line1 = URI placeholder (rewritten per-request at serve time),
+            // line2 = key file (relative to cwd), line3 = IV hex. enc.key is NEVER
+            // uploaded to the store — the key lives only in the DB (encrypted).
+            file_put_contents($work.'/keyinfo', "__KEYURI__\nenc.key\n".$iv."\n");
+
+            $result = Process::path($work)->timeout(600)->run([
                 $this->ffmpeg(),
                 '-y',
                 '-i', $source,
@@ -110,19 +112,93 @@ class HlsTranscoder
                 '-c:a', 'aac', '-b:a', '128k',
                 '-hls_time', (string) config('media.hls_time', 6),
                 '-hls_playlist_type', 'vod',
-                '-hls_key_info_file', $tmpDir.'/keyinfo',
-                '-hls_segment_filename', $outDir.'/seg_%03d.ts',
-                $outDir.'/index.m3u8',
+                '-hls_key_info_file', 'keyinfo',
+                '-hls_segment_filename', $norm($out).'/seg_%03d.ts',
+                $norm($out).'/index.m3u8',
             ]);
 
             if (! $result->successful()) {
                 throw new RuntimeException('FFmpeg failed: '.mb_substr($result->errorOutput() ?: $result->output(), -1500));
             }
+
+            return $this->uploadOutput($disk, $out, $dir);
         } finally {
-            $disk->deleteDirectory($tmp); // key material never lingers on disk
+            $this->rmrf($work); // scratch + key material never linger on disk
+        }
+    }
+
+    /**
+     * A real local path to the source. Local disks expose one directly; a remote
+     * (S3) disk has none, so the source is streamed down to scratch first.
+     */
+    private function localSource(\Illuminate\Contracts\Filesystem\Filesystem $disk, string $sourceKey, string $work): string
+    {
+        try {
+            $path = $disk->path($sourceKey);
+            if (is_file($path)) {
+                return $path;
+            }
+        } catch (\Throwable) {
+            // Remote disk — no local path; fall through to streaming download.
         }
 
-        return count(glob($outDir.'/seg_*.ts') ?: []);
+        $local = $work.'/source.mp4';
+        $stream = $disk->readStream($sourceKey);
+        if ($stream === null) {
+            throw new RuntimeException('Source file for this media is missing.');
+        }
+        $dest = fopen($local, 'wb');
+        stream_copy_to_stream($stream, $dest);
+        fclose($dest);
+        if (is_resource($stream)) {
+            fclose($stream);
+        }
+
+        return $local;
+    }
+
+    /**
+     * Stream the FFmpeg output (index.m3u8 + seg_*.ts) up to the media store.
+     *
+     * @return int segment count
+     */
+    private function uploadOutput(\Illuminate\Contracts\Filesystem\Filesystem $disk, string $outLocalDir, string $destDir): int
+    {
+        $segments = 0;
+
+        foreach (glob($outLocalDir.'/*') ?: [] as $file) {
+            $name = basename($file);
+            $stream = fopen($file, 'rb');
+            $disk->writeStream($destDir.'/'.$name, $stream);
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+            if (str_starts_with($name, 'seg_')) {
+                $segments++;
+            }
+        }
+
+        if ($segments === 0 || ! $disk->exists($destDir.'/index.m3u8')) {
+            throw new RuntimeException('Transcode produced no playable output.');
+        }
+
+        return $segments;
+    }
+
+    private function rmrf(string $dir): void
+    {
+        if (! is_dir($dir)) {
+            return;
+        }
+
+        $items = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST,
+        );
+        foreach ($items as $item) {
+            $item->isDir() ? @rmdir($item->getPathname()) : @unlink($item->getPathname());
+        }
+        @rmdir($dir);
     }
 
     /** drawtext caption: semi-transparent, boxed, jumping between corners over time. */

@@ -10,9 +10,12 @@ use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Media\Contracts\MediaProvider;
 use App\Modules\Media\Enums\MediaStatus;
+use App\Modules\Media\Jobs\RenderRenditionJob;
 use App\Modules\Media\Models\MediaAsset;
 use App\Modules\Media\Models\MediaRendition;
 use App\Modules\Media\Models\PlaybackSession;
+use App\Modules\Media\Support\MediaPaths;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
@@ -34,7 +37,6 @@ class PlaybackService
     public function __construct(
         private readonly EnrollmentService $enrollments,
         private readonly MediaProvider $provider,
-        private readonly HlsTranscoder $transcoder,
     ) {}
 
     /**
@@ -46,7 +48,10 @@ class PlaybackService
     {
         $this->assertAccess($tenantId, $user, $lesson);
         $asset = $this->readyVideo($lesson);
-        $this->transcoder->ensureRendition($asset, $user, $this->watermark($user));
+
+        if ($this->ensureReadyOrQueue($asset, $user, $this->watermark($user)) === null) {
+            return $this->processing($asset);
+        }
 
         return $this->openSession($tenantId, $user, $asset, $lesson, 'student', $fingerprint, $ip);
     }
@@ -65,7 +70,9 @@ class PlaybackService
             throw new ConflictHttpException('This media has no source to preview.');
         }
 
-        $this->transcoder->ensureRendition($asset, $teacher, $this->watermark($teacher, 'preview'));
+        if ($this->ensureReadyOrQueue($asset, $teacher, $this->watermark($teacher, 'preview')) === null) {
+            return $this->processing($asset);
+        }
 
         return $this->openSession($tenantId, $teacher, $asset, $asset->lesson_id ? Lesson::withoutGlobalScopes()->find($asset->lesson_id) : null, 'preview', null, $ip);
     }
@@ -113,10 +120,73 @@ class PlaybackService
         $session->save();
 
         return [
+            'status' => 'ready',
             'token' => $token,
             'manifest_url' => $this->provider->manifestUrl($asset, $token),
             'key_url' => url("/api/v1/media/key/{$token}"),
             'expires_at' => $expiresAt->toIso8601String(),
+        ];
+    }
+
+    /**
+     * The ready rendition for (asset, viewer), or null after queuing a transcode
+     * when it isn't ready. Idempotent: a rendition already queued/transcoding is
+     * left alone; a failed one is retried. Keeps playback authorization instant —
+     * the heavy FFmpeg work never runs on the request thread.
+     */
+    private function ensureReadyOrQueue(MediaAsset $asset, User $user, string $watermark): ?MediaRendition
+    {
+        $disk = Storage::disk((string) config('media.disk', 'local'));
+
+        $rendition = MediaRendition::withoutGlobalScopes()
+            ->where('media_asset_id', $asset->getKey())
+            ->where('user_id', $user->getKey())
+            ->first();
+
+        if ($rendition && $rendition->isReady() && $disk->exists($rendition->hls_dir.'/index.m3u8')) {
+            return $rendition;
+        }
+
+        // Not ready: (re)queue only if there's no in-flight attempt.
+        if ($rendition === null || $rendition->status === 'failed') {
+            $rendition ??= new MediaRendition;
+            $rendition->tenant_id = $asset->tenant_id;
+            $rendition->media_asset_id = $asset->getKey();
+            $rendition->user_id = $user->getKey();
+            $rendition->fill([
+                'status' => 'queued',
+                'hls_dir' => MediaPaths::hlsDir($asset, $user->getKey()),
+                'enc_key' => '',
+                'iv' => '',
+                'segment_count' => 0,
+                'error' => null,
+            ]);
+            $rendition->save();
+
+            RenderRenditionJob::dispatch($asset->getKey(), (int) $user->getKey(), $watermark);
+
+            // On a synchronous queue the job just ran inline — re-check so the
+            // caller can play immediately instead of being told to poll.
+            $fresh = MediaRendition::withoutGlobalScopes()
+                ->where('media_asset_id', $asset->getKey())
+                ->where('user_id', $user->getKey())
+                ->first();
+
+            if ($fresh && $fresh->isReady() && $disk->exists($fresh->hls_dir.'/index.m3u8')) {
+                return $fresh;
+            }
+        }
+
+        return null;
+    }
+
+    /** @return array{status:string, media_uuid:string, retry_after:int} */
+    private function processing(MediaAsset $asset): array
+    {
+        return [
+            'status' => 'processing',
+            'media_uuid' => (string) $asset->uuid,
+            'retry_after' => 3,
         ];
     }
 

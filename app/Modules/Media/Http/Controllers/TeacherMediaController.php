@@ -8,6 +8,7 @@ use App\Modules\Media\Enums\MediaStatus;
 use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Http\Resources\MediaAssetResource;
 use App\Modules\Media\Models\MediaAsset;
+use App\Modules\Media\Services\MediaLibrary;
 use App\Modules\Media\Services\PlaybackService;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
@@ -33,6 +34,7 @@ class TeacherMediaController
         private readonly TenantContext $context,
         private readonly MediaProvider $provider,
         private readonly PlaybackService $playback,
+        private readonly MediaLibrary $library,
     ) {}
 
     public function startUpload(Request $request): JsonResponse
@@ -69,11 +71,18 @@ class TeacherMediaController
             ], 201);
         }
 
-        // Async path — client uploads to object storage then calls complete.
+        // Async path — client uploads straight to the external store then calls
+        // complete. The presigned target lands at the asset's deterministic key,
+        // which we persist so the transcode worker can find the source later.
         $asset->save();
 
+        $upload = $this->provider->createUploadTarget($asset);
+        if (! empty($upload['key'])) {
+            $asset->forceFill(['source_key' => $upload['key']])->save();
+        }
+
         return response()->json([
-            'data' => ['media' => (new MediaAssetResource($asset))->resolve($request), 'upload' => $this->provider->createUploadTarget($asset)],
+            'data' => ['media' => (new MediaAssetResource($asset->fresh()))->resolve($request), 'upload' => $upload],
         ], 201);
     }
 
@@ -109,11 +118,27 @@ class TeacherMediaController
     public function completeUpload(Request $request, MediaAsset $media): JsonResponse
     {
         if ($media->status !== MediaStatus::Ready) {
+            // The client claims the direct-to-store upload finished — verify the
+            // object is actually there before marking ready, so a failed upload
+            // can't leave a lesson pointing at a missing video.
+            if (! $media->source_key || ! Storage::disk($this->disk())->exists($media->source_key)) {
+                $media->update(['status' => MediaStatus::Failed->value]);
+                throw ValidationException::withMessages(['file' => 'The uploaded video was not found on the media store.']);
+            }
+
             $media->update(['status' => MediaStatus::Ready->value]);
             $this->linkLessonVideo($media->lesson_id ? Lesson::query()->find($media->lesson_id) : null, $media);
         }
 
         return response()->json(['data' => (new MediaAssetResource($media->fresh()))->resolve($request)]);
+    }
+
+    /** Delete a video: its store objects (source + renditions), rows, and lesson link. */
+    public function destroy(Request $request, MediaAsset $media): JsonResponse
+    {
+        $this->library->delete($media);
+
+        return response()->json(['data' => ['deleted' => true]]);
     }
 
     public function show(Request $request, MediaAsset $media): MediaAssetResource
@@ -134,7 +159,9 @@ class TeacherMediaController
             $request->ip(),
         );
 
-        return response()->json(['data' => $result]);
+        $status = ($result['status'] ?? 'ready') === 'processing' ? 202 : 200;
+
+        return response()->json(['data' => $result], $status);
     }
 
     private function resolveLesson(?int $lessonId): ?Lesson
@@ -153,8 +180,20 @@ class TeacherMediaController
 
     private function linkLessonVideo(?Lesson $lesson, MediaAsset $asset): void
     {
-        if ($lesson !== null) {
-            Lesson::query()->whereKey($lesson->getKey())->update(['video_asset_id' => $asset->getKey()]);
+        if ($lesson === null) {
+            return;
+        }
+
+        $previousId = $lesson->video_asset_id;
+        Lesson::query()->whereKey($lesson->getKey())->update(['video_asset_id' => $asset->getKey()]);
+
+        // Replacing an existing video → purge the old asset and its store objects
+        // so we never orphan source files or encrypted renditions.
+        if ($previousId && (int) $previousId !== (int) $asset->getKey()) {
+            $old = MediaAsset::withoutGlobalScopes()->find($previousId);
+            if ($old !== null) {
+                $this->library->delete($old);
+            }
         }
     }
 
