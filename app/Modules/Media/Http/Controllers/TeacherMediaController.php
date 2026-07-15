@@ -63,6 +63,7 @@ class TeacherMediaController
             $asset->save();
 
             $this->linkLessonVideo($lesson, $asset);
+            $this->attachThumbnail($asset);
 
             return response()->json([
                 'data' => ['media' => (new MediaAssetResource($asset->fresh()))->resolve($request), 'upload' => null],
@@ -98,6 +99,7 @@ class TeacherMediaController
         Storage::disk($this->disk())->put($path, $bytes);
 
         $asset->forceFill(['source_key' => $path, 'status' => MediaStatus::Ready->value])->save();
+        $this->attachThumbnail($asset);
 
         if ($asset->lesson_id) {
             Lesson::withoutGlobalScopes()->whereKey($asset->lesson_id)->update(['video_asset_id' => $asset->getKey()]);
@@ -162,4 +164,14 @@ class TeacherMediaController
     {
         return (string) config('media.disk', 'local');
     }
+
+    /** Best-effort local poster (remote videos get their thumbnail from the host callback). */
+    private function attachThumbnail(MediaAsset $asset): void
+    {
+        $url = app(\App\Modules\Media\Services\MediaThumbnailService::class)->forLocalAsset($asset);
+        if ($url !== null) {
+            $asset->forceFill(['thumbnail_url' => $url])->save();
+        }
+    }
 }
+

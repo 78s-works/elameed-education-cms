@@ -15,6 +15,7 @@ class PlaybackSession extends Model
         'user_id',
         'lesson_id',
         'media_asset_id',
+        'media_version_id',
         'token_hash',
         'device_fingerprint',
         'ip',

@@ -32,4 +32,39 @@ return [
         'opacity' => env('MEDIA_WATERMARK_OPACITY', '0.35'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Remote Media Host (OVH)
+    |--------------------------------------------------------------------------
+    | Only consulted when 'provider' === 'remote'. Every value is env-driven so
+    | going live is a configuration change, not a code change. Secrets are never
+    | persisted to the DB or written to logs; the playback signing key is read
+    | from a file path, not the environment. See docs/MEDIA_HOST_API_v1.md.
+    */
+    'host' => [
+        'base_url' => rtrim((string) env('MEDIA_HOST_BASE_URL', ''), '/'),
+        'api_key' => env('MEDIA_HOST_API_KEY'),
+        'api_secret' => env('MEDIA_HOST_API_SECRET'),
+
+        // HMAC secret the Media Host signs its processing callbacks with.
+        'callback_secret' => env('MEDIA_HOST_CALLBACK_SECRET'),
+
+        // Asymmetric key pair for signing (private) / verifying (public) the
+        // short-lived playback tokens handed to the Media Host / player.
+        'playback_private_key_path' => env('MEDIA_HOST_PLAYBACK_PRIVATE_KEY_PATH'),
+        'playback_public_key_path' => env('MEDIA_HOST_PLAYBACK_PUBLIC_KEY_PATH'),
+
+        'connect_timeout' => (int) env('MEDIA_HOST_CONNECT_TIMEOUT', 10),
+        'request_timeout' => (int) env('MEDIA_HOST_REQUEST_TIMEOUT', 30),
+        'upload_session_ttl' => (int) env('MEDIA_HOST_UPLOAD_SESSION_TTL', 3600),
+        'playback_token_ttl' => (int) env('MEDIA_HOST_PLAYBACK_TOKEN_TTL', 900),
+        'max_upload_bytes' => env('MEDIA_HOST_MAX_UPLOAD_BYTES') !== null && env('MEDIA_HOST_MAX_UPLOAD_BYTES') !== ''
+            ? (int) env('MEDIA_HOST_MAX_UPLOAD_BYTES')
+            : null,
+        'verify_ssl' => filter_var(env('MEDIA_HOST_VERIFY_SSL', true), FILTER_VALIDATE_BOOL),
+
+        // Contract version this client speaks (sent as X-Media-Api-Version).
+        'api_version' => env('MEDIA_HOST_API_VERSION', 'v1'),
+    ],
+
 ];

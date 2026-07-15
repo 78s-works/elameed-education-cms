@@ -31,7 +31,10 @@ use App\Modules\Identity\Http\Controllers\Teacher\StudentEnrollmentController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentFinanceController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentParentController;
 use App\Modules\Media\Http\Controllers\InternalMediaController;
+use App\Modules\Media\Http\Controllers\MediaCallbackController;
 use App\Modules\Media\Http\Controllers\PlaybackController;
+use App\Modules\Media\Http\Controllers\RemotePlaybackController;
+use App\Modules\Media\Http\Controllers\Teacher\RemoteVideoController;
 use App\Modules\Media\Http\Controllers\TeacherMediaController;
 use App\Modules\Notifications\Http\Controllers\NotificationController;
 use App\Modules\PlatformAdmin\Http\Controllers\AdminReportController;
@@ -61,6 +64,10 @@ Route::prefix('v1')->group(function (): void {
     Route::get('/media/key/{token}', [PlaybackController::class, 'key']);
     Route::get('/internal/media/authz', [InternalMediaController::class, 'authz']);
     Route::post('/internal/transcode/callback', [InternalMediaController::class, 'transcodeCallback']);
+
+    // Remote Media Host processing callback (OVH). No tenant/bearer — the HMAC
+    // signature (X-Media-Signature) is the auth; replay-protected by X-Media-Event-Id.
+    Route::post('/media/callbacks/processing', [MediaCallbackController::class, 'processing'])->middleware('throttle:120,1');
 
     // Token-gated encrypted-HLS delivery. The token is carried in the URL (a
     // <video>/hls.js request can't send headers); segments are AES-128 encrypted
@@ -143,6 +150,8 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
 
         // Protected playback (M04, M22) — authorize issues a short-lived token.
         Route::post('/media/lessons/{lesson}/playback', [PlaybackController::class, 'authorize']);
+        // Remote (OVH Media Host) playback authorization — active when MEDIA_PROVIDER=remote.
+        Route::post('/media/remote/lessons/{lesson}/playback', [RemotePlaybackController::class, 'authorize']);
 
         // Progress (M10, M20)
         Route::post('/lessons/{lesson}/progress', [ProgressController::class, 'store']);
@@ -219,6 +228,17 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::get('/teacher/media/{media:uuid}', [TeacherMediaController::class, 'show']);
             // Teacher self-preview → same encrypted-HLS flow (returns manifest_url + key_url).
             Route::post('/teacher/media/{media:uuid}/preview', [TeacherMediaController::class, 'preview']);
+
+            // Remote (OVH Media Host) video lifecycle — active when MEDIA_PROVIDER=remote.
+            // Bound models are tenant-scoped, so cross-tenant ids resolve to 404.
+            Route::post('/teacher/remote-videos/uploads', [RemoteVideoController::class, 'startUpload']);
+            Route::post('/teacher/remote-videos/uploads/{session}/complete', [RemoteVideoController::class, 'complete']);
+            Route::get('/teacher/remote-videos/{media:uuid}', [RemoteVideoController::class, 'show']);
+            Route::post('/teacher/remote-videos/{media:uuid}/replace', [RemoteVideoController::class, 'replace']);
+            Route::post('/teacher/remote-videos/versions/{version}/retry', [RemoteVideoController::class, 'retry']);
+            Route::post('/teacher/remote-videos/versions/{version}/quarantine', [RemoteVideoController::class, 'quarantine']);
+            Route::post('/teacher/remote-videos/versions/{version}/restore', [RemoteVideoController::class, 'restore']);
+            Route::delete('/teacher/remote-videos/versions/{version}', [RemoteVideoController::class, 'purge']);
 
             // Exams & assignments — teacher authoring + grading (M08)
             Route::get('/teacher/courses/{course:uuid}/exams', [ExamController::class, 'index']);

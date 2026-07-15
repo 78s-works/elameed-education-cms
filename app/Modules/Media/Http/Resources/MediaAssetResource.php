@@ -19,6 +19,7 @@ class MediaAssetResource extends JsonResource
             'status' => $this->status->value,
             'title' => $this->title,
             'url' => $this->url,
+            'thumbnail_url' => $this->thumbnail_url,
             'downloadable' => $this->downloadable,
             'duration_sec' => $this->duration_sec,
         ];
