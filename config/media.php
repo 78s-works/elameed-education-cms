@@ -2,31 +2,16 @@
 
 return [
 
-    // Swappable media backend (02_Architecture.md §7 — DRM-later via MediaProvider):
-    //   local  → dev stub: upload lands on the media disk via a signed app route,
-    //            segments are proxied through the token-gated stream endpoints.
-    //   remote → production: presigned upload straight to the external store, and
-    //            segments delivered DIRECTLY from the store via presigned URLs
-    //            (the app never proxies video bytes).
+    // Swappable media backend (02_Architecture.md §7 — DRM-later via MediaProvider).
     'provider' => env('MEDIA_PROVIDER', 'local'),
 
-    // PRIVATE store for source + encrypted HLS. In production this points at the
-    // external S3-compatible `media` disk; the source MP4 and .ts segments must
-    // never be publicly reachable — delivery is via short-lived presigned URLs.
-    // Dev/tests use `media_local` (or `local`).
+    // PRIVATE disk for source + encrypted HLS renditions. MUST NOT be the public
+    // disk — the source MP4 and .ts segments must never be reachable via /storage;
+    // all delivery goes through the token-gated stream/segment/key endpoints.
     'disk' => env('MEDIA_DISK', 'local'),
 
-    // Playback token lifetime (seconds) — the app-side session token. Short so a
-    // copied token stops working quickly.
+    // Playback token / signed-URL lifetime (seconds). Short so links can't be shared.
     'playback_ttl' => (int) env('MEDIA_PLAYBACK_TTL', 120),
-
-    // Presigned segment/manifest URL lifetime (seconds) for direct-from-store
-    // delivery. Kept at/above one segment duration but short enough that a copied
-    // segment URL expires fast. Never longer than the playback token is useful.
-    'stream_ttl' => (int) env('MEDIA_STREAM_TTL', 90),
-
-    // Presigned upload-target lifetime (seconds) for direct-to-store uploads.
-    'upload_ttl' => (int) env('MEDIA_UPLOAD_TTL', 3600),
 
     // Shared secret the transcode worker signs its callback with.
     'transcode_secret' => env('MEDIA_TRANSCODE_SECRET', 'local-transcode-secret'),

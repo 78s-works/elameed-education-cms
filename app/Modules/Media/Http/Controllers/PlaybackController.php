@@ -41,41 +41,22 @@ class PlaybackController
             $request->ip(),
         );
 
-        // 202 while the viewer's encrypted rendition is still transcoding; the
-        // client polls until it flips to 200 with a token.
-        $status = ($result['status'] ?? 'ready') === 'processing' ? 202 : 200;
-
-        return response()->json(['data' => $result], $status);
+        return response()->json(['data' => $result]);
     }
 
-    /**
-     * The encrypted HLS playlist. The key URI always points at the token-gated
-     * app endpoint (tiny, access re-checked). Segment URIs point DIRECTLY at the
-     * store via short-lived presigned URLs when the disk supports them
-     * (production) — so the app never proxies video bytes and the player can
-     * range-request/seek straight from the store. On a local disk (dev/test) the
-     * segments fall back to the app-proxied endpoint.
-     */
+    /** The encrypted HLS playlist, with key + segment URIs bound to this token. */
     public function stream(string $token): Response
     {
         $rendition = $this->playback->renditionForToken($token);
-        $disk = Storage::disk($this->disk());
-        $playlist = (string) $disk->get($rendition->hls_dir.'/index.m3u8');
+        $playlist = Storage::disk($this->disk())->get($rendition->hls_dir.'/index.m3u8');
 
         $keyUrl = url("/api/v1/media/key/{$token}");
-        $playlist = preg_replace('/URI="[^"]*"/', 'URI="'.$keyUrl.'"', $playlist, 1);
+        $segBase = url("/api/v1/media/segment/{$token}");
 
-        if ($this->directDelivery($disk)) {
-            $expiry = now()->addSeconds((int) config('media.stream_ttl', 90));
-            $playlist = preg_replace_callback(
-                '/^(seg_\d+\.ts)$/m',
-                fn ($m) => $disk->temporaryUrl($rendition->hls_dir.'/'.$m[1], $expiry),
-                $playlist,
-            );
-        } else {
-            $segBase = url("/api/v1/media/segment/{$token}");
-            $playlist = preg_replace_callback('/^(seg_\d+\.ts)$/m', fn ($m) => $segBase.'/'.$m[1], $playlist);
-        }
+        // Point the #EXT-X-KEY at our token-gated key endpoint, and each relative
+        // segment name at the token-gated segment endpoint.
+        $playlist = preg_replace('/URI="[^"]*"/', 'URI="'.$keyUrl.'"', (string) $playlist, 1);
+        $playlist = preg_replace_callback('/^(seg_\d+\.ts)$/m', fn ($m) => $segBase.'/'.$m[1], (string) $playlist);
 
         return response($playlist, 200, [
             'Content-Type' => 'application/vnd.apple.mpegurl',
@@ -109,16 +90,5 @@ class PlaybackController
     private function disk(): string
     {
         return (string) config('media.disk', 'local');
-    }
-
-    /**
-     * Deliver segments straight from the store (presigned) vs. proxy them through
-     * the app. Direct delivery is used only with the remote provider on a disk
-     * that can actually mint presigned URLs; the local dev disk proxies instead.
-     */
-    private function directDelivery(\Illuminate\Contracts\Filesystem\Filesystem $disk): bool
-    {
-        return in_array((string) config('media.provider'), ['remote', 's3'], true)
-            && $disk->providesTemporaryUrls();
     }
 }

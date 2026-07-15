@@ -219,8 +219,6 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::get('/teacher/media/{media:uuid}', [TeacherMediaController::class, 'show']);
             // Teacher self-preview → same encrypted-HLS flow (returns manifest_url + key_url).
             Route::post('/teacher/media/{media:uuid}/preview', [TeacherMediaController::class, 'preview']);
-            // Delete a video → purges the source + every encrypted rendition from the store.
-            Route::delete('/teacher/media/{media:uuid}', [TeacherMediaController::class, 'destroy']);
 
             // Exams & assignments — teacher authoring + grading (M08)
             Route::get('/teacher/courses/{course:uuid}/exams', [ExamController::class, 'index']);

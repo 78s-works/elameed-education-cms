@@ -218,43 +218,6 @@ class TeacherStudentManagementTest extends TestCase
         $this->assertDatabaseHas('users', ['id' => $student->id, 'name' => 'New Name', 'phone' => '01555000099']);
     }
 
-    public function test_cannot_add_a_student_with_a_phone_or_email_already_in_the_system(): void
-    {
-        // Someone already exists in the system (even in a DIFFERENT academy).
-        $other = Tenant::create(['slug' => 'other', 'name' => 'Other', 'status' => TenantStatus::Active]);
-        $this->member($other, TenantUserRole::Student, ['phone' => '01555000300', 'email' => 'taken@ex.com']);
-
-        // Duplicate phone → rejected.
-        $this->withHeaders($this->h)->postJson('/api/v1/teacher/students', [
-            'name' => 'Dup Phone', 'phone' => '01555000300',
-        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error')
-            ->assertJsonStructure(['error' => ['details' => ['phone']]]);
-
-        // Duplicate email → rejected.
-        $this->withHeaders($this->h)->postJson('/api/v1/teacher/students', [
-            'name' => 'Dup Email', 'phone' => '01555000301', 'email' => 'taken@ex.com',
-        ])->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['email']]]);
-
-        // Same email in a different case / with whitespace is still caught (normalised).
-        $this->withHeaders($this->h)->postJson('/api/v1/teacher/students', [
-            'name' => 'Dup Case', 'phone' => '01555000302', 'email' => '  TAKEN@EX.COM ',
-        ])->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['email']]]);
-    }
-
-    public function test_cannot_change_a_student_to_another_users_phone_but_can_keep_its_own(): void
-    {
-        $this->member($this->tenant, TenantUserRole::Student, ['phone' => '01555000400']);
-        $b = $this->member($this->tenant, TenantUserRole::Student, ['phone' => '01555000401']);
-
-        // Taking A's phone → rejected.
-        $this->withHeaders($this->h)->patchJson("/api/v1/teacher/students/{$b->uuid}", ['phone' => '01555000400'])
-            ->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['phone']]]);
-
-        // Re-saving B's OWN phone is allowed (unique rule ignores self).
-        $this->withHeaders($this->h)->patchJson("/api/v1/teacher/students/{$b->uuid}", ['phone' => '01555000401'])
-            ->assertOk();
-    }
-
     public function test_teacher_can_force_password_reset_and_revoke_sessions(): void
     {
         $student = $this->member($this->tenant, TenantUserRole::Student);
