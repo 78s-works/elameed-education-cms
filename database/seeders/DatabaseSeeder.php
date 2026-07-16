@@ -31,5 +31,10 @@ class DatabaseSeeder extends Seeder
                 'is_platform_admin' => true,
             ],
         );
+
+        // Default teacher subscription plans (M03) — global, admin-managed.
+        $this->call([
+            PackageSeeder::class,
+        ]);
     }
 }

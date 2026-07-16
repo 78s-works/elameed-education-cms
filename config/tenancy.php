@@ -20,6 +20,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Reserved tenant slugs
+    |--------------------------------------------------------------------------
+    |
+    | Slugs that must never be provisioned for a tenant, because their subdomain
+    | ("<slug>.<base_domain>") would collide with a platform/central host — most
+    | importantly the admin console (admin.<base_domain>). Enforced by
+    | StoreTenantRequest so a teacher academy can never be handed a central host.
+    |
+    */
+
+    'reserved_slugs' => array_values(array_filter(array_map(
+        static fn (string $slug): string => strtolower(trim($slug)),
+        explode(',', (string) env('TENANCY_RESERVED_SLUGS', 'admin,www,api,app,mail,platform,central'))
+    ))),
+
+    /*
+    |--------------------------------------------------------------------------
     | Dev / tooling tenant override header
     |--------------------------------------------------------------------------
     |

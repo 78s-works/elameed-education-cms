@@ -2,6 +2,7 @@
 
 use App\Modules\Identity\Http\Middleware\EnsureActiveMembership;
 use App\Modules\Identity\Http\Middleware\EnsureTenantRole;
+use App\Modules\PlatformAdmin\Http\Middleware\EnsureCentralHost;
 use App\Modules\PlatformAdmin\Http\Middleware\EnsurePlatformAdmin;
 use App\Modules\Tenancy\Http\Middleware\EnsureRegisteredDomain;
 use App\Modules\Tenancy\Http\Middleware\ResolveTenant;
@@ -24,6 +25,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => EnsureTenantRole::class,
             'admin' => EnsurePlatformAdmin::class,
             'active' => EnsureActiveMembership::class,
+            // Pins the platform-admin console to a central/admin host — /admin/*
+            // must never answer on a teacher academy's domain.
+            'central' => EnsureCentralHost::class,
         ]);
 
         // `tenant` is a GROUP, not an alias: the domain gate runs first (rejects

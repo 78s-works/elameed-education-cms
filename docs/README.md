@@ -36,7 +36,8 @@ Postman collection in [`postman/`](../postman).
 | Notifications | 2 | [`api/notifications.md`](api/notifications.md) |
 | Reporting | 4 | [`api/reporting.md`](api/reporting.md) |
 | Platform Admin | 6 | [`api/platform-admin.md`](api/platform-admin.md) |
-| **Total** | **136** | |
+| Billing | 8 | [`api/billing.md`](api/billing.md) |
+| **Total** | **144** | |
 
 > These docs describe the **implemented** behaviour. Where it diverges from the
 > design-time spec in [`../docs (1)/04_API_Specification.md`](../../docs%20(1)/04_API_Specification.md),
@@ -72,8 +73,10 @@ EnsureRegisteredDomain  →  ResolveTenant  →  (route-model binding)
 - Role-gated routes add **`role:teacher`** / **`role:parent`**
   (`EnsureTenantRole`). Assistants share the teacher surface with scoped
   permissions (P1.5).
-- **Platform admin** (`/admin/*`) uses `auth:sanctum` + **`admin`**
-  (`EnsurePlatformAdmin`) and is **not** tenant-scoped.
+- **Platform admin** (`/admin/*`) uses **`central`** (`EnsureCentralHost`, host-pins
+  the console to the admin host — off-host → `404`) + `auth:sanctum` + **`admin`**
+  (`EnsurePlatformAdmin`) and is **not** tenant-scoped. A platform-admin token has
+  **no** implicit access to tenant-scoped routes.
 
 ### Standard request headers
 

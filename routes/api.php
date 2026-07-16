@@ -4,6 +4,9 @@ use App\Modules\Assessment\Http\Controllers\AttemptController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamGradingController;
 use App\Modules\Assessment\Http\Controllers\Teacher\QuestionController;
+use App\Modules\Billing\Http\Controllers\Admin\PackageController;
+use App\Modules\Billing\Http\Controllers\Admin\TenantSubscriptionController;
+use App\Modules\Billing\Http\Controllers\Teacher\SubscriptionController;
 use App\Modules\Catalog\Http\Controllers\PublicCatalogController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CategoryController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CourseController;
@@ -89,14 +92,29 @@ Route::prefix('v1')->group(function (): void {
 |--------------------------------------------------------------------------
 | Platform admin (M01, M17) — cross-tenant, NOT tenant-scoped
 |--------------------------------------------------------------------------
+|
+| Served ONLY on a central/admin host (`central` middleware = EnsureCentralHost):
+| a teacher academy's subdomain or custom domain answers /admin/* with 404, so
+| the console can never be opened from a teacher's domain even with a valid
+| platform-admin token. The host check runs before auth. See docs/api/platform-admin.md.
 */
-Route::prefix('v1')->middleware(['auth:sanctum', 'admin'])->group(function (): void {
+Route::prefix('v1')->middleware(['central', 'auth:sanctum', 'admin'])->group(function (): void {
     Route::get('/admin/tenants', [AdminTenantController::class, 'index']);
     Route::post('/admin/tenants', [AdminTenantController::class, 'store']);
     Route::get('/admin/tenants/{tenant:uuid}', [AdminTenantController::class, 'show']);
     Route::put('/admin/tenants/{tenant:uuid}', [AdminTenantController::class, 'update']);
     Route::get('/admin/reports/overview', [AdminReportController::class, 'overview']);
     Route::get('/admin/audit-logs', [AuditLogController::class, 'admin']);
+
+    // Teacher subscription packages (M03) — define plans + assign them to tenants.
+    Route::get('/admin/packages', [PackageController::class, 'index']);
+    Route::post('/admin/packages', [PackageController::class, 'store']);
+    Route::get('/admin/packages/{package:uuid}', [PackageController::class, 'show']);
+    Route::put('/admin/packages/{package:uuid}', [PackageController::class, 'update']);
+    Route::delete('/admin/packages/{package:uuid}', [PackageController::class, 'destroy']);
+
+    Route::get('/admin/tenants/{tenant:uuid}/subscription', [TenantSubscriptionController::class, 'show']);
+    Route::post('/admin/tenants/{tenant:uuid}/subscription', [TenantSubscriptionController::class, 'store']);
 });
 
 /*
@@ -191,6 +209,10 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::middleware('role:teacher')->group(function (): void {
             Route::get('/teacher/profile', [TeacherProfileController::class, 'show']);
             Route::put('/teacher/profile', [TeacherProfileController::class, 'update']);
+
+            // Teacher subscription (M03) — read-only view of the tenant's plan,
+            // limits, and usage. The plan is managed by the platform admin.
+            Route::get('/teacher/subscription', [SubscriptionController::class, 'show']);
             Route::get('/teacher/landing', [TeacherLandingController::class, 'show']);
             Route::put('/teacher/landing', [TeacherLandingController::class, 'update']);
             Route::post('/teacher/landing/media', [TeacherLandingController::class, 'media']);

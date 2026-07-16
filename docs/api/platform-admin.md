@@ -3,9 +3,13 @@
 > The Platform Admin module is the operator console for the whole platform (M01, M17). Unlike every other API surface, it is **cross-tenant and NOT tenant-scoped**: its routes live under `/v1/admin/*` **outside** the `tenant` middleware group, so there is **no Host-based tenant resolution** and no per-tenant RLS binding. It owns the teacher-academy (tenant) lifecycle — create / list / view / update tenants and their owner — plus a cross-tenant reports overview and a global audit-log reader.
 
 **How admin auth differs from the rest of the API:**
-- Middleware is `auth:sanctum` + `admin` (the `admin` alias = `EnsurePlatformAdmin`, which rejects anyone whose `isPlatformAdmin()` is false with a `403`). There is **no** `tenant`, `active`, or `role` middleware.
-- No `Host` tenant requirement and **no `X-Tenant` header** — the admin acts across all academies. Tenant *targeting*, where supported, is done with the `?tenant=` **query param** (audit logs) or the `{tenant:uuid}` **path** binding (tenant CRUD), not a header.
+- **Host-pinned to the admin console.** The `/admin/*` group runs a `central` middleware (`EnsureCentralHost`) **ahead of auth**: the request `Host` must be a central host — `admin.<base_domain>` (default `admin.elameed.app`), the base-domain apex, or a trusted local host in dev. A request on any **teacher academy domain** (subdomain or custom domain) is answered with **`404 not_found`** — identical to a nonexistent route — so the console can never be opened from a teacher's domain, and a valid platform-admin token cannot be replayed against a tenant host.
+- Middleware is `central` -> `auth:sanctum` -> `admin` (the `admin` alias = `EnsurePlatformAdmin`, which rejects anyone whose `isPlatformAdmin()` is false with a `403`). There is **no** `tenant`, `active`, or `role` middleware.
+- Admin resolution is **not** tenant-scoped: no Host-based *tenant* resolution, no per-tenant RLS binding, and **no `X-Tenant` header**. The admin acts across all academies **only through `/admin/*`** (cross-tenant reports + tenant CRUD). Tenant *targeting*, where supported, is done with the `?tenant=` **query param** (audit logs) or the `{tenant:uuid}` **path** binding (tenant CRUD), not a header.
+- **No implicit access to tenant-scoped routes.** A platform-admin token carries no role or membership inside any academy: presented to a tenant-scoped route (e.g. `/teacher/*`, `/me`) on a tenant host it is refused with `403` by the `active` / `role` gates. Admin power is exercised *exclusively* via `/admin/*` on the admin host — there is no admin override on tenant routes.
 - Tenants bind by `uuid` on the path (`{tenant:uuid}`), never by internal id.
+
+> **Common error (all admin endpoints):** `404 not_found` when the request is not on the admin host — the `central` gate runs before `auth:sanctum`, so an off-host request is refused before the token is even read.
 
 Money is integer minor units (`*_minor`), base currency EGP. Timestamps are ISO-8601 UTC.
 
@@ -22,6 +26,8 @@ Money is integer minor units (`*_minor`), base currency EGP. Timestamps are ISO-
 
 ## Endpoints
 
+> **Also under `/admin/*`:** teacher subscription **packages** and tenant plan **assignment** (`/admin/packages`, `/admin/tenants/{uuid}/subscription`) share this same host-pinned admin group but are owned by the **Billing** module — see [`billing.md`](billing.md).
+
 ### Tenants
 
 #### `GET /v1/admin/tenants`
@@ -29,7 +35,7 @@ Money is integer minor units (`*_minor`), base currency EGP. Timestamps are ISO-
 **Purpose:** List all tenant academies across the platform, newest first, paginated 30 per page. Each row includes its primary host.
 
 **Auth:** 🛡️ Platform admin
-**Middleware:** `auth:sanctum` -> `admin` (outside the `tenant` group — no Host tenant resolution)
+**Middleware:** `central` -> `auth:sanctum` -> `admin` (outside the `tenant` group — no Host tenant resolution)
 
 **Request headers**
 
@@ -38,7 +44,7 @@ Money is integer minor units (`*_minor`), base currency EGP. Timestamps are ISO-
 | Authorization | yes | `Bearer 7\|admin...` |
 | Accept | yes | `application/json` |
 
-> No `Host` tenant requirement and no `X-Tenant` header for admin routes.
+> No per-tenant `Host` resolution and no `X-Tenant` header for admin routes — but the request **must** be on the central/admin host (the `central` gate; off-host → `404`). See "How admin auth differs" above.
 
 **Path / Query params**
 
@@ -85,7 +91,7 @@ Money is integer minor units (`*_minor`), base currency EGP. Timestamps are ISO-
 **Purpose:** Provision a new tenant academy. Creates the `Tenant`, auto-creates a primary **subdomain** domain (`<slug>.<base_domain>`, default `elameed.app`), and optionally provisions an owner (teacher) user + active `TenantUser` membership in one transaction.
 
 **Auth:** 🛡️ Platform admin
-**Middleware:** `auth:sanctum` -> `admin`
+**Middleware:** `central` -> `auth:sanctum` -> `admin`
 
 **Request headers**
 
@@ -116,7 +122,7 @@ Money is integer minor units (`*_minor`), base currency EGP. Timestamps are ISO-
 | Field | Type | Required | Rules |
 |---|---|---|---|
 | `name` | string | yes | max 255 |
-| `slug` | string | yes | max 100, regex `^[a-z0-9-]+$`, unique in `tenants.slug` |
+| `slug` | string | yes | max 100, regex `^[a-z0-9-]+$`, unique in `tenants.slug`, and **not a reserved slug** — `admin`, `www`, `api`, `app`, `mail`, `platform`, `central` by default (configurable via `TENANCY_RESERVED_SLUGS`); a reserved slug's subdomain would collide with a central host |
 | `status` | string | no | one of `active`, `suspended`, `under_review`, `expired` (defaults to `active`) |
 | `owner` | object | no | when present, provisions the academy owner |
 | `owner.name` | string | required with `owner` | max 255 |
@@ -143,7 +149,7 @@ Notes: the owner is created with `firstOrCreate` on `phone` (existing users reus
 ```
 
 **Errors:**
-- `422` — validation failure (missing `name`/`slug`, bad slug format, duplicate slug, invalid `status`, incomplete `owner`).
+- `422` — validation failure (missing `name`/`slug`, bad slug format, duplicate or reserved slug, invalid `status`, incomplete `owner`).
 - `403` — not a platform admin.
 - `401 unauthenticated`.
 
@@ -154,7 +160,7 @@ Notes: the owner is created with `firstOrCreate` on `phone` (existing users reus
 **Purpose:** Fetch a single tenant academy by uuid, with its primary host.
 
 **Auth:** 🛡️ Platform admin
-**Middleware:** `auth:sanctum` -> `admin`
+**Middleware:** `central` -> `auth:sanctum` -> `admin`
 
 **Request headers**
 
@@ -199,7 +205,7 @@ Notes: the owner is created with `firstOrCreate` on `phone` (existing users reus
 **Purpose:** Update a tenant's `name` and/or lifecycle `status` (e.g. suspend/expire an academy). The change is recorded to the audit log as `tenant.updated`.
 
 **Auth:** 🛡️ Platform admin
-**Middleware:** `auth:sanctum` -> `admin`
+**Middleware:** `central` -> `auth:sanctum` -> `admin`
 
 **Request headers**
 
@@ -262,7 +268,7 @@ Notes: the owner is created with `firstOrCreate` on `phone` (existing users reus
 **Purpose:** Cross-tenant platform totals for the operator dashboard (FR-M17-01). All queries deliberately drop tenant scoping (`withoutGlobalScopes()` where needed).
 
 **Auth:** 🛡️ Platform admin
-**Middleware:** `auth:sanctum` -> `admin`
+**Middleware:** `central` -> `auth:sanctum` -> `admin`
 
 **Request headers**
 
@@ -312,7 +318,7 @@ Notes:
 **Purpose:** Read the audit trail across all tenants (M18, admin scope), newest first, paginated 50 per page. Optionally narrow to one tenant with the `?tenant=` query param. Served by the Reporting module's `AuditLogController@admin`.
 
 **Auth:** 🛡️ Platform admin
-**Middleware:** `auth:sanctum` -> `admin`
+**Middleware:** `central` -> `auth:sanctum` -> `admin`
 
 **Request headers**
 

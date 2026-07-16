@@ -19,7 +19,12 @@ class StoreTenantRequest extends FormRequest
     {
         return [
             'name' => ['required', 'string', 'max:255'],
-            'slug' => ['required', 'string', 'max:100', 'regex:/^[a-z0-9-]+$/', Rule::unique('tenants', 'slug')],
+            'slug' => [
+                'required', 'string', 'max:100', 'regex:/^[a-z0-9-]+$/',
+                // Reserved slugs (e.g. "admin") would collide with a central host.
+                Rule::notIn((array) config('tenancy.reserved_slugs', [])),
+                Rule::unique('tenants', 'slug'),
+            ],
             'status' => ['nullable', new Enum(TenantStatus::class)],
 
             // Optional owner (teacher) to provision alongside the tenant.

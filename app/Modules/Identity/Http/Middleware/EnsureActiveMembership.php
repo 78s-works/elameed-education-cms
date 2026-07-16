@@ -13,8 +13,9 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
  * request (not just at login). This makes a teacher's "suspend" take effect
  * immediately — a suspended student is blocked from all tenant endpoints,
  * including obtaining new playback tokens — while remaining tenant-scoped, so it
- * never affects the same person's access to a different academy. Platform admins
- * are exempt.
+ * never affects the same person's access to a different academy. A platform
+ * admin has no implicit membership either: their token carries no access to a
+ * tenant's routes — admin work happens only via the host-pinned /admin/* console.
  */
 class EnsureActiveMembership
 {
@@ -25,7 +26,7 @@ class EnsureActiveMembership
         $tenant = $this->context->tenant();
         $user = $request->user();
 
-        if ($tenant !== null && $user !== null && ! $user->isPlatformAdmin()) {
+        if ($tenant !== null && $user !== null) {
             $membership = $user->membershipFor($tenant);
 
             if ($membership === null || ! $membership->isActive()) {

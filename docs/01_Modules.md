@@ -21,8 +21,10 @@ Request
   ├─ (platform-host routes)  no tenant group — auth by token-in-URL / HMAC / signed URL
   │        webhooks/paymob · media/{stream,segment,key} · internal/* · media/callbacks/* · media/upload
   │
-  ├─ (/admin/*)  auth:sanctum → admin (EnsurePlatformAdmin)   — NOT tenant-scoped
+  ├─ (/admin/*)  central (EnsureCentralHost, admin-host only → 404 off-host)
+  │        → auth:sanctum → admin (EnsurePlatformAdmin)   — NOT tenant-scoped
   │
+
   └─ (everything else)  tenant group
          EnsureRegisteredDomain   → reject unknown / suspended Host
          ResolveTenant            → bind tenant + RLS session (before model binding)
@@ -68,8 +70,9 @@ Identity is **global** (one `User` can belong to many tenants); authorization is
 | 10 | [Notifications](#10-notifications) | M10, M14 | 2 | In-app notification feed + SMS-sender abstraction |
 | 11 | [Reporting](#11-reporting) | M17, M18 | 4 | Student/teacher summary reports + audit log |
 | 12 | [Platform Admin](#12-platform-admin) | M01, M17 | 6 | Cross-tenant operator console (tenants + overview + audit) |
+| 13 | [Billing](#13-billing) | M03 | 8 | Teacher subscription packages: admin plan CRUD + tenant assignment + teacher view |
 
-**Total: 136 documented endpoints.**
+**Total: 144 documented endpoints.**
 
 ---
 
@@ -200,7 +203,21 @@ only the audit log.
 tenant-scoped: `/v1/admin/*` sits outside the `tenant` group and uses
 `auth:sanctum` + `admin` (`EnsurePlatformAdmin` → `403` for non-admins).
 
-- **Models:** none of its own (`Tenant` lives in Tenancy); contributes `AdminTenantResource`, `Store/UpdateTenantRequest`, and the `EnsurePlatformAdmin` middleware.
+- **Models:** none of its own (`Tenant` lives in Tenancy); contributes `AdminTenantResource`, `Store/UpdateTenantRequest`, the `EnsurePlatformAdmin` middleware, and (Task 1) `EnsureCentralHost` (`central`) which host-pins the console.
 - **Endpoints:** tenants index/store/show/update, `reports/overview`, admin `audit-logs`. Tenant targeting is via `{tenant:uuid}` path or `?tenant=` query — never a header.
+- **Host isolation:** `/admin/*` is served **only** on a central/admin host — off-host requests (e.g. a teacher's domain) get `404` before auth. A platform-admin token also carries **no** access to tenant-scoped routes (the `role`/`active` gates give admins no bypass). `StoreTenantRequest` rejects reserved slugs so a tenant subdomain can't shadow a central host.
 
 → [`api/platform-admin.md`](api/platform-admin.md)
+
+## 13. Billing
+`app/Modules/Billing` — teacher subscription packages (M03), the platform's
+recurring-revenue layer. The admin defines plans and assigns them to academies;
+each teacher sees their own plan, limits, and usage.
+
+- **Models:** `SubscriptionPackage` (global, soft-deletes: price/interval/trial/`limits` JSON/`is_active`), `TenantSubscription` (global, `tenant_id` but not RLS-scoped: locked `price_minor` + lifecycle `status`). `tenants.package_id` FK points at the current plan.
+- **Enums:** `SubscriptionStatus` (`trialing`/`active`/`past_due`/`canceled`/`expired`), `BillingInterval` (`monthly`/`yearly`).
+- **Services:** `SubscriptionService` (assign supersedes the prior plan + syncs `tenants.package_id`; `current()`), `PackageUsage` (usage-vs-limits snapshot).
+- **Endpoints:** admin `packages` index/store/show/update/destroy (destroy = soft retire) + `tenants/{uuid}/subscription` show/store (assign, with discount/trial overrides); teacher `GET /teacher/subscription`. Admin routes share the host-pinned `/admin/*` group; the teacher route is tenant-scoped `role:teacher`.
+- **Notes / gotchas:** `limits` keys `max_students|max_courses|storage_mb|max_assistants`, `null` = unlimited; limits are **reported, not yet enforced** at create paths (follow-up), and `storage_mb.used` is `0` until media byte-counting lands. Packages/tenants bind by `uuid`. Both tables are **global** (admin-managed cross-tenant; teacher reads via explicit `tenant_id`).
+
+→ [`api/billing.md`](api/billing.md)

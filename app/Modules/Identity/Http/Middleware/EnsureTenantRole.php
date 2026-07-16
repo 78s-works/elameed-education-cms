@@ -11,7 +11,10 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 /**
  * Gate a route to users holding a given role in the resolved tenant.
  * Usage: ->middleware('role:teacher'). Runs after auth:sanctum + tenant
- * resolution. Platform admins bypass (they operate every tenant).
+ * resolution. Platform admins get NO implicit access here — they operate the
+ * platform only through the host-pinned /admin/* console (EnsureCentralHost),
+ * never a tenant's own routes; an admin token on a tenant host is just an
+ * unauthenticated-for-this-academy user.
  *
  * Granular per-assistant permissions are P1.5; for P1 this role check is the
  * authorization primitive.
@@ -26,10 +29,6 @@ class EnsureTenantRole
 
         if ($user === null) {
             throw new AccessDeniedHttpException('Unauthorized.');
-        }
-
-        if ($user->isPlatformAdmin()) {
-            return $next($request);
         }
 
         $tenant = $this->context->tenant();
