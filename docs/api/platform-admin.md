@@ -16,7 +16,8 @@ Money is integer minor units (`*_minor`), base currency EGP. Timestamps are ISO-
 ## Models & artifacts
 
 - The **`Tenant`** model is owned by the **Tenancy** module (`app/Modules/Tenancy/Models/Tenant.php`) — a global registry row (not tenant-scoped), soft-deletes, `status` cast to the `TenantStatus` enum, and a `domains()` relation. This module owns no Eloquent models of its own; it contributes:
-  - **`AdminTenantResource`** — serializes a tenant to `uuid`, `slug`, `name`, `status`, `owner_user_id`, `primary_host` (the `is_primary` domain host, only when `domains` is loaded), `created_at`.
+  - **`AdminTenantResource`** — the **lightweight** tenant row used by the list (`index`) and create (`store`): `uuid`, `slug`, `name`, `status`, `owner_user_id`, `primary_host` (the `is_primary` domain host, only when `domains` is loaded), `created_at`.
+  - **`TenantInsights`** service — builds the **full 360** returned by `show` (tenant + owner + branding + subscription/usage + stats). It reads other modules' data cross-tenant with explicit `tenant_id` filters (Billing `SubscriptionService`/`PackageUsage`, Catalog `Course`, Commerce `Enrollment`, Wallet `LedgerEntry`, Tenancy `TeacherProfile`).
   - **`StoreTenantRequest`** / **`UpdateTenantRequest`** — FormRequests (field tables below).
   - **`EnsurePlatformAdmin`** — the `admin` middleware gate.
 - **`TenantStatus`** enum values: `active`, `suspended`, `under_review`, `expired`.
@@ -157,7 +158,7 @@ Notes: the owner is created with `firstOrCreate` on `phone` (existing users reus
 
 #### `GET /v1/admin/tenants/{tenant:uuid}`
 
-**Purpose:** Fetch a single tenant academy by uuid, with its primary host.
+**Purpose:** The full cross-tenant **360 view** of one academy — the tenant, its **owner teacher**, branding, current **subscription + usage**, and activity **stats**. This is the admin's "all information about a teacher and their tenant" surface. (The list endpoint at `GET /admin/tenants` stays lightweight; this one is the deep view.)
 
 **Auth:** 🛡️ Platform admin
 **Middleware:** `central` -> `auth:sanctum` -> `admin`
@@ -182,19 +183,73 @@ Notes: the owner is created with `firstOrCreate` on `phone` (existing users reus
 ```json
 {
   "data": {
-    "uuid": "9d2a7c14-3b6e-4f0a-8b21-2c9f1d5e7a10",
-    "slug": "nile-academy",
-    "name": "Nile Academy",
-    "status": "active",
-    "owner_user_id": 5501,
-    "primary_host": "nile-academy.elameed.app",
-    "created_at": "2026-06-02T11:14:00+00:00"
+    "tenant": {
+      "uuid": "9d2a7c14-3b6e-4f0a-8b21-2c9f1d5e7a10",
+      "slug": "nile-academy",
+      "name": "Nile Academy",
+      "status": "active",
+      "trial_ends_at": null,
+      "created_at": "2026-06-02T11:14:00+00:00",
+      "domains": [
+        { "host": "nile-academy.elameed.app", "type": "subdomain", "is_primary": true }
+      ]
+    },
+    "owner": {
+      "uuid": "6b1f2e30-…",
+      "name": "Ahmed Teacher",
+      "phone": "01500000001",
+      "email": "owner@nile-academy.com",
+      "locale": "ar",
+      "created_at": "2026-06-02T11:14:00+00:00"
+    },
+    "branding": {
+      "logo_url": "https://…/logo.png",
+      "cover_url": "https://…/cover.png",
+      "primary_color": "#1D4ED8",
+      "secondary_color": "#9333EA",
+      "bio": "…",
+      "contact": { "phone": "01500000001", "email": "…", "address": "…" },
+      "socials": { "youtube": "…" },
+      "layout": "classic"
+    },
+    "subscription": {
+      "uuid": "1f7c…",
+      "status": "active",
+      "price_minor": 150000,
+      "currency": "EGP",
+      "started_at": "2026-07-16T10:00:00+00:00",
+      "trial_ends_at": null,
+      "renews_at": "2026-08-16T10:00:00+00:00",
+      "ends_at": null,
+      "package": { "slug": "growth", "…": "…full PackageResource…" }
+    },
+    "usage": {
+      "max_students":   { "limit": 2000,  "used": 412, "remaining": 1588 },
+      "max_courses":    { "limit": 30,    "used": 12,  "remaining": 18 },
+      "storage_mb":     { "limit": 50000, "used": 0,   "remaining": 50000 },
+      "max_assistants": { "limit": 3,     "used": 1,   "remaining": 2 }
+    },
+    "stats": {
+      "students": 412,
+      "assistants": 1,
+      "parents": 30,
+      "courses": 12,
+      "published_courses": 9,
+      "enrollments": 1043,
+      "gross_earnings_minor": 918400000
+    }
   }
 }
 ```
 
+Notes:
+- `owner`, `branding`, and `subscription` are each `null` when absent (no owner assigned / no profile yet / no plan).
+- `usage` mirrors the Billing teacher view: `used` counts **active** student/assistant memberships and non-deleted courses; a `null` `limit` = unlimited (`remaining` `null`); `storage_mb.used` is `0` (deferred).
+- `stats.gross_earnings_minor` = sum of this tenant's `teacher_earnings` credit ledger entries (integer minor units, EGP).
+- All counts are computed cross-tenant with an explicit `tenant_id` filter (admin runs outside the tenant scope).
+
 **Errors:**
-- `404` — no tenant with that uuid.
+- `404` — no tenant with that uuid (or request not on the admin host).
 - `403` — not a platform admin.
 - `401 unauthenticated`.
 

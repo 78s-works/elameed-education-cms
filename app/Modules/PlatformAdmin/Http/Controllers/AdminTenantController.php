@@ -9,6 +9,7 @@ use App\Modules\Identity\Models\TenantUser;
 use App\Modules\PlatformAdmin\Http\Requests\StoreTenantRequest;
 use App\Modules\PlatformAdmin\Http\Requests\UpdateTenantRequest;
 use App\Modules\PlatformAdmin\Http\Resources\AdminTenantResource;
+use App\Modules\PlatformAdmin\Services\TenantInsights;
 use App\Modules\Tenancy\Enums\TenantDomainType;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
@@ -24,6 +25,8 @@ use Illuminate\Support\Facades\DB;
  */
 class AdminTenantController
 {
+    public function __construct(private readonly TenantInsights $insights) {}
+
     public function index(): AnonymousResourceCollection
     {
         return AdminTenantResource::collection(
@@ -74,9 +77,14 @@ class AdminTenantController
         return (new AdminTenantResource($tenant->load('domains')))->response()->setStatusCode(201);
     }
 
-    public function show(Tenant $tenant): AdminTenantResource
+    /**
+     * Full cross-tenant 360 of one academy: tenant + owner teacher + branding +
+     * subscription/usage + activity stats (FR-M01, FR-M17). The list endpoint
+     * stays lightweight; this detail view is the "all information" surface.
+     */
+    public function show(Tenant $tenant): JsonResponse
     {
-        return new AdminTenantResource($tenant->load('domains'));
+        return response()->json(['data' => $this->insights->detail($tenant)]);
     }
 
     public function update(UpdateTenantRequest $request, Tenant $tenant): AdminTenantResource
