@@ -130,10 +130,10 @@ Route::prefix('v1')->middleware(['central', 'auth:sanctum', 'admin'])->group(fun
 
 Route::prefix('v1')->middleware('tenant')->group(function (): void {
 
-    // Tenant context & branding
-    Route::get('/tenant/context', TenantContextController::class);
+    // Tenant context & branding. Public + high-traffic (SPA boot) → throttled per IP.
+    Route::get('/tenant/context', TenantContextController::class)->middleware('throttle:public');
     // Public landing page (resolved: layout + nav + sections). Optional auth → `enrolled`.
-    Route::get('/tenant/landing', TenantLandingController::class);
+    Route::get('/tenant/landing', TenantLandingController::class)->middleware('throttle:public');
 
     // Public catalogue (M04) — published courses of the resolved tenant
     Route::get('/courses', [PublicCatalogController::class, 'index']);

@@ -71,6 +71,30 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Public endpoint tuning (context + landing)
+    |--------------------------------------------------------------------------
+    |
+    | GET /tenant/context and GET /tenant/landing are unauthenticated and hit on
+    | every visitor's first paint, so they are rate-limited per IP and their
+    | responses are cached/revalidated:
+    |
+    |  - public_rate_limit  : requests/minute/IP for the public endpoints
+    |                         (throttle:public — see AppServiceProvider).
+    |  - context_cache_ttl  : max-age (seconds) + ETag revalidation window on
+    |                         GET /tenant/context.
+    |  - landing_cache_ttl  : server-side TTL (seconds) of the cached, viewer-
+    |                         agnostic landing payload. A landing edit busts it
+    |                         immediately (cache key carries profile.updated_at);
+    |                         course/review changes surface within this TTL.
+    |
+    */
+
+    'public_rate_limit' => (int) env('TENANCY_PUBLIC_RATE_LIMIT', 120),
+    'context_cache_ttl' => (int) env('TENANCY_CONTEXT_CACHE_TTL', 60),
+    'landing_cache_ttl' => (int) env('TENANCY_LANDING_CACHE_TTL', 60),
+
+    /*
+    |--------------------------------------------------------------------------
     | Row-Level Security session variable
     |--------------------------------------------------------------------------
     |

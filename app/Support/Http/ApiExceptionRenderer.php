@@ -81,6 +81,7 @@ final class ApiExceptionRenderer
             403 => 'forbidden',
             404 => 'not_found',
             405 => 'method_not_allowed',
+            412 => 'precondition_failed',
             429 => 'too_many_requests',
             default => $status >= 500 ? 'server_error' : 'error',
         };
@@ -92,6 +93,7 @@ final class ApiExceptionRenderer
             403 => 'Forbidden.',
             404 => 'Not found.',
             405 => 'Method not allowed.',
+            412 => 'Precondition failed.',
             429 => 'Too many requests.',
             default => 'Request failed.',
         };

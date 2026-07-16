@@ -19,6 +19,7 @@
 - **`TenantResolver`** — Maps a request to a tenant: (1) `X-Tenant` header override (dev/tooling only, when `tenancy.allow_header_override`), (2) exact host match in `tenant_domains`, (3) `<label>.<base_domain>` subdomain → slug, else unresolved. Aggressively cached with negative caching for unknown hosts.
 - **`LandingResolver`** — Resolves the teacher's stored landing config into the fully rendered public payload: normalizes `layout`, resolves dynamic `courses`/`testimonials` sections to real `items`, and derives the anchor `nav`.
 - **`LandingSchema`** (Support) — The v2 landing contract: layout list, section-type catalog, per-type content/config validation rules, `sanitize()` for saving, and `defaults()` seed. See below for the section-type table.
+- **`EntityVersion`** (Support) — Optimistic-concurrency helper for the editor endpoints: derives an `ETag` from a model's identity + `updated_at`, and enforces an optional `If-Match` precondition on writes (`412` on mismatch) so two editors can't silently overwrite the shared `teacher_profiles` row.
 - **`EnsureRegisteredDomain`** + **`ResolveTenant`** (Middleware) — the `tenant` middleware group: the first hard-gates unregistered/inactive hosts (404/403), the second resolves + binds the tenant and RLS session.
 
 ### Landing section types (`LandingSchema::TYPES`)
@@ -37,7 +38,7 @@
 **Purpose:** Resolve the current host to a tenant and return its identity, status, branding/theme, locale, and enabled feature flags — the payload the SPA loads on boot. Landing content is served separately by `GET /tenant/landing`.
 
 **Auth:** 🔓 Public (tenant middleware only)
-**Middleware:** `tenant`
+**Middleware:** `tenant`, `throttle:public` (per-IP rate limit — see conventions)
 
 **Request headers**
 
@@ -82,8 +83,18 @@
 
 Notes: `branding` fields are `null` until the teacher sets them; `socials` is an empty object `{}` when unset. `status` is one of `active`, `suspended`, `under_review`, `expired`. `features` is currently always `[]` (per-tenant flags TODO).
 
+**Caching:** the response carries an `ETag` (derived from the tenant's identity/status + branding version) and `Cache-Control: public, max-age=<context_cache_ttl>` (default 60s). A conditional request whose `If-None-Match` equals the current `ETag` gets a bodyless **`304 Not Modified`**. `Vary: X-Tenant` guards a shared cache against the dev `X-Tenant` override.
+
+| Response header | Example |
+|---|---|
+| ETag | `"9f2b…"` |
+| Cache-Control | `public, max-age=60` |
+| Vary | `X-Tenant` |
+
 **Errors:**
+- `304` — `If-None-Match` matched; no body (branding unchanged).
 - `404 tenant_not_found` — the host resolved to no tenant (envelope: `{ "error": { "code": "tenant_not_found", "message": "لا يوجد حساب مرتبط بهذا العنوان." } }`).
+- `429 too_many_requests` — per-IP rate limit exceeded (`throttle:public`).
 - `404` — host is not a registered tenant domain (thrown earlier by `EnsureRegisteredDomain`).
 - `403` — host maps to a non-active (suspended/expired) tenant (`EnsureRegisteredDomain`).
 
@@ -94,7 +105,7 @@ Notes: `branding` fields are `null` until the teacher sets them; `socials` is an
 **Purpose:** Return the fully resolved public landing page for the SPA: normalized `layout`, anchor `nav` links, and the ordered visible `sections` with dynamic `courses`/`testimonials` sections resolved into real `items`. Auth is **optional** — if a bearer token is present, each resolved course item carries an `enrolled` flag for that student.
 
 **Auth:** 🔓 Public, optional auth (bearer token enriches `enrolled`)
-**Middleware:** `tenant`
+**Middleware:** `tenant`, `throttle:public` (per-IP rate limit — see conventions)
 
 **Request headers**
 
@@ -197,10 +208,14 @@ Notes:
 - `nav.links` are derived from visible, nav-worthy section types (`about`, `features`, `courses`, `steps`, `testimonials`, `packages`, `contact`); `target` is `#<section key>`, `label` falls back to a capitalized type name when the section has no `content.title`.
 - Only `courses` and `testimonials` sections carry an `items` array; static sections do not.
 - `enrolled` is `true` only for the authenticated student's active enrollments; anonymous requests always get `false`.
+- `courses` items are always **published** courses — including `source=selected`: a hand-picked course that is later unpublished/archived drops out of the public landing automatically.
 - Prices are integer minor units + `currency`; timestamps are ISO-8601 UTC.
+
+**Caching:** this is a public hot path, so the **viewer-agnostic** payload is cached server-side per tenant (`landing_cache_ttl`, default 60s). The cache key carries the profile's `updated_at`, so a landing/branding edit is reflected immediately (new key); course/review changes surface within the TTL. The per-student `enrolled` flags are overlaid **after** the cache read, so cached data is never user-specific (anonymous and authenticated requests share the same base payload).
 
 **Errors:**
 - `404` / `403` — same host-gate errors as `GET /tenant/context` (`EnsureRegisteredDomain`). A required-but-missing tenant surfaces as a server error (`tenantOrFail`).
+- `429 too_many_requests` — per-IP rate limit exceeded (`throttle:public`).
 
 ---
 
@@ -248,7 +263,7 @@ Notes:
 }
 ```
 
-Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fields are `null` until set.
+Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fields are `null` until set. The response carries an **`ETag`** (the profile's version) — capture it and echo it as `If-Match` on `PUT` to guard against overwriting a concurrent edit.
 
 **Errors:**
 - `401` — missing/invalid bearer token.
@@ -259,6 +274,8 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 ### `PUT /teacher/profile`
 
 **Purpose:** Upsert the current tenant's branding profile (FR-M02-03). Always responds `200` (upsert, never `201`).
+
+> **Partial-merge semantics:** omitted top-level keys are left unchanged (send an explicit `null` to clear one). Nested objects `contact`/`socials` are **replaced wholesale**, not deep-merged — send the full object you want to keep.
 
 **Auth:** 🔒 `auth:sanctum` + `active` + `role:teacher`
 **Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
@@ -312,10 +329,13 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 | `socials` | object | no | nullable object; values are URLs |
 | `socials.*` | string | no | nullable, valid URL, max 2048 |
 
-**Response 200:** Same shape as `GET /teacher/profile` (the updated `TeacherProfileResource`).
+**Optimistic concurrency (optional):** send `If-Match: <etag>` (the `ETag` from a prior GET/PUT). If the row changed since, the write is rejected with **`412 precondition_failed`** so you can reload and retry instead of clobbering the other edit. Omit the header to skip the check (backward compatible). The response echoes the new `ETag`.
+
+**Response 200:** Same shape as `GET /teacher/profile` (the updated `TeacherProfileResource`), plus an `ETag` header.
 
 **Errors:**
 - `422` — validation failure (e.g. bad hex color, invalid URL/email). Error envelope with `details` per field.
+- `412 precondition_failed` — `If-Match` sent but the profile was modified since it was read.
 - `401` / `403` — as above.
 
 ---
@@ -391,7 +411,7 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 }
 ```
 
-Notes: unlike `GET /tenant/landing`, dynamic sections here expose `config` and NOT resolved `items`. Sections are returned as stored (all keys, including `visible: false`).
+Notes: unlike `GET /tenant/landing`, dynamic sections here expose `config` and NOT resolved `items`. Sections are returned as stored (all keys, including `visible: false`). The response carries an **`ETag`** (the profile's version) — echo it as `If-Match` on `PUT` for optimistic concurrency.
 
 **Errors:** `401` / `403` — as above.
 
@@ -486,10 +506,13 @@ Notes: unlike `GET /tenant/landing`, dynamic sections here expose `config` and N
 
 Cross-field validation: for a `courses` section with `source=category`, `category_id` must be a category in this academy; with `source=selected`, all `course_ids` must belong to this teacher (otherwise `422`).
 
-**Response 200:** Same shape as `GET /teacher/landing` (the freshly saved `TeacherLandingResource`).
+**Optimistic concurrency (optional):** send `If-Match: <etag>` (from a prior GET/PUT). If the row changed since — note both landing **and** branding save this same row, so either edit bumps the version — the write is rejected with **`412 precondition_failed`**. Omit the header to skip the check. The response echoes the new `ETag`.
+
+**Response 200:** Same shape as `GET /teacher/landing` (the freshly saved `TeacherLandingResource`), plus an `ETag` header.
 
 **Errors:**
 - `422` — validation failure (unknown type, too many sections, invalid config, category/courses not owned, etc.).
+- `412 precondition_failed` — `If-Match` sent but the landing/profile row was modified since it was read.
 - `401` / `403` — as above.
 
 ---
@@ -517,7 +540,9 @@ Cross-field validation: for a `courses` section with `source=category`, `categor
 
 | Field | Type | Required | Rules |
 |---|---|---|---|
-| `file` | file | **yes** | image MIME: `image/jpeg`, `image/png`, `image/webp`, `image/gif`, `image/svg+xml`; max 5120 KB (5 MB) |
+| `file` | file | **yes** | raster image MIME: `image/jpeg`, `image/png`, `image/webp`, `image/gif`; max 5120 KB (5 MB) |
+
+> **SVG is not accepted.** An SVG can embed `<script>`, and uploads are served from the public disk on the academy's own origin, so accepting SVG would be a stored-XSS vector. Only raster formats are allowed.
 
 **Response 200**
 
@@ -530,7 +555,7 @@ Cross-field validation: for a `courses` section with `source=category`, `categor
 ```
 
 **Errors:**
-- `422` — missing file, wrong MIME type, or over 5 MB.
+- `422` — missing file, non-raster/unsupported MIME type (incl. SVG), or over 5 MB.
 - `401` / `403` — as above.
 
 ---
@@ -543,3 +568,6 @@ Cross-field validation: for a `courses` section with `source=category`, `categor
 - **Error envelope:** `{ "error": { "code": "...", "message": "...", "details": { } } }`.
 - **Money:** integer minor units + `currency`. **Timestamps:** ISO-8601 UTC. **Arabic content:** UTF-8 as-is.
 - **Auth:** Laravel Sanctum, `Authorization: Bearer <token>`. `role:teacher` routes additionally require `auth:sanctum` + `active` (active tenant membership; a suspended member is blocked here).
+- **Rate limiting (public endpoints):** `GET /tenant/context` and `GET /tenant/landing` run through `throttle:public` — a per-IP limit (`tenancy.public_rate_limit`, default 120/min). Exceeding it returns `429 too_many_requests`.
+- **Caching (public endpoints):** `GET /tenant/context` is revalidated via `ETag`/`If-None-Match` (`304`) with `Cache-Control: public, max-age=<context_cache_ttl>`; `GET /tenant/landing` caches its viewer-agnostic payload server-side (`landing_cache_ttl`), keyed by the profile's `updated_at`, with per-student `enrolled` overlaid after the cache read. Tuning keys live in `config/tenancy.php`.
+- **Optimistic concurrency (editor writes):** `GET /teacher/profile` and `GET /teacher/landing` return an `ETag`. On `PUT`, an optional `If-Match` echoes it back; if the (shared) `teacher_profiles` row changed since it was read, the write is rejected with `412 precondition_failed`. Omitting `If-Match` skips the check. The token is second-granular (from `updated_at`) — sufficient for a human editor, not for serializing sub-second machine writes.

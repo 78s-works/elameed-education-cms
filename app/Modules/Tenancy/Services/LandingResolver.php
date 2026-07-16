@@ -22,7 +22,13 @@ class LandingResolver
     /** Sections that get an anchor link in the top nav. */
     private const NAV_TYPES = ['about', 'features', 'courses', 'steps', 'testimonials', 'packages', 'contact'];
 
-    public function resolve(int $tenantId, ?TeacherProfile $profile, ?User $viewer): array
+    /**
+     * Resolve the stored config into the public payload. Viewer-agnostic on
+     * purpose: the result is safe to cache once per tenant and share across all
+     * visitors. Per-student `enrolled` flags are layered on afterwards by
+     * applyEnrollment() so caching never mixes one student's state into another's.
+     */
+    public function resolve(int $tenantId, ?TeacherProfile $profile): array
     {
         $stored = ($profile && $profile->landing_sections) ? $profile->landing_sections : LandingSchema::defaults();
 
@@ -42,7 +48,7 @@ class LandingResolver
             ];
 
             if ($type === 'courses') {
-                $entry['items'] = $this->resolveCourses($tenantId, (array) ($s['config'] ?? []), $viewer);
+                $entry['items'] = $this->resolveCourses($tenantId, (array) ($s['config'] ?? []));
             } elseif ($type === 'testimonials') {
                 $entry['items'] = $this->resolveReviews($tenantId, (array) ($s['config'] ?? []));
             }
@@ -79,8 +85,52 @@ class LandingResolver
         return $links;
     }
 
+    /**
+     * Overlay the viewer's active enrollments onto an already-resolved payload.
+     * Kept separate from resolve() so the (viewer-agnostic) base payload can be
+     * cached once per tenant; this runs per request for the authenticated
+     * student only, touching one query for all course ids in the payload.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    public function applyEnrollment(array $payload, int $tenantId, User $viewer): array
+    {
+        $courseIds = [];
+        foreach ($payload['sections'] ?? [] as $section) {
+            if (($section['type'] ?? null) === 'courses') {
+                foreach ($section['items'] ?? [] as $item) {
+                    if (isset($item['id'])) {
+                        $courseIds[] = (int) $item['id'];
+                    }
+                }
+            }
+        }
+
+        if ($courseIds === []) {
+            return $payload;
+        }
+
+        $enrolled = array_flip(
+            $this->viewerEnrolledIds($tenantId, (int) $viewer->getKey(), array_values(array_unique($courseIds)))
+        );
+
+        foreach ($payload['sections'] as &$section) {
+            if (($section['type'] ?? null) !== 'courses') {
+                continue;
+            }
+            foreach ($section['items'] as &$item) {
+                $item['enrolled'] = isset($enrolled[(int) $item['id']]);
+            }
+            unset($item);
+        }
+        unset($section);
+
+        return $payload;
+    }
+
     /** @return array<int, array<string, mixed>> */
-    private function resolveCourses(int $tenantId, array $config, ?User $viewer): array
+    private function resolveCourses(int $tenantId, array $config): array
     {
         $source = $config['source'] ?? 'featured';
         $limit = max(1, min(24, (int) ($config['limit'] ?? 6)));
@@ -94,7 +144,6 @@ class LandingResolver
         $students = $this->activeEnrollmentCounts($tenantId, $ids);
         $lessons = $this->lessonAggregates($tenantId, $ids);
         $ratings = $this->ratingAverages($tenantId, $ids);
-        $enrolledIds = $viewer ? $this->viewerEnrolledIds($tenantId, (int) $viewer->getKey(), $ids) : [];
 
         if ($source === 'featured') {
             $courses = $courses->sortByDesc(fn ($c) => $students[$c->id] ?? 0)->values();
@@ -114,7 +163,8 @@ class LandingResolver
             'duration_label' => $this->durationLabel((int) ($lessons[$c->id]->d ?? 0)),
             'rating' => isset($ratings[$c->id]) ? round((float) $ratings[$c->id], 1) : null,
             'students_count' => (int) ($students[$c->id] ?? 0),
-            'enrolled' => in_array($c->id, $enrolledIds, true),
+            // Viewer-agnostic base; applyEnrollment() flips this per student.
+            'enrolled' => false,
         ])->values()->all();
     }
 
@@ -125,7 +175,9 @@ class LandingResolver
             if ($ids === []) {
                 return collect();
             }
-            $found = Course::query()->whereIn('id', $ids)->with('category')->get()->keyBy('id');
+            // published() too: a hand-picked course that is later unpublished /
+            // archived must NOT keep leaking onto the public landing.
+            $found = Course::query()->published()->whereIn('id', $ids)->with('category')->get()->keyBy('id');
 
             // Preserve the teacher's chosen order.
             return collect($ids)->map(fn ($id) => $found->get($id))->filter()->values();

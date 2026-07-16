@@ -33,5 +33,12 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('auth', fn (Request $request) => [
             Limit::perMinute(10)->by('auth:'.$request->ip()),
         ]);
+
+        // Public, unauthenticated read endpoints (tenant context + landing):
+        // throttle per IP so a valid host can't be hammered/scraped. The limit is
+        // tunable via TENANCY_PUBLIC_RATE_LIMIT (config/tenancy.php).
+        RateLimiter::for('public', fn (Request $request) => [
+            Limit::perMinute((int) config('tenancy.public_rate_limit', 120))->by('public:'.$request->ip()),
+        ]);
     }
 }
