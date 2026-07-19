@@ -4,7 +4,7 @@
 
 **Two audiences, two surfaces:**
 - **Admin** (`/v1/admin/packages`, `/v1/admin/tenants/{tenant:uuid}/subscription`) — cross-tenant, **host-pinned to the admin console** and **not** tenant-scoped, exactly like the rest of `/admin/*`. Middleware `central` → `auth:sanctum` → `admin`. Off the admin host → `404`; non-admin → `403`.
-- **Teacher** (`GET /v1/teacher/subscription`) — tenant-scoped, read-only. Middleware `tenant` group → `auth:sanctum` → `active` → `role:teacher`.
+- **Teacher** (`GET /v1/teacher/subscription`, `GET /v1/teacher/packages`) — tenant-scoped, **read-only**. Middleware `tenant` group → `auth:sanctum` → `active` → `role:teacher`. The teacher can view their own plan/usage and **browse** the available plans to compare, but **cannot switch plans** — assigning/upgrading a plan is an admin action (a teacher self-serve flow with payment is a separate, not-yet-built feature).
 
 **Global tables.** `subscription_packages` and `tenant_subscriptions` are **global** (not tenant-scoped, no RLS / `BelongsToTenant`) — plans are platform-wide and a subscription is read by the owning teacher via an explicit `tenant_id` filter, the same pattern as `tenant_user`. `tenants.package_id` is the denormalised pointer to the current plan.
 
@@ -221,5 +221,53 @@ Notes:
 - A `null` `limit` means unlimited → `remaining` is `null`.
 - `used` counts **active** student/assistant memberships and non-deleted courses for the tenant; `storage_mb.used` is `0` (deferred).
 - Cross-tenant safe: a teacher only ever sees their own tenant's subscription (explicit `tenant_id` filter).
+
+**Errors:** `403` (not a teacher / inactive membership) · `404` (unregistered host) · `401`.
+
+---
+
+### `GET /v1/teacher/packages`
+
+**Purpose:** List the **active** plans a teacher can compare when considering a change, each flagged with `is_current` for the tenant's own plan. Read-only — the teacher's own plan + usage lives at `GET /v1/teacher/subscription`, and **switching plans is an admin action** (`POST /v1/admin/tenants/{tenant:uuid}/subscription`). A teacher self-serve upgrade with payment is a separate, not-yet-built feature.
+
+**Auth:** 🧑‍🏫 Teacher · **Middleware:** `tenant` group → `auth:sanctum` → `active` → `role:teacher`
+
+**Request headers:** standard tenant-scoped headers (`Host` = tenant domain, or `X-Tenant` in dev; `Authorization: Bearer`).
+
+**Path / Query params:** None
+
+**Response 200** — a plain `data` array (not paginated), ordered by `sort_order` then `id`. Each item is a `PackageResource` (same shape as the admin package rows) **plus** an `is_current` flag.
+
+```json
+{
+  "data": [
+    {
+      "uuid": "9d2a7c14-3b6e-4f0a-8b21-2c9f1d5e7a10",
+      "slug": "starter",
+      "name": "Starter",
+      "price_minor": 50000,
+      "currency": "EGP",
+      "interval": "monthly",
+      "trial_days": 14,
+      "limits": { "max_students": 500, "max_courses": 10, "storage_mb": 10000, "max_assistants": 1 },
+      "is_active": true,
+      "sort_order": 1,
+      "created_at": "2026-07-16T10:00:00+00:00",
+      "is_current": true
+    },
+    {
+      "uuid": "1f7c…",
+      "slug": "growth",
+      "name": "Growth",
+      "price_minor": 150000,
+      "is_current": false
+    }
+  ]
+}
+```
+
+Notes:
+- Only **active, non-retired** plans are listed. If the tenant's current plan is inactive/retired it won't appear here (it's still visible via `GET /teacher/subscription`), so no row will carry `is_current: true`.
+- `is_current` is matched against the tenant's current (`trialing`/`active`/`past_due`) subscription; with no current plan, every row is `false`.
 
 **Errors:** `403` (not a teacher / inactive membership) · `404` (unregistered host) · `401`.

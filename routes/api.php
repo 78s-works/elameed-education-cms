@@ -6,6 +6,7 @@ use App\Modules\Assessment\Http\Controllers\Teacher\ExamGradingController;
 use App\Modules\Assessment\Http\Controllers\Teacher\QuestionController;
 use App\Modules\Billing\Http\Controllers\Admin\PackageController;
 use App\Modules\Billing\Http\Controllers\Admin\TenantSubscriptionController;
+use App\Modules\Billing\Http\Controllers\Teacher\PackageController as TeacherPackageController;
 use App\Modules\Billing\Http\Controllers\Teacher\SubscriptionController;
 use App\Modules\Catalog\Http\Controllers\PublicCatalogController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CategoryController;
@@ -213,6 +214,9 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             // Teacher subscription (M03) — read-only view of the tenant's plan,
             // limits, and usage. The plan is managed by the platform admin.
             Route::get('/teacher/subscription', [SubscriptionController::class, 'show']);
+            // Available plans to compare (each flagged is_current). Read-only —
+            // switching is admin-driven (see docs/api/billing.md).
+            Route::get('/teacher/packages', [TeacherPackageController::class, 'index']);
             Route::get('/teacher/landing', [TeacherLandingController::class, 'show']);
             Route::put('/teacher/landing', [TeacherLandingController::class, 'update']);
             Route::post('/teacher/landing/media', [TeacherLandingController::class, 'media']);

@@ -214,4 +214,54 @@ class SubscriptionPackageTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.subscription', null);
     }
+
+    // --- Teacher: browse available plans (GET /teacher/packages) -------------
+
+    public function test_teacher_can_list_available_packages_with_current_flagged(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $teacher = $this->makeMember($tenant, TenantUserRole::Teacher);
+        $growth = $this->makePackage(['slug' => 'growth', 'trial_days' => 0]);
+        $this->makePackage(['slug' => 'scale', 'name' => 'Scale', 'price_minor' => 500000, 'trial_days' => 0]);
+        app(SubscriptionService::class)->assign($tenant, $growth);
+
+        Sanctum::actingAs($teacher);
+
+        $data = collect(
+            $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/teacher/packages')
+                ->assertOk()
+                ->assertJsonCount(2, 'data')
+                ->json('data')
+        );
+
+        $this->assertTrue($data->firstWhere('slug', 'growth')['is_current']);
+        $this->assertFalse($data->firstWhere('slug', 'scale')['is_current']);
+    }
+
+    public function test_teacher_packages_lists_active_plans_only(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $teacher = $this->makeMember($tenant, TenantUserRole::Teacher);
+        $this->makePackage(['slug' => 'growth']);
+        $this->makePackage(['slug' => 'hidden', 'name' => 'Hidden', 'is_active' => false]);
+        $this->makePackage(['slug' => 'gone', 'name' => 'Gone'])->delete(); // retired
+
+        Sanctum::actingAs($teacher);
+
+        $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/teacher/packages')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.slug', 'growth')
+            ->assertJsonPath('data.0.is_current', false);
+    }
+
+    public function test_student_cannot_list_packages(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $student = $this->makeMember($tenant, TenantUserRole::Student);
+        Sanctum::actingAs($student);
+
+        $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/teacher/packages')
+            ->assertStatus(403);
+    }
 }
