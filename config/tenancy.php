@@ -20,6 +20,27 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Landing / SPA locales
+    |--------------------------------------------------------------------------
+    |
+    | The platform-supported UI languages. A teacher enables a SUBSET of these
+    | for their academy (teacher_profiles.locales) and picks one as primary
+    | (teacher_profiles.primary_locale). Landing content is authored per enabled
+    | locale; the public payload returns all of them and the SPA switches
+    | client-side. `default_locale` is the fallback primary when a tenant has
+    | none set. See LandingSchema + docs/api/tenancy.md.
+    |
+    */
+
+    'supported_locales' => array_values(array_filter(array_map(
+        static fn (string $l): string => strtolower(trim($l)),
+        explode(',', (string) env('TENANCY_SUPPORTED_LOCALES', 'ar,en'))
+    ))),
+
+    'default_locale' => strtolower((string) env('TENANCY_DEFAULT_LOCALE', 'ar')),
+
+    /*
+    |--------------------------------------------------------------------------
     | Reserved tenant slugs
     |--------------------------------------------------------------------------
     |

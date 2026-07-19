@@ -30,7 +30,11 @@ class LandingResolver
      */
     public function resolve(int $tenantId, ?TeacherProfile $profile): array
     {
-        $stored = ($profile && $profile->landing_sections) ? $profile->landing_sections : LandingSchema::defaults();
+        $meta = LandingSchema::normalizeLocales($profile?->locales, $profile?->primary_locale);
+        $locales = $meta['locales'];
+        $primary = $meta['primary'];
+
+        $stored = ($profile && $profile->landing_sections) ? $profile->landing_sections : LandingSchema::defaults($primary);
 
         $sections = [];
         foreach (array_values($stored) as $i => $s) {
@@ -44,7 +48,8 @@ class LandingResolver
                 'type' => $type,
                 'visible' => (bool) ($s['visible'] ?? true),
                 'order' => (int) ($s['order'] ?? ($i + 1)),
-                'content' => (array) ($s['content'] ?? []),
+                // Per-locale content (all enabled locales, primary-filled).
+                'content' => $this->localizeContent((array) ($s['content'] ?? []), $locales, $primary),
             ];
 
             if ($type === 'courses') {
@@ -60,9 +65,39 @@ class LandingResolver
 
         return [
             'layout' => $this->normalizeLayout($profile?->layout),
-            'nav' => ['links' => $this->buildNav($sections)],
+            'locales' => $locales,
+            'primary_locale' => $primary,
+            'nav' => ['links' => $this->buildNav($sections, $locales, $primary)],
             'sections' => $sections,
         ];
+    }
+
+    /**
+     * Expand a stored content block to a per-locale map covering every enabled
+     * locale. Already locale-keyed content is filled from the primary for any
+     * missing locale; flat (legacy/pre-i18n) content is treated as the primary's.
+     *
+     * @param  array<string, mixed>  $content
+     * @return array<string, array<string, mixed>>
+     */
+    private function localizeContent(array $content, array $locales, string $primary): array
+    {
+        $localeKeyed = false;
+        foreach ($locales as $l) {
+            if (array_key_exists($l, $content)) {
+                $localeKeyed = true;
+                break;
+            }
+        }
+
+        $map = $localeKeyed ? $content : [$primary => $content];
+
+        $out = [];
+        foreach ($locales as $l) {
+            $out[$l] = (array) ($map[$l] ?? $map[$primary] ?? []);
+        }
+
+        return $out;
     }
 
     public function normalizeLayout(?string $layout): string
@@ -70,16 +105,33 @@ class LandingResolver
         return in_array($layout, LandingSchema::LAYOUTS, true) ? $layout : 'classic';
     }
 
-    /** Derive anchor-nav links from visible, nav-worthy sections. */
-    public function buildNav(array $sections): array
+    /**
+     * Derive anchor-nav links from visible, nav-worthy sections. Labels are a
+     * per-locale map so the SPA can render the nav in the active language; each
+     * locale falls back to a capitalized type name when that section has no title.
+     *
+     * Accepts sections whose `content` is either already localized (public
+     * resolve output) or stored per-locale (teacher editor) — both are keyed by
+     * locale.
+     */
+    public function buildNav(array $sections, array $locales, string $primary): array
     {
+        $locales = LandingSchema::orderedLocales($locales, $primary);
+
         $links = [];
         foreach ($sections as $s) {
-            if (! $s['visible'] || ! in_array($s['type'], self::NAV_TYPES, true)) {
+            if (! ($s['visible'] ?? true) || ! in_array($s['type'] ?? null, self::NAV_TYPES, true)) {
                 continue;
             }
-            $label = $s['content']['title'] ?? null;
-            $links[] = ['label' => $label !== null && $label !== '' ? $label : ucfirst($s['type']), 'target' => '#'.$s['key']];
+
+            $content = (array) ($s['content'] ?? []);
+            $label = [];
+            foreach ($locales as $l) {
+                $title = $content[$l]['title'] ?? null;
+                $label[$l] = ($title !== null && $title !== '') ? $title : ucfirst((string) $s['type']);
+            }
+
+            $links[] = ['label' => $label, 'target' => '#'.($s['key'] ?? $s['type'])];
         }
 
         return $links;

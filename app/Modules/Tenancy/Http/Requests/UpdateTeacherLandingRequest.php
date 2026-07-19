@@ -4,15 +4,21 @@ namespace App\Modules\Tenancy\Http\Requests;
 
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\CourseCategory;
+use App\Modules\Tenancy\Services\TenantContext;
 use App\Modules\Tenancy\Support\LandingSchema;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 /**
- * Authors the landing (LANDING_CONTRACT_V2.md): layout + ordered, typed sections.
- * Content is validated per section type; dynamic sections validate their `config`
- * and that referenced categories/courses belong to this teacher.
+ * Authors the landing (LANDING_CONTRACT_V2, multi-language): the enabled
+ * `locales` + `primary_locale`, a `layout`, and ordered, typed sections whose
+ * `content` is authored PER LOCALE ({ ar: {...}, en: {...} }).
+ *
+ * Content is validated per section type, per enabled locale; dynamic sections
+ * validate their `config` (not per-locale) and that referenced categories/courses
+ * belong to this teacher. Section types are restricted to the code catalog
+ * (LandingSchema::TYPES) — the teacher may add/duplicate those, not invent types.
  */
 class UpdateTeacherLandingRequest extends FormRequest
 {
@@ -23,7 +29,13 @@ class UpdateTeacherLandingRequest extends FormRequest
 
     public function rules(): array
     {
+        $supported = LandingSchema::supportedLocales();
+        $locales = $this->effectiveLocales();
+
         $rules = [
+            'locales' => ['sometimes', 'array', 'min:1'],
+            'locales.*' => ['string', Rule::in($supported)],
+            'primary_locale' => ['sometimes', 'string', Rule::in($supported)],
             'layout' => ['sometimes', Rule::in(LandingSchema::LAYOUTS)],
             'sections' => ['required', 'array', 'max:30'],
             'sections.*.key' => ['required', 'string', 'max:40'],
@@ -38,9 +50,16 @@ class UpdateTeacherLandingRequest extends FormRequest
             if (! is_string($type)) {
                 continue;
             }
-            foreach (LandingSchema::contentRules($type) as $field => $fieldRules) {
-                $rules["sections.{$i}.content.{$field}"] = $fieldRules;
+
+            // Per-locale content rules (one set of the type's field rules per locale).
+            foreach ($locales as $locale) {
+                $rules["sections.{$i}.content.{$locale}"] = ['sometimes', 'array'];
+                foreach (LandingSchema::contentRules($type) as $field => $fieldRules) {
+                    $rules["sections.{$i}.content.{$locale}.{$field}"] = $fieldRules;
+                }
             }
+
+            // Config is data selection, not translated → validated once per section.
             foreach (LandingSchema::configRules($type) as $field => $fieldRules) {
                 $rules["sections.{$i}.{$field}"] = $fieldRules;
             }
@@ -52,6 +71,13 @@ class UpdateTeacherLandingRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $v): void {
+            // primary_locale must be one of the enabled locales (when both given).
+            $locales = $this->input('locales');
+            $primary = $this->input('primary_locale');
+            if (is_array($locales) && is_string($primary) && ! in_array($primary, $locales, true)) {
+                $v->errors()->add('primary_locale', __('The primary language must be one of the enabled languages.'));
+            }
+
             foreach ((array) $this->input('sections', []) as $i => $section) {
                 if (($section['type'] ?? null) !== 'courses') {
                     continue;
@@ -73,5 +99,23 @@ class UpdateTeacherLandingRequest extends FormRequest
                 }
             }
         });
+    }
+
+    /**
+     * The locales whose content this request validates: the ones being set in
+     * this payload, else the academy's current set, else the platform default.
+     *
+     * @return list<string>
+     */
+    private function effectiveLocales(): array
+    {
+        $requested = $this->input('locales');
+        if (is_array($requested)) {
+            return LandingSchema::normalizeLocales($requested, $this->input('primary_locale') ?? ($requested[0] ?? null))['locales'];
+        }
+
+        $profile = app(TenantContext::class)->tenant()?->teacherProfile;
+
+        return LandingSchema::normalizeLocales($profile?->locales, $profile?->primary_locale)['locales'];
     }
 }

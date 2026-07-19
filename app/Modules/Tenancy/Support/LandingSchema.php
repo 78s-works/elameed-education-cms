@@ -107,16 +107,74 @@ final class LandingSchema
         return array_keys($fields);
     }
 
+    /** The platform-supported UI locales a teacher may enable (config-driven). */
+    public static function supportedLocales(): array
+    {
+        $supported = array_values(array_filter(array_map(
+            static fn ($l): string => strtolower(trim((string) $l)),
+            (array) config('tenancy.supported_locales', ['ar', 'en'])
+        )));
+
+        return $supported ?: ['ar'];
+    }
+
     /**
-     * Normalize the submitted sections: keep known types only, keep just the
-     * editable content fields, preserve `items` for item-preserved types (from the
-     * previously-saved section with the same key), and keep `config` for dynamic.
+     * Clamp a teacher's requested locale set to what the platform supports and
+     * guarantee a valid primary within it.
+     *
+     * @return array{locales: list<string>, primary: string}
+     */
+    public static function normalizeLocales(?array $locales, ?string $primary): array
+    {
+        $supported = self::supportedLocales();
+        $default = strtolower((string) config('tenancy.default_locale', 'ar'));
+
+        $locales = array_values(array_intersect(
+            array_map(static fn ($l): string => strtolower(trim((string) $l)), (array) ($locales ?: [])),
+            $supported
+        ));
+
+        if ($locales === []) {
+            $locales = [in_array($default, $supported, true) ? $default : $supported[0]];
+        }
+
+        $primary = strtolower(trim((string) $primary));
+        if (! in_array($primary, $locales, true)) {
+            $primary = $locales[0];
+        }
+
+        return ['locales' => self::orderedLocales($locales, $primary), 'primary' => $primary];
+    }
+
+    /** Unique, primary-first ordering of a locale list. @return list<string> */
+    public static function orderedLocales(array $locales, string $primary): array
+    {
+        $locales = array_values(array_unique(array_filter(
+            array_map(static fn ($l): string => strtolower(trim((string) $l)), $locales),
+            static fn (string $l): bool => $l !== ''
+        )));
+
+        $locales = array_values(array_diff($locales, [$primary]));
+        array_unshift($locales, $primary);
+
+        return array_values(array_unique($locales));
+    }
+
+    /**
+     * Normalize submitted sections: keep known types only, keep just the editable
+     * content fields PER LOCALE, preserve `items` per locale for item-preserved
+     * types (from the previously-saved section with the same key), keep `config`
+     * for dynamic, and guarantee unique keys (needed for nav anchors when the
+     * teacher duplicates a section type).
      *
      * @param  array<int, mixed>  $incoming
      * @param  array<int, mixed>  $existing  previously saved sections (for item preservation)
+     * @param  list<string>  $locales  the enabled, primary-first locales
      */
-    public static function sanitize(array $incoming, array $existing = []): array
+    public static function sanitize(array $incoming, array $existing, array $locales, string $primary): array
     {
+        $locales = self::orderedLocales($locales, $primary);
+
         $prev = [];
         foreach ($existing as $s) {
             if (isset($s['key'])) {
@@ -125,29 +183,27 @@ final class LandingSchema
         }
 
         $clean = [];
+        $usedKeys = [];
         foreach (array_values($incoming) as $i => $section) {
             $type = $section['type'] ?? null;
             if (! is_string($type) || ! in_array($type, self::TYPES, true)) {
                 continue;
             }
-            $key = is_string($section['key'] ?? null) ? $section['key'] : $type;
+
+            $originalKey = is_string($section['key'] ?? null) && $section['key'] !== '' ? $section['key'] : $type;
+            $key = self::uniqueKey($originalKey, $usedKeys);
+            $usedKeys[$key] = true;
+
+            $incomingContent = (array) ($section['content'] ?? []);
+            $prevContent = (array) ($prev[$originalKey]['content'] ?? []);
 
             $content = [];
-            $incomingContent = (array) ($section['content'] ?? []);
-            foreach (self::contentFields($type) as $field) {
-                if (array_key_exists($field, $incomingContent)) {
-                    $content[$field] = $incomingContent[$field];
-                }
-            }
-
-            // hero.title_html renders as HTML on a public page — allow only bare <span>.
-            if ($type === 'hero' && isset($content['title_html'])) {
-                $content['title_html'] = self::cleanTitleHtml((string) $content['title_html']);
-            }
-
-            // Preserve non-editable item lists from the last save.
-            if (in_array($type, self::ITEM_PRESERVED, true)) {
-                $content['items'] = $prev[$key]['content']['items'] ?? ($incomingContent['items'] ?? []);
+            foreach ($locales as $locale) {
+                $content[$locale] = self::sanitizeLocaleContent(
+                    $type,
+                    (array) ($incomingContent[$locale] ?? []),
+                    (array) ($prevContent[$locale] ?? []),
+                );
             }
 
             $entry = [
@@ -168,6 +224,44 @@ final class LandingSchema
         usort($clean, fn ($a, $b) => $a['order'] <=> $b['order']);
 
         return $clean;
+    }
+
+    /** Sanitize one locale's content block for a section type. */
+    private static function sanitizeLocaleContent(string $type, array $incoming, array $prev): array
+    {
+        $content = [];
+        foreach (self::contentFields($type) as $field) {
+            if (array_key_exists($field, $incoming)) {
+                $content[$field] = $incoming[$field];
+            }
+        }
+
+        // hero.title_html renders as HTML on a public page — allow only bare <span>.
+        if ($type === 'hero' && isset($content['title_html'])) {
+            $content['title_html'] = self::cleanTitleHtml((string) $content['title_html']);
+        }
+
+        // Preserve non-editable item lists (per locale) from the last save.
+        if (in_array($type, self::ITEM_PRESERVED, true)) {
+            $content['items'] = $prev['items'] ?? ($incoming['items'] ?? []);
+        }
+
+        return $content;
+    }
+
+    /** Ensure a section key is unique within the save (append -2, -3, … on clash). */
+    private static function uniqueKey(string $key, array $used): string
+    {
+        if (! isset($used[$key])) {
+            return $key;
+        }
+
+        $n = 2;
+        while (isset($used[$key.'-'.$n])) {
+            $n++;
+        }
+
+        return $key.'-'.$n;
     }
 
     private static function cleanTitleHtml(string $html): string
@@ -195,8 +289,24 @@ final class LandingSchema
         ];
     }
 
-    /** A sensible starter landing (used for seeding + as a fallback when unset). */
-    public static function defaults(): array
+    /**
+     * A sensible starter landing (used for seeding + as a fallback when unset).
+     * Each section's content is wrapped under the primary locale so the shape
+     * matches saved data ({ <locale>: {...fields} }).
+     */
+    public static function defaults(?string $primary = null): array
+    {
+        $primary = $primary ?: strtolower((string) config('tenancy.default_locale', 'ar'));
+
+        return array_map(static function (array $section) use ($primary): array {
+            $section['content'] = [$primary => $section['content']];
+
+            return $section;
+        }, self::defaultSections());
+    }
+
+    /** The flat (single-language) default sections, before per-locale wrapping. */
+    private static function defaultSections(): array
     {
         return [
             ['key' => 'hero', 'type' => 'hero', 'visible' => true, 'order' => 1, 'content' => [

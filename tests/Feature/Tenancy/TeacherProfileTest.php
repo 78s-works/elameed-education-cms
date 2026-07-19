@@ -136,21 +136,31 @@ class TeacherProfileTest extends TestCase
 
         $this->withHeader('X-Tenant', 'demo')->putJson('/api/v1/teacher/landing', [
             'layout' => 'grid',
+            'locales' => ['ar', 'en'],
+            'primary_locale' => 'ar',
             'sections' => [
                 ['key' => 'hero', 'type' => 'hero', 'visible' => true, 'order' => 1,
-                    'content' => ['eyebrow' => 'Hi', 'title_html' => 'Learn <span>fast</span>']],
+                    'content' => [
+                        'ar' => ['eyebrow' => 'أهلاً', 'title_html' => 'تعلّم <span>بسرعة</span>'],
+                        'en' => ['eyebrow' => 'Hi', 'title_html' => 'Learn <span>fast</span>'],
+                    ]],
                 ['key' => 'courses', 'type' => 'courses', 'visible' => true, 'order' => 2,
-                    'content' => ['title' => 'My courses'], 'config' => ['source' => 'all', 'limit' => 8]],
+                    'content' => ['ar' => ['title' => 'كورساتي'], 'en' => ['title' => 'My courses']],
+                    'config' => ['source' => 'all', 'limit' => 8]],
             ],
         ])->assertOk()
             ->assertJsonPath('data.layout', 'grid')
-            ->assertJsonPath('data.sections.0.content.eyebrow', 'Hi')
+            ->assertJsonPath('data.primary_locale', 'ar')
+            ->assertJsonPath('data.locales', ['ar', 'en'])
+            ->assertJsonPath('data.sections.0.content.en.eyebrow', 'Hi')
+            ->assertJsonPath('data.sections.0.content.ar.eyebrow', 'أهلاً')
             ->assertJsonPath('data.sections.1.config.source', 'all');
 
         // GET authoring reflects the save (config on dynamic sections, no items).
         $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/teacher/landing')
             ->assertOk()
             ->assertJsonPath('data.layout', 'grid')
+            ->assertJsonPath('data.sections.0.content.en.eyebrow', 'Hi')
             ->assertJsonPath('data.sections.1.config.limit', 8);
     }
 
@@ -185,8 +195,8 @@ class TeacherProfileTest extends TestCase
 
         $html = $this->withHeader('X-Tenant', 'demo')->putJson('/api/v1/teacher/landing', [
             'sections' => [['key' => 'hero', 'type' => 'hero', 'visible' => true,
-                'content' => ['title_html' => 'Hi <span onclick="x()">there</span><script>alert(1)</script>']]],
-        ])->assertOk()->json('data.sections.0.content.title_html');
+                'content' => ['ar' => ['title_html' => 'Hi <span onclick="x()">there</span><script>alert(1)</script>']]]],
+        ])->assertOk()->json('data.sections.0.content.ar.title_html');
 
         $this->assertStringNotContainsString('<script', $html);
         $this->assertStringNotContainsString('onclick', $html);

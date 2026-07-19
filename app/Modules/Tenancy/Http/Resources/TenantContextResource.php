@@ -3,6 +3,7 @@
 namespace App\Modules\Tenancy\Http\Resources;
 
 use App\Modules\Tenancy\Models\Tenant;
+use App\Modules\Tenancy\Support\LandingSchema;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -18,6 +19,7 @@ class TenantContextResource extends JsonResource
     public function toArray(Request $request): array
     {
         $profile = $this->teacherProfile;
+        $locale = LandingSchema::normalizeLocales($profile?->locales, $profile?->primary_locale);
 
         return [
             'uuid' => $this->uuid,
@@ -35,8 +37,10 @@ class TenantContextResource extends JsonResource
                 // `layout`/`landing_sections` are no longer served here.
             ],
             'locale' => [
-                'default' => 'ar',       // Arabic default, RTL (PRD §9 / NFRs)
-                'supported' => ['ar', 'en'],
+                // The academy's enabled languages (primary first). Arabic/RTL is
+                // the platform default (PRD §9 / NFRs) when the teacher sets none.
+                'default' => $locale['primary'],
+                'supported' => $locale['locales'],
             ],
             'features' => [],            // TODO: per-tenant enabled feature flags
         ];

@@ -40,7 +40,23 @@ class TeacherLandingController
         EntityVersion::assertMatches($request, $profile);
 
         $data = $request->validated();
-        $fill = ['landing_sections' => LandingSchema::sanitize($data['sections'], $profile->landing_sections ?? [])];
+
+        // Effective language set: this payload's choice, else keep the academy's.
+        $meta = LandingSchema::normalizeLocales(
+            $data['locales'] ?? $profile->locales,
+            $data['primary_locale'] ?? $profile->primary_locale,
+        );
+
+        $fill = [
+            'locales' => $meta['locales'],
+            'primary_locale' => $meta['primary'],
+            'landing_sections' => LandingSchema::sanitize(
+                $data['sections'],
+                $profile->landing_sections ?? [],
+                $meta['locales'],
+                $meta['primary'],
+            ),
+        ];
         if (array_key_exists('layout', $data)) {
             $fill['layout'] = $data['layout'];
         }

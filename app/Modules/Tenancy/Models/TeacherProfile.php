@@ -18,6 +18,8 @@ use Illuminate\Database\Eloquent\Model;
  * @property array<string, mixed>|null $contact
  * @property array<string, mixed>|null $socials
  * @property array<int, array{key: string, visible: bool}>|null $landing_sections
+ * @property list<string>|null $locales
+ * @property string $primary_locale
  */
 class TeacherProfile extends Model
 {
@@ -35,6 +37,8 @@ class TeacherProfile extends Model
         'contact',
         'socials',
         'landing_sections',
+        'locales',
+        'primary_locale',
         'layout',
         'hide_ranking',
     ];
@@ -47,6 +51,7 @@ class TeacherProfile extends Model
         'contact' => 'array',
         'socials' => 'array',
         'landing_sections' => 'array',
+        'locales' => 'array',
         'hide_ranking' => 'boolean',
     ];
 }

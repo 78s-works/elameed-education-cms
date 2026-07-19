@@ -1,12 +1,14 @@
 # Tenancy Module
 
 > The Tenancy module is the platform's multi-tenant backbone. It maps an incoming **Host** (custom domain or `*.elameed.app` subdomain) to a tenant academy, binds that tenant for the rest of the request (RLS/`BelongsToTenant` scoping), and exposes the tenant's public identity, branding/theme, and teacher-authored landing page to the SPA. It also owns the teacher-facing endpoints for editing branding (profile) and the landing page (layout + typed sections), plus a media upload helper for landing images. Landing content follows the **LANDING_CONTRACT_V2** contract: a fixed catalog of typed sections where two types (`courses`, `testimonials`) are resolved server-side into real items.
+>
+> **Multi-language:** landing content is translatable. The teacher enables a set of `locales` (a subset of the platform-supported languages) and picks a `primary_locale`; each section's `content` is authored **per locale** (`{ "ar": {…}, "en": {…} }`). The public landing returns **all** enabled locales in one payload (the SPA switches client-side), with any untranslated section falling back to the primary locale. The teacher may also **add, remove, reorder, and duplicate** section instances — but only of the code-defined catalog types (no freeform/HTML sections).
 
 ## Models
 
 - **`Tenant`** — A teacher academy; the **global** tenant-registry row (NOT tenant-scoped, no `BelongsToTenant`/RLS). Has `uuid`, `slug`, `name`, `status` (enum), soft-deletes, and relations to `domains`, `teacherProfile`, and `owner`.
 - **`TenantDomain`** — Host → tenant mapping row. **Global** (read during resolution, before any tenant scope exists). Holds `host`, `type` (subdomain|custom), `is_primary`, and Cloudflare-for-SaaS SSL fields.
-- **`TeacherProfile`** — Per-tenant branding + landing configuration; one row per tenant and the **first** tenant-scoped model (`BelongsToTenant` filters every query and auto-fills `tenant_id`). Stores `logo_url`, `cover_url`, `primary_color`, `secondary_color`, `bio`, `contact` (json), `socials` (json), `layout`, `landing_sections` (json), `hide_ranking`.
+- **`TeacherProfile`** — Per-tenant branding + landing configuration; one row per tenant and the **first** tenant-scoped model (`BelongsToTenant` filters every query and auto-fills `tenant_id`). Stores `logo_url`, `cover_url`, `primary_color`, `secondary_color`, `bio`, `contact` (json), `socials` (json), `layout`, `landing_sections` (json, per-locale content), `locales` (json list of enabled languages), `primary_locale` (string), `hide_ranking`.
 
 ## Enums
 
@@ -17,8 +19,8 @@
 
 - **`TenantContext`** — Request-scoped singleton holding the resolved tenant (`hasTenant()`, `tenant()`, `tenantOrFail()`). Set by `ResolveTenant`.
 - **`TenantResolver`** — Maps a request to a tenant: (1) `X-Tenant` header override (dev/tooling only, when `tenancy.allow_header_override`), (2) exact host match in `tenant_domains`, (3) `<label>.<base_domain>` subdomain → slug, else unresolved. Aggressively cached with negative caching for unknown hosts.
-- **`LandingResolver`** — Resolves the teacher's stored landing config into the fully rendered public payload: normalizes `layout`, resolves dynamic `courses`/`testimonials` sections to real `items`, and derives the anchor `nav`.
-- **`LandingSchema`** (Support) — The v2 landing contract: layout list, section-type catalog, per-type content/config validation rules, `sanitize()` for saving, and `defaults()` seed. See below for the section-type table.
+- **`LandingResolver`** — Resolves the teacher's stored landing config into the fully rendered public payload: normalizes `layout`, emits **per-locale** section content (all enabled locales, missing ones filled from the primary), resolves dynamic `courses`/`testimonials` sections to real `items`, derives the anchor `nav` (per-locale labels), and overlays each student's `enrolled` flag via `applyEnrollment()`.
+- **`LandingSchema`** (Support) — The v2 landing contract: layout list, section-type catalog, per-type content/config validation rules, locale helpers (`supportedLocales()`, `normalizeLocales()`), per-locale `sanitize()` for saving (with unique-key dedup), and the `defaults()` seed. See below for the section-type table.
 - **`EntityVersion`** (Support) — Optimistic-concurrency helper for the editor endpoints: derives an `ETag` from a model's identity + `updated_at`, and enforces an optional `If-Match` precondition on writes (`412` on mismatch) so two editors can't silently overwrite the shared `teacher_profiles` row.
 - **`EnsureRegisteredDomain`** + **`ResolveTenant`** (Middleware) — the `tenant` middleware group: the first hard-gates unregistered/inactive hosts (404/403), the second resolves + binds the tenant and RLS session.
 
@@ -28,6 +30,18 @@
 
 - **Dynamic** (`courses`, `testimonials`): the teacher stores a `config` block; the public endpoint resolves it into `items`.
 - **Item-preserved** (`stats`, `features`, `steps`, `packages`): only `title`/`subtitle` are editable this milestone; their `content.items` are carried over from the last save.
+
+### Localization (per-locale content)
+
+- **Supported vs enabled.** The platform supports a fixed set of UI languages (`tenancy.supported_locales`, default `ar,en`). A teacher **enables** a subset for their academy (`teacher_profiles.locales`) and marks one as `primary_locale` (the fallback; defaults to `tenancy.default_locale`, `ar`). Enabling/disabling a language is part of saving the landing — see `PUT /teacher/landing`.
+- **Content shape.** Every section's `content` is a **map keyed by locale**: `content: { "ar": { …type fields… }, "en": { …type fields… } }`. Only `content` is translated — a dynamic section's `config` (data selection) and its resolved `items` are **not** per-locale (course titles/reviews render as authored in their own records).
+- **Fallback.** On the public payload, any locale missing from a section is filled from the `primary_locale`, so the page never renders blank when a translation is incomplete.
+- **Removing a language** drops that locale's content from all sections on the next save (non-served locales are not retained).
+- **Config is shared:** `config` (courses/testimonials) stays at the section level, identical across languages.
+
+### Adding / duplicating sections
+
+The teacher may add, remove, reorder, and **duplicate** sections — restricted to the catalog types above (no invented types). Section `key`s are made **unique on save** (a duplicate `about` becomes `about-2`, `about-3`, …) so anchor `nav` targets (`#<key>`) stay unambiguous.
 
 ---
 
@@ -81,7 +95,7 @@
 }
 ```
 
-Notes: `branding` fields are `null` until the teacher sets them; `socials` is an empty object `{}` when unset. `status` is one of `active`, `suspended`, `under_review`, `expired`. `features` is currently always `[]` (per-tenant flags TODO).
+Notes: `branding` fields are `null` until the teacher sets them; `socials` is an empty object `{}` when unset. `status` is one of `active`, `suspended`, `under_review`, `expired`. `features` is currently always `[]` (per-tenant flags TODO). `locale.default` is the tenant's `primary_locale` and `locale.supported` is its **enabled** languages (primary first); a tenant that has enabled none falls back to `[<default_locale>]` (e.g. `["ar"]`), not the full platform set.
 
 **Caching:** the response carries an `ETag` (derived from the tenant's identity/status + branding version) and `Cache-Control: public, max-age=<context_cache_ttl>` (default 60s). A conditional request whose `If-None-Match` equals the current `ETag` gets a bodyless **`304 Not Modified`**. `Vary: X-Tenant` guards a shared cache against the dev `X-Tenant` override.
 
@@ -126,12 +140,14 @@ Notes: `branding` fields are `null` until the teacher sets them; `socials` is an
 {
   "data": {
     "layout": "classic",
+    "locales": ["ar", "en"],
+    "primary_locale": "ar",
     "nav": {
       "links": [
-        { "label": "من نحن", "target": "#about" },
-        { "label": "الكورسات", "target": "#courses" },
-        { "label": "آراء الطلاب", "target": "#testimonials" },
-        { "label": "تواصل معنا", "target": "#contact" }
+        { "label": { "ar": "من نحن", "en": "About" }, "target": "#about" },
+        { "label": { "ar": "الكورسات", "en": "Courses" }, "target": "#courses" },
+        { "label": { "ar": "آراء الطلاب", "en": "Testimonials" }, "target": "#testimonials" },
+        { "label": { "ar": "تواصل معنا", "en": "Contact" }, "target": "#contact" }
       ]
     },
     "sections": [
@@ -141,19 +157,20 @@ Notes: `branding` fields are `null` until the teacher sets them; `socials` is an
         "visible": true,
         "order": 1,
         "content": {
-          "eyebrow": "أهلاً بك",
-          "title_html": "أتقن <span>الفيزياء</span>",
-          "description": "دروس مصمّمة لصفّك الدراسي.",
-          "note": "دفعة جديدة قريبًا",
-          "primary_cta": { "label": "ابدأ الآن" },
-          "secondary_cta": { "label": "تصفّح الكورسات" },
-          "teacher": {
-            "name": "مستر أحمد",
-            "role": "مدرّس فيزياء",
-            "image_url": "https://cdn.elameed.app/landing/12/teacher.jpg",
-            "card_stats": [{ "value": "10k+", "label": "طالب" }]
+          "ar": {
+            "eyebrow": "أهلاً بك",
+            "title_html": "أتقن <span>الفيزياء</span>",
+            "description": "دروس مصمّمة لصفّك الدراسي.",
+            "primary_cta": { "label": "ابدأ الآن" },
+            "chips": [{ "text": "معتمد", "type": "green" }]
           },
-          "chips": [{ "text": "معتمد", "type": "green" }]
+          "en": {
+            "eyebrow": "Welcome",
+            "title_html": "Master <span>Physics</span>",
+            "description": "Lessons tailored to your grade.",
+            "primary_cta": { "label": "Start now" },
+            "chips": [{ "text": "Certified", "type": "green" }]
+          }
         }
       },
       {
@@ -161,7 +178,10 @@ Notes: `branding` fields are `null` until the teacher sets them; `socials` is an
         "type": "courses",
         "visible": true,
         "order": 5,
-        "content": { "title": "الكورسات", "subtitle": "" },
+        "content": {
+          "ar": { "title": "الكورسات", "subtitle": "" },
+          "en": { "title": "Courses", "subtitle": "" }
+        },
         "items": [
           {
             "id": 41,
@@ -186,7 +206,10 @@ Notes: `branding` fields are `null` until the teacher sets them; `socials` is an
         "type": "testimonials",
         "visible": true,
         "order": 7,
-        "content": { "title": "آراء الطلاب", "subtitle": "" },
+        "content": {
+          "ar": { "title": "آراء الطلاب", "subtitle": "" },
+          "en": { "title": "Testimonials", "subtitle": "" }
+        },
         "items": [
           {
             "id": 8,
@@ -205,8 +228,9 @@ Notes: `branding` fields are `null` until the teacher sets them; `socials` is an
 
 Notes:
 - `layout` is normalized to one of `classic|grid|spotlight` (falls back to `classic`).
-- `nav.links` are derived from visible, nav-worthy section types (`about`, `features`, `courses`, `steps`, `testimonials`, `packages`, `contact`); `target` is `#<section key>`, `label` falls back to a capitalized type name when the section has no `content.title`.
-- Only `courses` and `testimonials` sections carry an `items` array; static sections do not.
+- **Localized:** `locales` (primary first) + `primary_locale` describe the languages present; every section's `content` is a per-locale map covering **all** `locales` (missing translations filled from `primary_locale`). `nav.links[].label` is likewise a per-locale map. The SPA renders the active language and switches client-side with no refetch.
+- `nav.links` are derived from visible, nav-worthy section types (`about`, `features`, `courses`, `steps`, `testimonials`, `packages`, `contact`); `target` is `#<section key>`, each locale's `label` falls back to a capitalized type name when that section has no `content.<locale>.title`.
+- Only `courses` and `testimonials` sections carry an `items` array; static sections do not. `items` are **not** per-locale (course/review data renders as authored).
 - `enrolled` is `true` only for the authenticated student's active enrollments; anonymous requests always get `false`.
 - `courses` items are always **published** courses — including `source=selected`: a hand-picked course that is later unpublished/archived drops out of the public landing automatically.
 - Prices are integer minor units + `currency`; timestamps are ISO-8601 UTC.
@@ -342,7 +366,7 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 
 ### `GET /teacher/landing`
 
-**Purpose:** Return the teacher's **editable** landing state (LANDING_CONTRACT_V2 authoring shape): `layout`, derived `nav`, and **all** sections (including hidden) with their `content` and — for dynamic sections — the raw `config` (NOT resolved `items`), so the editor renders controls, not preview data. Falls back to `LandingSchema::defaults()` when nothing is saved yet.
+**Purpose:** Return the teacher's **editable** landing state (LANDING_CONTRACT_V2 authoring shape): the enabled `locales` + `primary_locale`, `layout`, derived `nav`, and **all** sections (including hidden) with their **per-locale** `content` and — for dynamic sections — the raw `config` (NOT resolved `items`), so the editor renders controls, not preview data. Falls back to `LandingSchema::defaults()` when nothing is saved yet.
 
 **Auth:** 🔒 `auth:sanctum` + `active` + `role:teacher`
 **Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
@@ -366,11 +390,13 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 {
   "data": {
     "layout": "classic",
+    "locales": ["ar", "en"],
+    "primary_locale": "ar",
     "nav": {
       "links": [
-        { "label": "الكورسات", "target": "#courses" },
-        { "label": "آراء الطلاب", "target": "#testimonials" },
-        { "label": "تواصل معنا", "target": "#contact" }
+        { "label": { "ar": "الكورسات", "en": "Courses" }, "target": "#courses" },
+        { "label": { "ar": "آراء الطلاب", "en": "Testimonials" }, "target": "#testimonials" },
+        { "label": { "ar": "تواصل معنا", "en": "Contact" }, "target": "#contact" }
       ]
     },
     "sections": [
@@ -380,14 +406,20 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
         "visible": true,
         "order": 1,
         "content": {
-          "eyebrow": "",
-          "title_html": "",
-          "description": "",
-          "note": "",
-          "primary_cta": { "label": "ابدأ الآن" },
-          "secondary_cta": { "label": "تصفّح الكورسات" },
-          "teacher": { "name": "", "role": "", "image_url": null, "card_stats": [] },
-          "chips": []
+          "ar": {
+            "eyebrow": "أهلاً بك",
+            "title_html": "أتقن <span>الفيزياء</span>",
+            "primary_cta": { "label": "ابدأ الآن" },
+            "teacher": { "name": "", "role": "", "image_url": null, "card_stats": [] },
+            "chips": []
+          },
+          "en": {
+            "eyebrow": "",
+            "title_html": "",
+            "primary_cta": { "label": "Start now" },
+            "teacher": { "name": "", "role": "", "image_url": null, "card_stats": [] },
+            "chips": []
+          }
         }
       },
       {
@@ -395,23 +427,18 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
         "type": "courses",
         "visible": true,
         "order": 5,
-        "content": { "title": "الكورسات", "subtitle": "" },
+        "content": {
+          "ar": { "title": "الكورسات", "subtitle": "" },
+          "en": { "title": "Courses", "subtitle": "" }
+        },
         "config": { "source": "featured", "category_id": null, "course_ids": [], "limit": 6 }
-      },
-      {
-        "key": "testimonials",
-        "type": "testimonials",
-        "visible": true,
-        "order": 7,
-        "content": { "title": "آراء الطلاب", "subtitle": "" },
-        "config": { "source": "latest", "min_rating": 0, "limit": 6 }
       }
     ]
   }
 }
 ```
 
-Notes: unlike `GET /tenant/landing`, dynamic sections here expose `config` and NOT resolved `items`. Sections are returned as stored (all keys, including `visible: false`). The response carries an **`ETag`** (the profile's version) — echo it as `If-Match` on `PUT` for optimistic concurrency.
+Notes: unlike `GET /tenant/landing`, dynamic sections here expose `config` and NOT resolved `items`. Sections are returned as stored (all keys, including `visible: false`), with `content` keyed **per enabled locale**. The response carries an **`ETag`** (the profile's version) — echo it as `If-Match` on `PUT` for optimistic concurrency.
 
 **Errors:** `401` / `403` — as above.
 
@@ -419,7 +446,9 @@ Notes: unlike `GET /tenant/landing`, dynamic sections here expose `config` and N
 
 ### `PUT /teacher/landing`
 
-**Purpose:** Author the landing page (FR-M02-04): choose a `layout` and submit the full ordered list of typed sections with content. The server **sanitizes** input (keeps known types/fields only), preserves non-editable `items` from the previous save for item-preserved types, cleans dynamic `config`, and sanitizes `hero.title_html` (only bare `<span>` allowed). Always responds `200`.
+**Purpose:** Author the landing page (FR-M02-04): set the enabled `locales` + `primary_locale`, choose a `layout`, and submit the full ordered list of typed sections with **per-locale** content. The server **sanitizes** input (keeps known types/fields only, per enabled locale), makes section `key`s unique, preserves non-editable `items` from the previous save for item-preserved types (per locale), cleans dynamic `config`, and sanitizes `hero.title_html` (only bare `<span>` allowed). Content for locales not in `locales` is dropped. Always responds `200`.
+
+Omitting `locales`/`primary_locale` keeps the academy's current language set. Section types are restricted to the catalog — the teacher may add/duplicate instances, not invent types.
 
 **Auth:** 🔒 `auth:sanctum` + `active` + `role:teacher`
 **Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
@@ -441,6 +470,8 @@ Notes: unlike `GET /tenant/landing`, dynamic sections here expose `config` and N
 ```json
 {
   "layout": "classic",
+  "locales": ["en", "ar"],
+  "primary_locale": "en",
   "sections": [
     {
       "key": "hero",
@@ -448,19 +479,20 @@ Notes: unlike `GET /tenant/landing`, dynamic sections here expose `config` and N
       "visible": true,
       "order": 1,
       "content": {
-        "eyebrow": "Welcome",
-        "title_html": "Master <span>Physics</span>",
-        "description": "Top-rated lessons for your grade.",
-        "note": "New batch starting soon",
-        "primary_cta": { "label": "Start now" },
-        "secondary_cta": { "label": "Browse courses" },
-        "teacher": {
-          "name": "Mr. Ahmed",
-          "role": "Physics Teacher",
-          "image_url": "https://cdn.example.com/teacher.jpg",
-          "card_stats": [{ "value": "10k+", "label": "Students" }]
+        "en": {
+          "eyebrow": "Welcome",
+          "title_html": "Master <span>Physics</span>",
+          "description": "Top-rated lessons for your grade.",
+          "primary_cta": { "label": "Start now" },
+          "chips": [{ "text": "Certified", "type": "green" }]
         },
-        "chips": [{ "text": "Certified", "type": "green" }]
+        "ar": {
+          "eyebrow": "أهلاً بك",
+          "title_html": "أتقن <span>الفيزياء</span>",
+          "description": "دروس مصمّمة لصفّك الدراسي.",
+          "primary_cta": { "label": "ابدأ الآن" },
+          "chips": [{ "text": "معتمد", "type": "green" }]
+        }
       }
     },
     {
@@ -468,7 +500,10 @@ Notes: unlike `GET /tenant/landing`, dynamic sections here expose `config` and N
       "type": "courses",
       "visible": true,
       "order": 3,
-      "content": { "title": "My Courses", "subtitle": "Pick a track" },
+      "content": {
+        "en": { "title": "My Courses", "subtitle": "Pick a track" },
+        "ar": { "title": "كورساتي", "subtitle": "اختر مسارك" }
+      },
       "config": { "source": "featured", "category_id": null, "course_ids": [], "limit": 6 }
     }
   ]
@@ -480,14 +515,18 @@ Notes: unlike `GET /tenant/landing`, dynamic sections here expose `config` and N
 | Field | Type | Required | Rules |
 |---|---|---|---|
 | `layout` | string | no (`sometimes`) | one of `classic`, `grid`, `spotlight` |
+| `locales` | array | no (`sometimes`) | ≥1; each a platform-supported locale (`ar`, `en`) |
+| `locales.*` | string | — | one of the supported locales |
+| `primary_locale` | string | no (`sometimes`) | a supported locale; **must be within `locales`** |
 | `sections` | array | **yes** | max 30 items |
-| `sections.*.key` | string | **yes** | max 40 |
+| `sections.*.key` | string | **yes** | max 40 (deduped on save → `-2`, `-3`, …) |
 | `sections.*.type` | string | **yes** | one of `hero`, `stats`, `features`, `about`, `steps`, `courses`, `testimonials`, `packages`, `cta`, `contact` |
 | `sections.*.visible` | boolean | **yes** | — |
 | `sections.*.order` | integer | no | nullable, min 1 (defaults to array position) |
-| `sections.*.content` | object | no (`sometimes`) | validated per type (see below) |
+| `sections.*.content` | object | no (`sometimes`) | **per-locale map**: `{ <locale>: {…} }` |
+| `sections.*.content.<locale>` | object | no (`sometimes`) | that locale's content, validated per type (see below) |
 
-**Per-type editable `content` fields**
+**Per-type editable `content` fields** (the fields below are validated **within each enabled locale**, e.g. `sections.*.content.ar.title`)
 
 | Type | Editable content fields |
 |---|---|
@@ -504,7 +543,7 @@ Notes: unlike `GET /tenant/landing`, dynamic sections here expose `config` and N
 | `courses` | `config.source` ∈ `featured\|all\|category\|selected` (required); `config.category_id` (int, nullable); `config.course_ids[]` (int, max 24); `config.limit` (1–24, default 6) |
 | `testimonials` | `config.source` ∈ `latest\|top_rated` (required); `config.min_rating` (0–5); `config.limit` (1–24, default 6) |
 
-Cross-field validation: for a `courses` section with `source=category`, `category_id` must be a category in this academy; with `source=selected`, all `course_ids` must belong to this teacher (otherwise `422`).
+Cross-field validation: `primary_locale` (when both are sent) must be one of `locales`; for a `courses` section with `source=category`, `category_id` must be a category in this academy; with `source=selected`, all `course_ids` must belong to this teacher (otherwise `422`).
 
 **Optimistic concurrency (optional):** send `If-Match: <etag>` (from a prior GET/PUT). If the row changed since — note both landing **and** branding save this same row, so either edit bumps the version — the write is rejected with **`412 precondition_failed`**. Omit the header to skip the check. The response echoes the new `ETag`.
 
