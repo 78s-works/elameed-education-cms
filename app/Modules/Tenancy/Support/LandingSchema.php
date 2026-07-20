@@ -14,8 +14,9 @@ use Illuminate\Validation\Rule;
  * carries its own `variant` — one of the 4 per-type layouts in VARIANTS — so a
  * teacher can, say, show courses as a carousel while testimonials are a slider.
  *
- * Per the milestone scope, `stats|features|steps|packages` only expose
- * title/subtitle for editing — their `items` are preserved from the last save.
+ * `stats`, `features` and `steps` author their `items` list directly (each item
+ * whitelisted to the type's shape, see ITEM_FIELDS). `packages` items remain
+ * seed/billing-managed and are preserved from the last save (see ITEM_PRESERVED).
  */
 final class LandingSchema
 {
@@ -45,8 +46,24 @@ final class LandingSchema
     /** Server-resolved sections (store `config`, emit `items`). */
     public const DYNAMIC = ['courses', 'testimonials'];
 
-    /** Their `content.items` are not editable this milestone — preserved on save. */
-    public const ITEM_PRESERVED = ['stats', 'features', 'steps', 'packages'];
+    /**
+     * Static sections whose `content.items` the teacher authors directly, mapped
+     * to the whitelist of fields each item may carry. Anything else in an item
+     * is dropped on save; keys line up with the public payload / SPA renderers.
+     */
+    public const ITEM_FIELDS = [
+        'stats' => ['value', 'label'],
+        'features' => ['icon', 'title', 'desc'],
+        'steps' => ['n', 'title', 'desc'],
+    ];
+
+    /**
+     * `content.items` NOT authorable via the API — preserved from the last save.
+     * `packages` items are a nested billing shape (price/period/features), seed-
+     * or billing-managed for now; the rest (stats/features/steps) are authored,
+     * see ITEM_FIELDS.
+     */
+    public const ITEM_PRESERVED = ['packages'];
 
     /** Editable `content` field rules per type. */
     public static function contentRules(string $type): array
@@ -86,12 +103,39 @@ final class LandingSchema
                 'cta' => ['nullable', 'array'],
                 'cta.label' => ['nullable', 'string', 'max:60'],
             ],
-            // Dynamic + item-preserved + contact: only title/subtitle are editable.
-            'courses', 'testimonials', 'features', 'steps', 'packages', 'contact' => [
+            // Item-authored sections: title/subtitle + a teacher-edited item list.
+            // The item field rules must exist so the items survive `validated()`
+            // (a content block with ONLY parent rules would be passed through
+            // whole, but one with child rules is reduced to its ruled children —
+            // so every item field a teacher may set needs a rule here).
+            'stats' => [
+                'items' => ['nullable', 'array', 'max:12'],
+                'items.*.value' => ['required', 'string', 'max:40'],
+                'items.*.label' => ['required', 'string', 'max:80'],
+            ],
+            'features' => [
+                'title' => ['nullable', 'string', 'max:200'],
+                'subtitle' => ['nullable', 'string', 'max:400'],
+                'items' => ['nullable', 'array', 'max:24'],
+                'items.*.icon' => ['nullable', 'string', 'max:60'],
+                'items.*.title' => ['required', 'string', 'max:120'],
+                'items.*.desc' => ['nullable', 'string', 'max:400'],
+            ],
+            'steps' => [
+                'title' => ['nullable', 'string', 'max:200'],
+                'subtitle' => ['nullable', 'string', 'max:400'],
+                'items' => ['nullable', 'array', 'max:24'],
+                'items.*.n' => ['nullable', 'string', 'max:8'],
+                'items.*.title' => ['required', 'string', 'max:120'],
+                'items.*.desc' => ['nullable', 'string', 'max:400'],
+            ],
+            // Dynamic + packages + contact: only title/subtitle are editable
+            // (packages items stay seed/billing-managed — see ITEM_PRESERVED).
+            'courses', 'testimonials', 'packages', 'contact' => [
                 'title' => ['nullable', 'string', 'max:200'],
                 'subtitle' => ['nullable', 'string', 'max:400'],
             ],
-            default => [], // stats: nothing editable this milestone
+            default => [],
         };
     }
 
@@ -204,10 +248,11 @@ final class LandingSchema
 
     /**
      * Normalize submitted sections: keep known types only, keep just the editable
-     * content fields PER LOCALE, preserve `items` per locale for item-preserved
-     * types (from the previously-saved section with the same key), keep `config`
-     * for dynamic, and guarantee unique keys (needed for nav anchors when the
-     * teacher duplicates a section type).
+     * content fields PER LOCALE (whitelisting authored `items` for stats/features/
+     * steps to their type shape), preserve `items` per locale for item-preserved
+     * types (packages, from the previously-saved section with the same key), keep
+     * `config` for dynamic, and guarantee unique keys (needed for nav anchors when
+     * the teacher duplicates a section type).
      *
      * @param  array<int, mixed>  $incoming
      * @param  array<int, mixed>  $existing  previously saved sections (for item preservation)
@@ -274,6 +319,9 @@ final class LandingSchema
     {
         $content = [];
         foreach (self::contentFields($type) as $field) {
+            if ($field === 'items') {
+                continue; // arrays of objects — handled below, per-type shape
+            }
             if (array_key_exists($field, $incoming)) {
                 $content[$field] = $incoming[$field];
             }
@@ -284,12 +332,46 @@ final class LandingSchema
             $content['title_html'] = self::cleanTitleHtml((string) $content['title_html']);
         }
 
-        // Preserve non-editable item lists (per locale) from the last save.
-        if (in_array($type, self::ITEM_PRESERVED, true)) {
+        if (isset(self::ITEM_FIELDS[$type])) {
+            // Teacher-authored list: take the incoming items, whitelisting each
+            // item's fields to the type's shape (unknown keys dropped).
+            $content['items'] = self::sanitizeItems((array) ($incoming['items'] ?? []), self::ITEM_FIELDS[$type]);
+        } elseif (in_array($type, self::ITEM_PRESERVED, true)) {
+            // Not authorable (packages) — carry the previous list over unchanged.
             $content['items'] = $prev['items'] ?? ($incoming['items'] ?? []);
         }
 
         return $content;
+    }
+
+    /**
+     * Whitelist each entry of a teacher-authored item list to the fields allowed
+     * for its section type. Non-array entries and rows that end up empty are
+     * dropped; the list is re-indexed so it serializes as a JSON array.
+     *
+     * @param  array<int|string, mixed>  $items
+     * @param  list<string>  $fields
+     * @return array<int, array<string, mixed>>
+     */
+    private static function sanitizeItems(array $items, array $fields): array
+    {
+        $clean = [];
+        foreach (array_values($items) as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            $row = [];
+            foreach ($fields as $field) {
+                if (array_key_exists($field, $item)) {
+                    $row[$field] = $item[$field];
+                }
+            }
+            if ($row !== []) {
+                $clean[] = $row;
+            }
+        }
+
+        return $clean;
     }
 
     /** Ensure a section key is unique within the save (append -2, -3, … on clash). */

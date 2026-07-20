@@ -31,7 +31,8 @@
 `hero`, `stats`, `features`, `about`, `steps`, `courses`, `testimonials`, `packages`, `cta`, `contact`. Page layout (`layout`): `classic` (default), `grid`, `spotlight`.
 
 - **Dynamic** (`courses`, `testimonials`): the teacher stores a `config` block; the public endpoint resolves it into `items`.
-- **Item-preserved** (`stats`, `features`, `steps`, `packages`): only `title`/`subtitle` are editable this milestone; their `content.items` are carried over from the last save.
+- **Item-authored** (`stats`, `features`, `steps`): the teacher edits `content.items` directly. Each item is whitelisted to the type's shape on save (unknown keys dropped): `stats` → `{value, label}`; `features` → `{icon?, title, desc?}`; `steps` → `{n?, title, desc?}`. `features`/`steps` also edit `title`/`subtitle`.
+- **Item-preserved** (`packages`): only `title`/`subtitle` are editable; `content.items` (a nested billing shape) are carried over from the last save.
 
 ### Per-section layout variants (`LandingSchema::VARIANTS`)
 
@@ -565,8 +566,10 @@ Omitting `locales`/`primary_locale` keeps the academy's current language set. Se
 | `hero` | `eyebrow`, `title_html` (bare `<span>` only), `description`, `note`, `primary_cta.label`, `secondary_cta.label`, `teacher.{name,role,image_url,card_stats[].{value,label}}`, `chips[].{text,type∈green\|red\|plain}` |
 | `about` | `badge`, `title`, `body`, `image_url`, `points[]` |
 | `cta` | `title`, `subtitle`, `cta.label` |
-| `courses`, `testimonials`, `features`, `steps`, `packages`, `contact` | `title`, `subtitle` only |
-| `stats` | none editable this milestone |
+| `courses`, `testimonials`, `packages`, `contact` | `title`, `subtitle` only |
+| `stats` | `items[].{value, label}` |
+| `features` | `title`, `subtitle`, `items[].{icon?, title, desc?}` |
+| `steps` | `title`, `subtitle`, `items[].{n?, title, desc?}` |
 
 **Dynamic-section `config` fields**
 

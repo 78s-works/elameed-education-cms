@@ -147,6 +147,86 @@ class LandingV2Test extends TestCase
         $this->assertSame('grid', $this->sectionOfType($data['sections'], 'courses')['variant']);
     }
 
+    public function test_public_endpoint_echoes_a_stored_non_default_variant(): void
+    {
+        // The frontend-reported scenario: a teacher picked a NON-default variant
+        // (hero → image_bg). The PUBLIC payload must echo the stored value, not
+        // fall back to the type default (hero → split). Defaulting is only for
+        // legacy rows that never carried a variant.
+        $p = new TeacherProfile([
+            'locales' => ['ar'],
+            'primary_locale' => 'ar',
+            'landing_sections' => [
+                ['key' => 'hero', 'type' => 'hero', 'variant' => 'image_bg', 'visible' => true, 'order' => 1,
+                    'content' => ['ar' => ['title_html' => 'مرحبا']]],
+                ['key' => 'courses', 'type' => 'courses', 'variant' => 'carousel', 'visible' => true, 'order' => 2,
+                    'content' => ['ar' => ['title' => 'الكورسات']],
+                    'config' => ['source' => 'all', 'limit' => 6]],
+            ],
+        ]);
+        $p->tenant_id = $this->tenant->id;
+        $p->save();
+
+        $data = $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/tenant/landing')->assertOk()->json('data');
+
+        $this->assertSame('image_bg', $this->sectionOfType($data['sections'], 'hero')['variant']);
+        $this->assertSame('carousel', $this->sectionOfType($data['sections'], 'courses')['variant']);
+    }
+
+    public function test_teacher_can_author_stats_features_and_steps_items(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        // A teacher PUTs real items for the static, item-authored sections.
+        $this->withHeader('X-Tenant', 'demo')->putJson('/api/v1/teacher/landing', [
+            'locales' => ['ar'],
+            'primary_locale' => 'ar',
+            'sections' => [
+                ['key' => 'stats', 'type' => 'stats', 'visible' => true, 'order' => 1,
+                    'content' => ['ar' => ['items' => [
+                        ['value' => '+2500', 'label' => 'طالب', 'bogus' => 'dropped'],
+                        ['value' => '98%', 'label' => 'نسبة النجاح'],
+                    ]]]],
+                ['key' => 'features', 'type' => 'features', 'visible' => true, 'order' => 2,
+                    'content' => ['ar' => [
+                        'title' => 'لماذا أكاديميتنا',
+                        'items' => [['icon' => 'fa-video', 'title' => 'شرح فيديو', 'desc' => 'دروس محمية']],
+                    ]]],
+                ['key' => 'how', 'type' => 'steps', 'visible' => true, 'order' => 3,
+                    'content' => ['ar' => ['items' => [['n' => '1', 'title' => 'سجّل', 'desc' => 'أنشئ حسابك']]]]],
+            ],
+        ])->assertOk()
+            ->assertJsonPath('data.sections.0.content.ar.items.0.value', '+2500')
+            ->assertJsonPath('data.sections.1.content.ar.items.0.icon', 'fa-video')
+            ->assertJsonPath('data.sections.2.content.ar.items.0.title', 'سجّل');
+
+        // Unknown item keys are whitelisted out on save.
+        $put = $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/teacher/landing')->assertOk()->json('data');
+        $this->assertArrayNotHasKey('bogus', $put['sections'][0]['content']['ar']['items'][0]);
+        $this->assertSame('نسبة النجاح', $put['sections'][0]['content']['ar']['items'][1]['label']);
+
+        // And the authored items surface on the public resolved endpoint.
+        $pub = $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/tenant/landing')->assertOk()->json('data');
+        $this->assertSame('طالب', $this->sectionOfType($pub['sections'], 'stats')['content']['ar']['items'][0]['label']);
+        $this->assertSame('شرح فيديو', $this->sectionOfType($pub['sections'], 'features')['content']['ar']['items'][0]['title']);
+    }
+
+    public function test_stats_item_missing_required_field_is_rejected(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        // A stats item without the required `value` is a 422 (not silently dropped).
+        $this->withHeader('X-Tenant', 'demo')->putJson('/api/v1/teacher/landing', [
+            'locales' => ['ar'], 'primary_locale' => 'ar',
+            'sections' => [
+                ['key' => 'stats', 'type' => 'stats', 'visible' => true, 'order' => 1,
+                    'content' => ['ar' => ['items' => [['label' => 'طالب']]]]],
+            ],
+        ])->assertStatus(422)
+            ->assertJsonPath('error.code', 'validation_error')
+            ->assertJsonStructure(['error' => ['details' => ['sections.0.content.ar.items.0.value']]]);
+    }
+
     public function test_course_card_cover_falls_back_to_first_lesson_video_poster(): void
     {
         // A course with NO cover and NO thumbnail of its own.
