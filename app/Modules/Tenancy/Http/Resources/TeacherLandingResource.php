@@ -24,6 +24,16 @@ class TeacherLandingResource extends JsonResource
         $meta = LandingSchema::normalizeLocales($this->locales, $this->primary_locale);
         $sections = $this->landing_sections ?: LandingSchema::defaults($meta['primary']);
 
+        // Guarantee every section exposes a `variant` so the editor always has a
+        // selected layout to render (fills the type default for pre-variant rows).
+        $sections = array_map(static function ($s) {
+            if (is_array($s) && is_string($s['type'] ?? null)) {
+                $s['variant'] = LandingSchema::variantOrDefault($s['type'], is_string($s['variant'] ?? null) ? $s['variant'] : null);
+            }
+
+            return $s;
+        }, $sections);
+
         return [
             'layout' => $resolver->normalizeLayout($this->layout),
             'locales' => $meta['locales'],

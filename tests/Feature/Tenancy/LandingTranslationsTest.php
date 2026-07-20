@@ -166,4 +166,40 @@ class LandingTranslationsTest extends TestCase
             ],
         ])->assertStatus(422);
     }
+
+    public function test_section_layout_variant_round_trips(): void
+    {
+        $this->actingTeacher();
+
+        $this->withHeader('X-Tenant', 'demo')->putJson('/api/v1/teacher/landing', [
+            'locales' => ['ar'],
+            'primary_locale' => 'ar',
+            'sections' => [
+                ['key' => 'courses', 'type' => 'courses', 'variant' => 'carousel', 'visible' => true, 'order' => 1,
+                    'content' => ['ar' => ['title' => 'الكورسات']],
+                    'config' => ['source' => 'featured', 'limit' => 6]],
+            ],
+        ])->assertOk()
+            ->assertJsonPath('data.sections.0.variant', 'carousel');
+
+        $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/teacher/landing')
+            ->assertOk()
+            ->assertJsonPath('data.sections.0.variant', 'carousel');
+    }
+
+    public function test_variant_from_another_type_is_rejected(): void
+    {
+        $this->actingTeacher();
+
+        // 'slider' is a testimonials variant — not valid for a courses section.
+        $this->withHeader('X-Tenant', 'demo')->putJson('/api/v1/teacher/landing', [
+            'locales' => ['ar'],
+            'primary_locale' => 'ar',
+            'sections' => [
+                ['key' => 'courses', 'type' => 'courses', 'variant' => 'slider', 'visible' => true, 'order' => 1,
+                    'content' => ['ar' => ['title' => 'الكورسات']],
+                    'config' => ['source' => 'featured', 'limit' => 6]],
+            ],
+        ])->assertStatus(422);
+    }
 }

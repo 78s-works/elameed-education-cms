@@ -45,7 +45,8 @@ class CourseRequest extends FormRequest
             'is_free' => ['boolean'],
             'purchase_enabled' => ['boolean'],
             'is_center' => ['boolean'],
-            'cover_url' => ['nullable', 'url', 'max:2048'],
+            'cover_url' => ['nullable', 'url', 'max:2048'],        // wide hero banner
+            'thumbnail_url' => ['nullable', 'url', 'max:2048'],    // small card/grid preview
             'promo_video_url' => ['nullable', 'url', 'max:2048'], // public teaser (YouTube/hosted)
             'points' => ['nullable', 'integer', 'min:0'],
         ];

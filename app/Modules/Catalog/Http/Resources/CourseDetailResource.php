@@ -28,6 +28,7 @@ class CourseDetailResource extends JsonResource
             'audience' => $this->audience ?? [],
             'parts' => $this->parts ?? [],
             'cover_url' => $this->cover_url,
+            'thumbnail_url' => $this->thumbnail_url,
             'promo_video_url' => $this->promo_video_url,
             'price_minor' => $this->price_minor,
             'currency' => $this->currency,

@@ -51,6 +51,13 @@ class UpdateTeacherLandingRequest extends FormRequest
                 continue;
             }
 
+            // Layout variant is optional (server defaults it) but, when sent, must
+            // be one of the 4 variants defined for THIS section's type.
+            $variants = LandingSchema::variantsFor($type);
+            if ($variants !== []) {
+                $rules["sections.{$i}.variant"] = ['sometimes', 'nullable', 'string', Rule::in($variants)];
+            }
+
             // Per-locale content rules (one set of the type's field rules per locale).
             foreach ($locales as $locale) {
                 $rules["sections.{$i}.content.{$locale}"] = ['sometimes', 'array'];

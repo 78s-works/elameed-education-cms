@@ -8,6 +8,7 @@ use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Engagement\Models\Review;
+use App\Modules\Media\Models\MediaAsset;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Support\LandingSchema;
 use Illuminate\Support\Collection;
@@ -46,6 +47,9 @@ class LandingResolver
             $entry = [
                 'key' => $s['key'] ?? $type,
                 'type' => $type,
+                // Per-section layout; defaults to the type's first variant when a
+                // stored (e.g. pre-variant) section carries none.
+                'variant' => LandingSchema::variantOrDefault($type, is_string($s['variant'] ?? null) ? $s['variant'] : null),
                 'visible' => (bool) ($s['visible'] ?? true),
                 'order' => (int) ($s['order'] ?? ($i + 1)),
                 // Per-locale content (all enabled locales, primary-filled).
@@ -201,12 +205,24 @@ class LandingResolver
             $courses = $courses->sortByDesc(fn ($c) => $students[$c->id] ?? 0)->values();
         }
 
-        return $courses->take($limit)->map(fn (Course $c) => [
+        $shown = $courses->take($limit)->values();
+
+        // Card-image fallback chain: course cover → course thumbnail → first
+        // published lesson's video poster. Only queried for courses that have
+        // NEITHER own image, so a coverless course still shows a real thumbnail
+        // instead of a placeholder.
+        $needyIds = $shown
+            ->filter(fn (Course $c) => empty($c->cover_url) && empty($c->thumbnail_url))
+            ->pluck('id')->all();
+        $posters = $needyIds !== [] ? $this->lessonPosters($tenantId, $needyIds) : [];
+
+        return $shown->map(fn (Course $c) => [
             'id' => $c->id,
             'uuid' => $c->uuid,
             'slug' => $c->slug,
             'title' => $c->title,
-            'cover_url' => $c->cover_url,
+            'cover_url' => $c->cover_url ?: ($c->thumbnail_url ?: ($posters[$c->id] ?? null)),
+            'thumbnail_url' => $c->thumbnail_url,
             'grade' => $c->category?->grade ?? $c->category?->name,
             'type' => $c->is_center ? 'center' : 'online',
             'price' => ['amount_minor' => (int) $c->price_minor, 'currency' => $c->currency],
@@ -217,7 +233,50 @@ class LandingResolver
             'students_count' => (int) ($students[$c->id] ?? 0),
             // Viewer-agnostic base; applyEnrollment() flips this per student.
             'enrolled' => false,
-        ])->values()->all();
+        ])->all();
+    }
+
+    /**
+     * Per-course poster fallback: for each course id, the `thumbnail_url` of the
+     * first published lesson (in order) whose video actually has a poster.
+     * Batched into two queries regardless of course count.
+     *
+     * @param  list<int>  $courseIds
+     * @return array<int, string> course_id => thumbnail_url
+     */
+    private function lessonPosters(int $tenantId, array $courseIds): array
+    {
+        // Published, video-bearing lessons for these courses, in display order.
+        $lessons = Lesson::withoutGlobalScopes()
+            ->published()
+            ->where('tenant_id', $tenantId)
+            ->whereIn('course_id', $courseIds)
+            ->whereNotNull('video_asset_id')
+            ->orderBy('sort_order')->orderBy('id')
+            ->get(['course_id', 'video_asset_id']);
+
+        if ($lessons->isEmpty()) {
+            return [];
+        }
+
+        // Only the video assets that actually carry a poster.
+        $thumbs = MediaAsset::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->whereIn('id', $lessons->pluck('video_asset_id')->unique()->values()->all())
+            ->whereNotNull('thumbnail_url')
+            ->pluck('thumbnail_url', 'id');
+
+        $posters = [];
+        foreach ($lessons as $lesson) {
+            if (isset($posters[$lesson->course_id])) {
+                continue; // keep the first (earliest) poster found for the course
+            }
+            if (isset($thumbs[$lesson->video_asset_id])) {
+                $posters[$lesson->course_id] = $thumbs[$lesson->video_asset_id];
+            }
+        }
+
+        return $posters;
     }
 
     private function baseCourses(int $tenantId, string $source, array $config): Collection

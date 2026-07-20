@@ -159,6 +159,43 @@ class CourseCatalogTest extends TestCase
             ->assertJsonPath('data.promo_video_url', 'https://youtu.be/demo');
     }
 
+    public function test_course_has_its_own_thumbnail_distinct_from_cover(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        Sanctum::actingAs($this->makeTeacher($tenant));
+        $h = ['X-Tenant' => 'demo'];
+
+        $slug = $this->withHeaders($h)->postJson('/api/v1/teacher/courses', [
+            'title' => 'Physics',
+            'visibility' => 'visible',
+            'cover_url' => 'https://cdn.example.com/cover.jpg',
+            'thumbnail_url' => 'https://cdn.example.com/thumb.jpg',
+        ])->assertStatus(201)
+            ->assertJsonPath('data.cover_url', 'https://cdn.example.com/cover.jpg')
+            ->assertJsonPath('data.thumbnail_url', 'https://cdn.example.com/thumb.jpg')
+            ->json('data.slug');
+
+        // Public catalogue card + detail both expose the course's own thumbnail.
+        $this->withHeaders($h)->getJson('/api/v1/courses')
+            ->assertOk()
+            ->assertJsonPath('data.0.thumbnail_url', 'https://cdn.example.com/thumb.jpg');
+
+        $this->withHeaders($h)->getJson("/api/v1/courses/{$slug}")
+            ->assertOk()
+            ->assertJsonPath('data.thumbnail_url', 'https://cdn.example.com/thumb.jpg');
+    }
+
+    public function test_thumbnail_url_must_be_a_valid_url(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        Sanctum::actingAs($this->makeTeacher($tenant));
+
+        $this->withHeaders(['X-Tenant' => 'demo'])->postJson('/api/v1/teacher/courses', [
+            'title' => 'Bad thumb',
+            'thumbnail_url' => 'not-a-url',
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+    }
+
     public function test_arabic_title_gets_usable_slug(): void
     {
         $tenant = $this->makeTenant('demo');

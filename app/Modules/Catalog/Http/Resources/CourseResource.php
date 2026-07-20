@@ -32,6 +32,7 @@ class CourseResource extends JsonResource
             'purchase_enabled' => $this->purchase_enabled,
             'is_center' => $this->is_center,
             'cover_url' => $this->cover_url,
+            'thumbnail_url' => $this->thumbnail_url,
             'promo_video_url' => $this->promo_video_url,
             'points' => $this->points,
         ];

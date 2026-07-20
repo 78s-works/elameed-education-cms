@@ -109,6 +109,7 @@ Results are always sorted newest-first (`latest()` on `created_at`); there is no
       "purchase_enabled": true,
       "is_center": false,
       "cover_url": "https://cdn.example.com/course-cover.jpg",
+      "thumbnail_url": "https://cdn.example.com/course-thumb.jpg",
       "promo_video_url": "https://youtube.com/watch?v=abc123",
       "points": 100
     }
@@ -164,6 +165,7 @@ lessons, both ordered by `sort_order`):
       { "title": "Mechanics", "lessons_count": 12, "duration_min": 480 }
     ],
     "cover_url": "https://cdn.example.com/course-cover.jpg",
+    "thumbnail_url": "https://cdn.example.com/course-thumb.jpg",
     "promo_video_url": "https://youtube.com/watch?v=abc123",
     "price_minor": 50000,
     "currency": "EGP",
@@ -338,6 +340,7 @@ to a random stem for non-ASCII/Arabic titles); `tenant_id` is filled automatical
   "purchase_enabled": true,
   "is_center": false,
   "cover_url": "https://cdn.example.com/course-cover.jpg",
+  "thumbnail_url": "https://cdn.example.com/course-thumb.jpg",
   "promo_video_url": "https://youtube.com/watch?v=abc123",
   "points": 100
 }
@@ -360,7 +363,8 @@ to a random stem for non-ASCII/Arabic titles); `tenant_id` is filled automatical
 | `is_free` | boolean |
 | `purchase_enabled` | boolean |
 | `is_center` | boolean |
-| `cover_url` | nullable, url, max 2048 |
+| `cover_url` | nullable, url, max 2048 (wide hero banner) |
+| `thumbnail_url` | nullable, url, max 2048 (small card/grid preview) |
 | `promo_video_url` | nullable, url, max 2048 (public teaser) |
 | `points` | nullable, integer, min 0 |
 

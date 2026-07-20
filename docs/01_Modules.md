@@ -84,7 +84,7 @@ teacher-authored landing page.
 
 - **Models:** `Tenant` (global registry: `uuid`/`slug`/`name`/`status`, soft-deletes), `TenantDomain` (global host→tenant map with Cloudflare SSL fields), `TeacherProfile` (first tenant-scoped model — branding + `landing_sections`/`layout`).
 - **Enums:** `TenantStatus` (active/suspended/under_review/expired), `TenantDomainType` (subdomain/custom).
-- **Services/Support:** `TenantContext` (request-scoped tenant holder), `TenantResolver` (host/`X-Tenant` → tenant, cached), `LandingResolver`, `LandingSchema` (the `LANDING_CONTRACT_V2` catalog: 10 section types, 3 layouts). Middleware `EnsureRegisteredDomain` + `ResolveTenant` form the `tenant` group.
+- **Services/Support:** `TenantContext` (request-scoped tenant holder), `TenantResolver` (host/`X-Tenant` → tenant, cached), `LandingResolver`, `LandingSchema` (the `LANDING_CONTRACT_V2` catalog: 10 section types, 3 page layouts, and 4 per-type layout `variant`s per section). Middleware `EnsureRegisteredDomain` + `ResolveTenant` form the `tenant` group.
 - **Note:** the public `GET /tenant/landing` returns *resolved* sections (with `items` + an `enrolled` flag under optional auth); the teacher `GET /teacher/landing` returns the raw editable `config` — same row, two shapes. `PUT`s are upserts (forced `200`) and heavily sanitize input.
 
 → [`api/tenancy.md`](api/tenancy.md)

@@ -45,6 +45,7 @@ class Course extends Model
         'purchase_enabled',
         'is_center',
         'cover_url',
+        'thumbnail_url',
         'promo_video_url',
         'points',
     ];

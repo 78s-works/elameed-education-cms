@@ -9,8 +9,10 @@ use Illuminate\Validation\Rule;
  *
  * A FIXED catalog of typed sections. Two sections are DYNAMIC (`courses`,
  * `testimonials`): the teacher stores a `config` rule; the public endpoint
- * resolves it to real `items` (see LandingResolver). All three layouts
- * (classic|grid|spotlight) consume this identical contract.
+ * resolves it to real `items` (see LandingResolver). The page-level `layout`
+ * (classic|grid|spotlight) sets the overall theme; on top of that EACH section
+ * carries its own `variant` — one of the 4 per-type layouts in VARIANTS — so a
+ * teacher can, say, show courses as a carousel while testimonials are a slider.
  *
  * Per the milestone scope, `stats|features|steps|packages` only expose
  * title/subtitle for editing — their `items` are preserved from the last save.
@@ -20,6 +22,25 @@ final class LandingSchema
     public const LAYOUTS = ['classic', 'grid', 'spotlight'];
 
     public const TYPES = ['hero', 'stats', 'features', 'about', 'steps', 'courses', 'testimonials', 'packages', 'cta', 'contact'];
+
+    /**
+     * The 4 layout variants each section type may be rendered in. The teacher
+     * picks one per section from the editor; the first entry is that type's
+     * default (applied when none is stored — e.g. legacy rows). Variants are
+     * validated PER TYPE: a `courses` variant cannot be assigned to a `hero`.
+     */
+    public const VARIANTS = [
+        'hero' => ['split', 'centered', 'image_bg', 'minimal'],
+        'stats' => ['bar', 'grid', 'cards', 'inline'],
+        'features' => ['grid', 'list', 'cards', 'icons_left'],
+        'about' => ['image_right', 'image_left', 'stacked', 'text_only'],
+        'steps' => ['horizontal', 'vertical', 'numbered_cards', 'timeline'],
+        'courses' => ['grid', 'carousel', 'list', 'spotlight'],
+        'testimonials' => ['cards', 'slider', 'quote_wall', 'single_featured'],
+        'packages' => ['columns', 'table', 'cards', 'stacked'],
+        'cta' => ['banner', 'split', 'boxed', 'minimal'],
+        'contact' => ['form_right', 'form_left', 'stacked', 'info_only'],
+    ];
 
     /** Server-resolved sections (store `config`, emit `items`). */
     public const DYNAMIC = ['courses', 'testimonials'];
@@ -94,6 +115,27 @@ final class LandingSchema
             ],
             default => [],
         };
+    }
+
+    /** The layout variants a section type may use (empty for an unknown type). */
+    public static function variantsFor(string $type): array
+    {
+        return self::VARIANTS[$type] ?? [];
+    }
+
+    /**
+     * Resolve a requested layout variant to a valid one for the type: the value
+     * itself when it's an allowed variant of that type, otherwise the type's
+     * default (its first variant). Types without variants resolve to ''.
+     */
+    public static function variantOrDefault(string $type, ?string $variant): string
+    {
+        $variants = self::variantsFor($type);
+        if ($variants === []) {
+            return '';
+        }
+
+        return in_array($variant, $variants, true) ? $variant : $variants[0];
     }
 
     /** Top-level editable content field names for a type. */
@@ -209,6 +251,7 @@ final class LandingSchema
             $entry = [
                 'key' => $key,
                 'type' => $type,
+                'variant' => self::variantOrDefault($type, is_string($section['variant'] ?? null) ? $section['variant'] : null),
                 'visible' => (bool) ($section['visible'] ?? true),
                 'order' => (int) ($section['order'] ?? ($i + 1)),
                 'content' => $content,
@@ -309,21 +352,21 @@ final class LandingSchema
     private static function defaultSections(): array
     {
         return [
-            ['key' => 'hero', 'type' => 'hero', 'visible' => true, 'order' => 1, 'content' => [
+            ['key' => 'hero', 'type' => 'hero', 'variant' => 'split', 'visible' => true, 'order' => 1, 'content' => [
                 'eyebrow' => '', 'title_html' => '', 'description' => '', 'note' => '',
                 'primary_cta' => ['label' => 'ابدأ الآن'], 'secondary_cta' => ['label' => 'تصفّح الكورسات'],
                 'teacher' => ['name' => '', 'role' => '', 'image_url' => null, 'card_stats' => []],
                 'chips' => [],
             ]],
-            ['key' => 'stats', 'type' => 'stats', 'visible' => true, 'order' => 2, 'content' => ['items' => []]],
-            ['key' => 'features', 'type' => 'features', 'visible' => true, 'order' => 3, 'content' => ['title' => '', 'subtitle' => '', 'items' => []]],
-            ['key' => 'about', 'type' => 'about', 'visible' => true, 'order' => 4, 'content' => ['badge' => '', 'title' => '', 'body' => '', 'image_url' => null, 'points' => []]],
-            ['key' => 'courses', 'type' => 'courses', 'visible' => true, 'order' => 5, 'content' => ['title' => 'الكورسات', 'subtitle' => ''], 'config' => ['source' => 'featured', 'category_id' => null, 'course_ids' => [], 'limit' => 6]],
-            ['key' => 'how', 'type' => 'steps', 'visible' => true, 'order' => 6, 'content' => ['title' => '', 'subtitle' => '', 'items' => []]],
-            ['key' => 'testimonials', 'type' => 'testimonials', 'visible' => true, 'order' => 7, 'content' => ['title' => 'آراء الطلاب', 'subtitle' => ''], 'config' => ['source' => 'latest', 'min_rating' => 0, 'limit' => 6]],
-            ['key' => 'packages', 'type' => 'packages', 'visible' => false, 'order' => 8, 'content' => ['title' => '', 'subtitle' => '', 'items' => []]],
-            ['key' => 'cta', 'type' => 'cta', 'visible' => true, 'order' => 9, 'content' => ['title' => '', 'subtitle' => '', 'cta' => ['label' => 'اشترك الآن']]],
-            ['key' => 'contact', 'type' => 'contact', 'visible' => true, 'order' => 10, 'content' => ['title' => 'تواصل معنا', 'subtitle' => '']],
+            ['key' => 'stats', 'type' => 'stats', 'variant' => 'bar', 'visible' => true, 'order' => 2, 'content' => ['items' => []]],
+            ['key' => 'features', 'type' => 'features', 'variant' => 'grid', 'visible' => true, 'order' => 3, 'content' => ['title' => '', 'subtitle' => '', 'items' => []]],
+            ['key' => 'about', 'type' => 'about', 'variant' => 'image_right', 'visible' => true, 'order' => 4, 'content' => ['badge' => '', 'title' => '', 'body' => '', 'image_url' => null, 'points' => []]],
+            ['key' => 'courses', 'type' => 'courses', 'variant' => 'grid', 'visible' => true, 'order' => 5, 'content' => ['title' => 'الكورسات', 'subtitle' => ''], 'config' => ['source' => 'featured', 'category_id' => null, 'course_ids' => [], 'limit' => 6]],
+            ['key' => 'how', 'type' => 'steps', 'variant' => 'horizontal', 'visible' => true, 'order' => 6, 'content' => ['title' => '', 'subtitle' => '', 'items' => []]],
+            ['key' => 'testimonials', 'type' => 'testimonials', 'variant' => 'cards', 'visible' => true, 'order' => 7, 'content' => ['title' => 'آراء الطلاب', 'subtitle' => ''], 'config' => ['source' => 'latest', 'min_rating' => 0, 'limit' => 6]],
+            ['key' => 'packages', 'type' => 'packages', 'variant' => 'columns', 'visible' => false, 'order' => 8, 'content' => ['title' => '', 'subtitle' => '', 'items' => []]],
+            ['key' => 'cta', 'type' => 'cta', 'variant' => 'banner', 'visible' => true, 'order' => 9, 'content' => ['title' => '', 'subtitle' => '', 'cta' => ['label' => 'اشترك الآن']]],
+            ['key' => 'contact', 'type' => 'contact', 'variant' => 'form_right', 'visible' => true, 'order' => 10, 'content' => ['title' => 'تواصل معنا', 'subtitle' => '']],
         ];
     }
 }

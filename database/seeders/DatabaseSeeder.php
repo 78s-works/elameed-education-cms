@@ -58,6 +58,9 @@ class DatabaseSeeder extends Seeder
             'primary' => '#1D4ED8',
             'secondary' => '#9333EA',
             'layout' => 'classic',
+            // Per-section layout variants (see LandingSchema::VARIANTS). Unlisted
+            // sections keep their type default.
+            'variants' => ['hero' => 'centered', 'features' => 'cards', 'courses' => 'grid', 'testimonials' => 'quote_wall'],
             'grade' => 'الثالث الثانوي',
             'courses' => [['الميكانيكا', 30000], ['الكهرباء والمغناطيسية', 35000], ['الفيزياء الحديثة', 0]],
         ]);
@@ -71,6 +74,8 @@ class DatabaseSeeder extends Seeder
             'primary' => '#7C3AED',
             'secondary' => '#DB2777',
             'layout' => 'grid',
+            // A visibly different mix from academy 1 to exercise every renderer.
+            'variants' => ['hero' => 'image_bg', 'features' => 'list', 'about' => 'image_left', 'courses' => 'carousel', 'steps' => 'timeline', 'testimonials' => 'slider', 'cta' => 'boxed'],
             'grade' => 'الثالث الثانوي',
             'courses' => [['الجبر', 30000], ['التفاضل والتكامل', 40000], ['الهندسة الفراغية', 0]],
         ]);
@@ -153,7 +158,7 @@ class DatabaseSeeder extends Seeder
                 'contact' => ['phone' => $spec['teacher_phone'], 'email' => $spec['slug'].'@academy.test', 'address' => 'القاهرة، مصر'],
                 'socials' => ['youtube' => "https://youtube.com/@{$spec['slug']}"],
                 'layout' => $spec['layout'],
-                'landing_sections' => LandingSchema::defaults(),
+                'landing_sections' => $this->landingSections($spec['variants'] ?? []),
             ]);
             $profile->tenant_id = $tenant->id;
             $profile->save();
@@ -209,6 +214,28 @@ class DatabaseSeeder extends Seeder
         }
 
         app(TenantContext::class)->forget();
+    }
+
+    /**
+     * The default landing sections with per-section layout variants applied.
+     * `$variantOverrides` maps a section type → the variant to use; an invalid
+     * or missing entry leaves that section on its type default.
+     *
+     * @param  array<string, string>  $variantOverrides
+     * @return array<int, array<string, mixed>>
+     */
+    private function landingSections(array $variantOverrides): array
+    {
+        $sections = LandingSchema::defaults();
+
+        foreach ($sections as &$section) {
+            if (isset($variantOverrides[$section['type']])) {
+                $section['variant'] = LandingSchema::variantOrDefault($section['type'], $variantOverrides[$section['type']]);
+            }
+        }
+        unset($section);
+
+        return $sections;
     }
 
     private function makeCourse(int $tenantId, string $subject, string $title, int $price, int $categoryId): Course
