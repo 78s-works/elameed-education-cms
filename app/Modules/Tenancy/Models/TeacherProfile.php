@@ -41,10 +41,16 @@ class TeacherProfile extends Model
         'primary_locale',
         'layout',
         'hide_ranking',
+        'login_enabled',
+        'registration_enabled',
     ];
 
     protected $attributes = [
         'layout' => 'classic',
+        // Access is open by default; also makes a not-yet-persisted profile
+        // (firstOrNew) report the toggles as ON.
+        'login_enabled' => true,
+        'registration_enabled' => true,
     ];
 
     protected $casts = [
@@ -53,5 +59,7 @@ class TeacherProfile extends Model
         'landing_sections' => 'array',
         'locales' => 'array',
         'hide_ranking' => 'boolean',
+        'login_enabled' => 'boolean',
+        'registration_enabled' => 'boolean',
     ];
 }

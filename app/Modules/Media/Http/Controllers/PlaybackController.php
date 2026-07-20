@@ -2,6 +2,7 @@
 
 namespace App\Modules\Media\Http\Controllers;
 
+use App\Modules\Catalog\Enums\VideoSource;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Media\Services\PlaybackService;
 use App\Modules\Tenancy\Services\TenantContext;
@@ -33,8 +34,18 @@ class PlaybackController
 
     public function authorize(Request $request, Lesson $lesson): JsonResponse
     {
+        $tenantId = $this->context->tenantOrFail()->getKey();
+
+        // YouTube-sourced lessons return a gated embed URL (no token/key/watermark);
+        // uploaded lessons return the encrypted-HLS token below.
+        if ($lesson->active_video_source === VideoSource::Youtube) {
+            return response()->json([
+                'data' => $this->playback->issueYoutube($tenantId, $request->user(), $lesson),
+            ]);
+        }
+
         $result = $this->playback->issue(
-            $this->context->tenantOrFail()->getKey(),
+            $tenantId,
             $request->user(),
             $lesson,
             $request->input('device_fingerprint'),

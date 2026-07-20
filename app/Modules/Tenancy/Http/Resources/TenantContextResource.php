@@ -42,6 +42,12 @@ class TenantContextResource extends JsonResource
                 'default' => $locale['primary'],
                 'supported' => $locale['locales'],
             ],
+            'auth' => [
+                // Per-academy access switches the teacher controls. The SPA hides
+                // the forms when off; the API enforces it regardless (see M11).
+                'login_enabled' => (bool) ($profile?->login_enabled ?? true),
+                'registration_enabled' => (bool) ($profile?->registration_enabled ?? true),
+            ],
             'features' => [],            // TODO: per-tenant enabled feature flags
         ];
     }

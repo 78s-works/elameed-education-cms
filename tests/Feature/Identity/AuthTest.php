@@ -8,6 +8,7 @@ use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Notifications\Contracts\SmsSender;
 use App\Modules\Tenancy\Enums\TenantStatus;
+use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
@@ -40,6 +41,27 @@ class AuthTest extends TestCase
     private function tenantHeader(): array
     {
         return ['X-Tenant' => 'demo'];
+    }
+
+    private function member(string $phone, TenantUserRole $role): User
+    {
+        $user = User::factory()->create(['phone' => $phone, 'password' => 'secret123']);
+        TenantUser::create([
+            'tenant_id' => $this->tenant->id,
+            'user_id' => $user->id,
+            'role' => $role->value,
+            'status' => MembershipStatus::Active->value,
+            'joined_at' => now(),
+        ]);
+
+        return $user;
+    }
+
+    private function setAccess(bool $login, bool $registration): void
+    {
+        $profile = new TeacherProfile(['login_enabled' => $login, 'registration_enabled' => $registration]);
+        $profile->tenant_id = $this->tenant->id; // no request context in tests
+        $profile->save();
     }
 
     public function test_register_sends_otp_and_verify_activates_membership_and_issues_token(): void
@@ -143,6 +165,57 @@ class AuthTest extends TestCase
             'identifier' => '01000000005',
             'password' => 'secret123',
         ])->assertStatus(403)->assertJsonPath('error.code', 'forbidden');
+    }
+
+    public function test_login_is_blocked_for_students_when_the_teacher_disables_login(): void
+    {
+        $this->member('01000000010', TenantUserRole::Student);
+        $this->setAccess(login: false, registration: true);
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/login', [
+            'identifier' => '01000000010',
+            'password' => 'secret123',
+        ])->assertStatus(403)->assertJsonPath('error.code', 'forbidden');
+    }
+
+    public function test_teacher_can_still_sign_in_when_login_is_disabled(): void
+    {
+        // A teacher must never be locked out by their own switch — otherwise they
+        // could not sign in to re-open access. Only the teacher is exempt.
+        $this->member('01000000011', TenantUserRole::Teacher);
+        $this->setAccess(login: false, registration: true);
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/login', [
+            'identifier' => '01000000011',
+            'password' => 'secret123',
+        ])->assertOk()->assertJsonStructure(['data' => ['token', 'user']]);
+    }
+
+    public function test_assistant_is_blocked_when_login_is_disabled(): void
+    {
+        // Only the teacher is exempt — assistants are gated like everyone else.
+        $this->member('01000000013', TenantUserRole::Assistant);
+        $this->setAccess(login: false, registration: true);
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/login', [
+            'identifier' => '01000000013',
+            'password' => 'secret123',
+        ])->assertStatus(403)->assertJsonPath('error.code', 'forbidden');
+    }
+
+    public function test_registration_is_blocked_when_the_teacher_closes_it(): void
+    {
+        $this->setAccess(login: true, registration: false);
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Late',
+            'phone' => '01000000012',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+        ])->assertStatus(403)->assertJsonPath('error.code', 'forbidden');
+
+        // Nothing was created.
+        $this->assertDatabaseMissing('users', ['phone' => '01000000012']);
     }
 
     public function test_otp_request_is_rate_limited(): void

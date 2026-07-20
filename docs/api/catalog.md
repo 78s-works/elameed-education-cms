@@ -32,7 +32,7 @@ teachers see all of their own content regardless of visibility.
 | `CourseCategory` | `course_categories` | Teacher's taxonomy (name + grade/subject/level/section + sort_order). A course optionally belongs to one. |
 | `Course` | `courses` | The top-level product. Binds by `uuid` (teacher) / `slug` (public). Soft-deletes. Holds pricing, visibility, marketing copy (`learning_outcomes`, `requirements`, `audience`, `parts`). |
 | `Unit` | `units` | A section within a course (`course_id`), ordered by `sort_order`, with its own visibility. |
-| `Lesson` | `lessons` | A leaf under a unit (`unit_id` + inherited `course_id`). Has one video (`video_asset_id`) and many attachments. Carries `duration_sec`, `max_views`, `is_free_preview`, `gating_rule`. |
+| `Lesson` | `lessons` | A leaf under a unit (`unit_id` + inherited `course_id`). Has a video source — an uploaded `video_asset_id` and/or a `youtube_url`, selected by `active_video_source` — plus many attachments. Carries `duration_sec`, `max_views`, `is_free_preview`, `gating_rule`. |
 | `LessonAttachment` | *(stored as `media_assets`)* | Not a dedicated model — attachments are `MediaAsset` rows of type `pdf` / `file` / `link` linked by `lesson_id`. The lesson's single `hls_video` asset is **not** an attachment. |
 
 **Hierarchy:** `Course` **hasMany** `Unit` **hasMany** `Lesson`. A lesson also stores `course_id`
@@ -507,6 +507,14 @@ Note: `course_id` on the unit is the internal numeric course id; the path uses t
 Lessons are addressed under their **unit** (not the course). On create, the lesson inherits
 `course_id` from the unit.
 
+> **Dual video source:** a lesson can carry **both** a protected uploaded video
+> (`video_asset_id` → `hls_video`) and a YouTube link (`youtube_url`).
+> `active_video_source` (`upload`|`youtube`, default `upload`) is the teacher
+> toggle deciding which one students receive; the inactive source stays stored but
+> is never exposed to students. Activating `youtube` requires a valid `youtube_url`
+> (else `422`). See [`../design/lesson-video-sources.md`](../design/lesson-video-sources.md)
+> and the playback contract in [`../api/media.md`](../api/media.md).
+
 #### `GET /v1/teacher/units/{unit}/lessons`
 **Purpose:** List a unit's lessons (with video asset + attachments eager-loaded), ordered by `sort_order`.
 **Auth:** 🧑‍🏫 role:teacher
@@ -530,6 +538,8 @@ Lessons are addressed under their **unit** (not the course). On create, the less
       "max_views": 3,
       "is_free_preview": true,
       "has_video": true,
+      "active_video_source": "upload",
+      "youtube_url": null,
       "visibility": "visible",
       "publish_at": null,
       "video": {
@@ -558,7 +568,10 @@ Lessons are addressed under their **unit** (not the course). On create, the less
   ]
 }
 ```
-Notes: `has_video` is `video_asset_id !== null`. `video` (a single asset) and `attachments`
+Notes: `has_video` is **source-aware** — true when the *active* source is populated
+(`active_video_source: upload` → `video_asset_id` set; `youtube` → a valid `youtube_url`).
+`active_video_source` + `youtube_url` are teacher-facing (both slots are shown so the teacher can
+toggle); students never receive the inactive source. `video` (the uploaded asset) and `attachments`
 (MediaAsset, type != `hls_video`) both use `MediaAssetResource`.
 
 ---
@@ -591,11 +604,16 @@ Notes: `has_video` is `video_asset_id !== null`. `video` (a single asset) and `a
 | `duration_sec` | nullable, integer, min 0 |
 | `max_views` | nullable, integer, min 1 (per-student playback cap) |
 | `is_free_preview` | boolean (free/preview lesson) |
+| `youtube_url` | nullable, string ≤2048; must be a valid YouTube link (`youtu.be` / `watch?v=` / `embed` / `shorts` / `live`) |
+| `active_video_source` | nullable, enum `upload\|youtube` (default `upload`) |
 | `visibility` | nullable, enum `visible\|hidden\|scheduled` (default `visible`) |
 | `publish_at` | nullable, date |
 
-Note: `video_asset_id` is assigned by the Media step, not accepted here; `course_id` and `unit_id`
-are derived server-side, not from the body.
+Note: `video_asset_id` (the protected upload) is assigned by the Media step, not accepted here;
+`course_id` and `unit_id` are derived server-side, not from the body. Setting
+`active_video_source: youtube` requires an effective `youtube_url` (in this request or already
+stored) — otherwise `422`. Selecting `upload` is always allowed (playback simply reports "no ready
+video" until one is uploaded).
 
 **Response** `201 Created` — `LessonResource` (with `video` + `attachments` loaded).
 **Errors:** `404` unit not found; `422` validation.

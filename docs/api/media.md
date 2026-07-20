@@ -209,6 +209,18 @@ On `state: "failed"` the payload carries `error.message`.
 
 Tenant-resolved (`Host` / `X-Tenant`) + `auth:sanctum` + `active` membership.
 
+> **Dual video source (YouTube branch):** when a lesson's `active_video_source` is
+> `youtube` (see [`../design/lesson-video-sources.md`](../design/lesson-video-sources.md)),
+> **both** playback endpoints below (`.../media/lessons/{lesson}/playback` and its
+> `remote` sibling) branch and return a **discriminated** payload —
+> `{ "source": "youtube", "video_id", "embed_url" }` instead of an HLS
+> token/manifest/key — still gated by the same enrollment/free-preview check
+> (`403` when the caller lacks access). The `embed_url` uses `youtube-nocookie.com`.
+> The YouTube tier is **unprotected**: no watermark, no encryption, no `max_views`
+> enforcement, and the URL is shareable once released — use unlisted videos.
+> When `active_video_source` is `upload` (default), the encrypted-HLS payload
+> documented below is returned unchanged.
+
 ---
 
 #### `POST /v1/media/lessons/{lesson}/playback`
@@ -243,7 +255,15 @@ Tenant-resolved (`Host` / `X-Tenant`) + `auth:sanctum` + `active` membership.
 }
 ```
 `expires_at` is `now + media.playback_ttl` (default 120s).
-**Errors:** `403` no access to the lesson; `409` lesson has no ready video / rendition not ready.
+
+**YouTube variant** — when the lesson's `active_video_source` is `youtube`, the same
+access gate runs but the response is instead:
+```json
+{ "data": { "source": "youtube", "video_id": "abc123", "embed_url": "https://www.youtube-nocookie.com/embed/abc123" } }
+```
+No token/key/watermark. `409` if the lesson has no valid `youtube_url`.
+
+**Errors:** `403` no access to the lesson; `409` lesson has no ready video / rendition not ready (upload) or no YouTube link (youtube).
 
 ---
 

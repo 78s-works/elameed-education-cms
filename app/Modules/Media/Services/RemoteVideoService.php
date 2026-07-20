@@ -17,7 +17,6 @@ use App\Modules\Media\Models\PlaybackSession;
 use App\Modules\Media\Support\PlaybackTokenIssuer;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;

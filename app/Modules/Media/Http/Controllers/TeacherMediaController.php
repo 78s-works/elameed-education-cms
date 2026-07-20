@@ -8,6 +8,7 @@ use App\Modules\Media\Enums\MediaStatus;
 use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Http\Resources\MediaAssetResource;
 use App\Modules\Media\Models\MediaAsset;
+use App\Modules\Media\Services\MediaThumbnailService;
 use App\Modules\Media\Services\PlaybackService;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
@@ -168,10 +169,9 @@ class TeacherMediaController
     /** Best-effort local poster (remote videos get their thumbnail from the host callback). */
     private function attachThumbnail(MediaAsset $asset): void
     {
-        $url = app(\App\Modules\Media\Services\MediaThumbnailService::class)->forLocalAsset($asset);
+        $url = app(MediaThumbnailService::class)->forLocalAsset($asset);
         if ($url !== null) {
             $asset->forceFill(['thumbnail_url' => $url])->save();
         }
     }
 }
-

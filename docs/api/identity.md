@@ -95,7 +95,7 @@ Registration is student self-signup into the current academy: it creates the glo
 }
 ```
 
-**Errors:** `422` validation (`phone` is returned as `An account with these details already exists. Please log in.` when the phone/email already exists globally — P1 keeps phone globally unique); `422` `tenant` when not called from an academy site; `429` throttled.
+**Errors:** `422` validation (`phone` is returned as `An account with these details already exists. Please log in.` when the phone/email already exists globally — P1 keeps phone globally unique); `422` `tenant` when not called from an academy site; `403 forbidden` (`Registration is currently closed for this academy.`) when the teacher has disabled self-registration (`registration_enabled=false`, see `PUT /teacher/access` in the Tenancy module); `429` throttled.
 
 ---
 
@@ -230,7 +230,7 @@ OTP required (when `otp.login_required` is on):
 { "data": { "otp_required": true, "identifier": "+201112223334" } }
 ```
 
-**Errors:** `401` (`These credentials do not match our records.` — generic, whether identifier or password was wrong); `403` on a tenant host when the user has no active membership there (`You are not a member of this academy.`); `403` on the platform host for non-admins; `429` throttled.
+**Errors:** `401` (`These credentials do not match our records.` — generic, whether identifier or password was wrong); `403` on a tenant host when the user has no active membership there (`You are not a member of this academy.`); `403 forbidden` (`Sign-in is currently disabled for this academy.`) when the teacher has disabled login (`login_enabled=false`) and the user is **anyone other than the teacher** — assistants, students, and parents are all blocked; only the teacher can still sign in (to reach their panel and re-open access — see `PUT /teacher/access`); `403` on the platform host for non-admins; `429` throttled.
 
 ---
 

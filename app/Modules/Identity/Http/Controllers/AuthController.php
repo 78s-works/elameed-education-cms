@@ -16,10 +16,12 @@ use App\Modules\Identity\Http\Requests\ResetPasswordRequest;
 use App\Modules\Identity\Http\Resources\UserResource;
 use App\Modules\Identity\Services\OtpService;
 use App\Modules\Identity\Support\UserLookup;
+use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 class AuthController
 {
@@ -37,6 +39,13 @@ class AuthController
             throw ValidationException::withMessages([
                 'tenant' => __('Please register from an academy site.'),
             ]);
+        }
+
+        // The teacher can close self-registration for their own academy.
+        $profile = TeacherProfile::query()->first();
+
+        if ($profile !== null && ! $profile->registration_enabled) {
+            throw new AccessDeniedHttpException(__('Registration is currently closed for this academy.'));
         }
 
         $action->handle($tenant, $request->validated());

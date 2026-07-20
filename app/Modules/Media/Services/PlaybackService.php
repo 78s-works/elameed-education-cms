@@ -13,6 +13,7 @@ use App\Modules\Media\Enums\MediaStatus;
 use App\Modules\Media\Models\MediaAsset;
 use App\Modules\Media\Models\MediaRendition;
 use App\Modules\Media\Models\PlaybackSession;
+use App\Support\Youtube;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
@@ -49,6 +50,31 @@ class PlaybackService
         $this->transcoder->ensureRendition($asset, $user, $this->watermark($user));
 
         return $this->openSession($tenantId, $user, $asset, $lesson, 'student', $fingerprint, $ip);
+    }
+
+    /**
+     * YouTube-sourced lesson playback. Runs the SAME access gate as the encrypted
+     * path (enrollment or free-preview), but returns an embed URL — there is no
+     * token, no key, and no watermark. The YouTube tier is unprotected: once the
+     * URL is released it is a normal, shareable link, so teachers should use
+     * unlisted videos (docs/design/lesson-video-sources.md §6).
+     *
+     * @return array{source: string, video_id: string, embed_url: string}
+     */
+    public function issueYoutube(int $tenantId, ?User $user, Lesson $lesson): array
+    {
+        $this->assertAccess($tenantId, $user, $lesson);
+
+        $videoId = Youtube::videoId($lesson->youtube_url);
+        if ($videoId === null) {
+            throw new ConflictHttpException('This lesson has no YouTube video.');
+        }
+
+        return [
+            'source' => 'youtube',
+            'video_id' => $videoId,
+            'embed_url' => Youtube::embedUrl($videoId),
+        ];
     }
 
     /**

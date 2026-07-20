@@ -47,7 +47,11 @@ class CourseDetailResource extends JsonResource
                     'title' => $lesson->title,
                     'duration_sec' => $lesson->duration_sec,
                     'is_free_preview' => $lesson->is_free_preview,
-                    'has_video' => $lesson->video_asset_id !== null,
+                    // Source-aware: true when the ACTIVE source (upload or YouTube) is set.
+                    // The name of the source is exposed, but never the YouTube URL here —
+                    // that is released only through the enrollment-gated playback endpoint.
+                    'has_video' => $lesson->hasActiveVideo(),
+                    'active_video_source' => $lesson->active_video_source?->value,
                 ])->values(),
             ])->values(),
         ];

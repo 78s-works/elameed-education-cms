@@ -10,7 +10,7 @@
 
 - **`Tenant`** — A teacher academy; the **global** tenant-registry row (NOT tenant-scoped, no `BelongsToTenant`/RLS). Has `uuid`, `slug`, `name`, `status` (enum), soft-deletes, and relations to `domains`, `teacherProfile`, and `owner`.
 - **`TenantDomain`** — Host → tenant mapping row. **Global** (read during resolution, before any tenant scope exists). Holds `host`, `type` (subdomain|custom), `is_primary`, and Cloudflare-for-SaaS SSL fields.
-- **`TeacherProfile`** — Per-tenant branding + landing configuration; one row per tenant and the **first** tenant-scoped model (`BelongsToTenant` filters every query and auto-fills `tenant_id`). Stores `logo_url`, `cover_url`, `primary_color`, `secondary_color`, `bio`, `contact` (json), `socials` (json), `layout`, `landing_sections` (json, per-locale content), `locales` (json list of enabled languages), `primary_locale` (string), `hide_ranking`.
+- **`TeacherProfile`** — Per-tenant branding + landing configuration; one row per tenant and the **first** tenant-scoped model (`BelongsToTenant` filters every query and auto-fills `tenant_id`). Stores `logo_url`, `cover_url`, `primary_color`, `secondary_color`, `bio`, `contact` (json), `socials` (json), `layout`, `landing_sections` (json, per-locale content), `locales` (json list of enabled languages), `primary_locale` (string), `hide_ranking`, and the access switches `login_enabled` / `registration_enabled` (both default `true`; see `GET/PUT /teacher/access`).
 
 ## Enums
 
@@ -112,12 +112,16 @@ The teacher may add, remove, reorder, and **duplicate** sections — restricted 
       "default": "ar",
       "supported": ["ar", "en"]
     },
+    "auth": {
+      "login_enabled": true,
+      "registration_enabled": true
+    },
     "features": []
   }
 }
 ```
 
-Notes: `branding` fields are `null` until the teacher sets them; `socials` is an empty object `{}` when unset. `status` is one of `active`, `suspended`, `under_review`, `expired`. `features` is currently always `[]` (per-tenant flags TODO). `locale.default` is the tenant's `primary_locale` and `locale.supported` is its **enabled** languages (primary first); a tenant that has enabled none falls back to `[<default_locale>]` (e.g. `["ar"]`), not the full platform set.
+Notes: `branding` fields are `null` until the teacher sets them; `socials` is an empty object `{}` when unset. `status` is one of `active`, `suspended`, `under_review`, `expired`. `features` is currently always `[]` (per-tenant flags TODO). `locale.default` is the tenant's `primary_locale` and `locale.supported` is its **enabled** languages (primary first); a tenant that has enabled none falls back to `[<default_locale>]` (e.g. `["ar"]`), not the full platform set. `auth` mirrors the teacher's per-academy access switches (`PUT /teacher/access`): the SPA hides the sign-in / sign-up forms when a flag is `false`, and the API enforces the same at `POST /auth/login` and `POST /auth/register`. Both default to `true`.
 
 **Caching:** the response carries an `ETag` (derived from the tenant's identity/status + branding version) and `Cache-Control: public, max-age=<context_cache_ttl>` (default 60s). A conditional request whose `If-None-Match` equals the current `ETag` gets a bodyless **`304 Not Modified`**. `Vary: X-Tenant` guards a shared cache against the dev `X-Tenant` override.
 
@@ -389,6 +393,45 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 - `422` — validation failure (e.g. bad hex color, invalid URL/email). Error envelope with `details` per field.
 - `412 precondition_failed` — `If-Match` sent but the profile was modified since it was read.
 - `401` / `403` — as above.
+
+---
+
+### `GET /teacher/access`
+
+**Purpose:** Read the academy's access switches — whether students can sign in and whether new students can self-register. Stored on the tenant's `teacher_profiles` row; both default to `true`.
+
+**Auth:** 🔒 `role:teacher`
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+
+**Response 200**
+
+```json
+{ "data": { "login_enabled": true, "registration_enabled": true } }
+```
+
+---
+
+### `PUT /teacher/access`
+
+**Purpose:** Open or close sign-in and/or self-registration for the academy. Either flag may be sent alone (partial update). The change is enforced immediately at `POST /auth/login` and `POST /auth/register` (M11), and mirrored in `GET /tenant/context` → `data.auth` so the SPA can hide the forms.
+
+**Auth:** 🔒 `role:teacher`
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+
+**Request body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `login_enabled` | boolean | no | `false` blocks sign-in for **everyone except the teacher** (assistants, students, parents included). Only the teacher can still sign in — to reach their panel and re-open access. |
+| `registration_enabled` | boolean | no | `false` rejects new student self-registration with `403`. |
+
+**Response 200:** Same shape as `GET /teacher/access`.
+
+**Errors:**
+- `422` — a flag was sent as a non-boolean.
+- `401` / `403` — not authenticated / not a teacher of this academy.
+
+> **Effect on auth (M11).** With `login_enabled=false`, `POST /auth/login` returns `403 forbidden` for everyone except the teacher (assistants/students/parents) after their credentials verify — only the teacher still gets a token. With `registration_enabled=false`, `POST /auth/register` returns `403 forbidden` and creates nothing. An OTP already issued to a mid-flight registration can still complete — closing registration only stops **new** sign-ups from starting.
 
 ---
 

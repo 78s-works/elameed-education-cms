@@ -48,6 +48,7 @@ use App\Modules\Reporting\Http\Controllers\StudentCoursesController;
 use App\Modules\Reporting\Http\Controllers\TeacherReportsController;
 use App\Modules\Tenancy\Http\Controllers\TeacherLandingController;
 use App\Modules\Tenancy\Http\Controllers\TeacherProfileController;
+use App\Modules\Tenancy\Http\Controllers\TenantAccessController;
 use App\Modules\Tenancy\Http\Controllers\TenantContextController;
 use App\Modules\Tenancy\Http\Controllers\TenantLandingController;
 use App\Modules\Wallet\Http\Controllers\WalletController;
@@ -210,6 +211,11 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::middleware('role:teacher')->group(function (): void {
             Route::get('/teacher/profile', [TeacherProfileController::class, 'show']);
             Route::put('/teacher/profile', [TeacherProfileController::class, 'update']);
+
+            // Access switches (M02) — open/close sign-in + self-registration for
+            // this academy. Enforced at /auth/login + /auth/register (M11).
+            Route::get('/teacher/access', [TenantAccessController::class, 'show']);
+            Route::put('/teacher/access', [TenantAccessController::class, 'update']);
 
             // Teacher subscription (M03) — read-only view of the tenant's plan,
             // limits, and usage. The plan is managed by the platform admin.

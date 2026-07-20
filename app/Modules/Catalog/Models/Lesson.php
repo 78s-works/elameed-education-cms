@@ -3,9 +3,11 @@
 namespace App\Modules\Catalog\Models;
 
 use App\Modules\Catalog\Enums\ContentVisibility;
+use App\Modules\Catalog\Enums\VideoSource;
 use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Models\MediaAsset;
 use App\Support\Traits\BelongsToTenant;
+use App\Support\Youtube;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -13,6 +15,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * @property ContentVisibility $visibility
+ * @property VideoSource $active_video_source
  */
 class Lesson extends Model
 {
@@ -21,6 +24,7 @@ class Lesson extends Model
     /** In-memory defaults matching the DB defaults (so a fresh model has them). */
     protected $attributes = [
         'visibility' => 'visible',
+        'active_video_source' => 'upload',
     ];
 
     protected $fillable = [
@@ -30,6 +34,8 @@ class Lesson extends Model
         'description',
         'sort_order',
         'video_asset_id',
+        'youtube_url',
+        'active_video_source',
         'duration_sec',
         'max_views',
         'is_free_preview',
@@ -40,6 +46,7 @@ class Lesson extends Model
 
     protected $casts = [
         'visibility' => ContentVisibility::class,
+        'active_video_source' => VideoSource::class,
         'publish_at' => 'datetime',
         'is_free_preview' => 'boolean',
         'gating_rule' => 'array',
@@ -80,6 +87,18 @@ class Lesson extends Model
     public function video(): BelongsTo
     {
         return $this->videoAsset();
+    }
+
+    /**
+     * Does the lesson's ACTIVE video source have something playable?
+     * YouTube → a valid link; upload → a linked video asset. Used for the
+     * source-aware `has_video` flag exposed to clients.
+     */
+    public function hasActiveVideo(): bool
+    {
+        return $this->active_video_source === VideoSource::Youtube
+            ? Youtube::isValid($this->youtube_url)
+            : $this->video_asset_id !== null;
     }
 
     public function scopePublished(Builder $query): Builder

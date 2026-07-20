@@ -24,11 +24,15 @@ class LessonResource extends JsonResource
             'duration_sec' => $this->duration_sec,
             'max_views' => $this->max_views,
             'is_free_preview' => $this->is_free_preview,
-            'has_video' => $this->video_asset_id !== null,
+            'has_video' => $this->hasActiveVideo(),
+            // Both video sources + the toggle (teacher-facing — the teacher sees both
+            // slots; students only ever receive the ACTIVE one, via the playback endpoint).
+            'active_video_source' => $this->active_video_source?->value,
+            'youtube_url' => $this->youtube_url,
             'visibility' => $this->visibility?->value,
             'publish_at' => $this->publish_at?->toIso8601String(),
-            // One video (when loaded) + the many attachments (pdf/file/link).
-            'video' => $this->whenLoaded('videoAsset', fn () => new MediaAssetResource($this->videoAsset)),
+            // One (uploaded) video when loaded + the many attachments (pdf/file/link).
+            'video' => $this->whenLoaded('videoAsset', fn () => $this->videoAsset ? new MediaAssetResource($this->videoAsset) : null),
             'attachments' => MediaAssetResource::collection($this->whenLoaded('attachments')),
         ];
     }
