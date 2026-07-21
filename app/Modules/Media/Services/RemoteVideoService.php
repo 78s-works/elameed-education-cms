@@ -251,11 +251,9 @@ class RemoteVideoService
     {
         $this->assertRemote();
 
-        if (! $lesson->is_free_preview) {
-            $course = $lesson->course;
-            if ($course === null || ! $this->enrollments->hasAccess($tenantId, $user->getKey(), $course)) {
-                throw new AccessDeniedHttpException('You do not have access to this lesson.');
-            }
+        if (! $lesson->is_free_preview
+            && ! $this->enrollments->hasLessonAccess($tenantId, $user->getKey(), $lesson)) {
+            throw new AccessDeniedHttpException('You do not have access to this lesson.');
         }
 
         $asset = $lesson->video_asset_id ? MediaAsset::withoutGlobalScopes()->find($lesson->video_asset_id) : null;

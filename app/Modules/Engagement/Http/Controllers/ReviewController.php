@@ -27,6 +27,7 @@ class ReviewController
     public function index(Course $course): AnonymousResourceCollection
     {
         $reviews = Review::query()
+            ->visible()                       // hidden/moderated reviews never show publicly
             ->where('course_id', $course->getKey())
             ->with(['user:id,name', 'course:id,title'])
             ->latest()

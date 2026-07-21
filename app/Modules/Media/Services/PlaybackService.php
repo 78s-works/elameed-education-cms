@@ -170,10 +170,8 @@ class PlaybackService
             return;
         }
 
-        $course = $lesson->course;
-
-        if ($user === null || $course === null
-            || ! $this->enrollments->hasAccess($tenantId, $user->getKey(), $course)) {
+        if ($user === null
+            || ! $this->enrollments->hasLessonAccess($tenantId, $user->getKey(), $lesson)) {
             throw new AccessDeniedHttpException('You do not have access to this lesson.');
         }
     }

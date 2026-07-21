@@ -2,11 +2,18 @@
 
 The Catalog module (`app/Modules/Catalog`, M04) owns the tenant's course library: the public course
 storefront that prospective students browse, and the teacher-facing authoring surface for the
-`course → unit → lesson → attachment` hierarchy plus the course taxonomy (categories). Every route
-runs inside the `tenant` middleware group, so the tenant is resolved from the request host (or the
-`X-Tenant` dev override) and all queries are tenant-isolated by the `BelongsToTenant` global scope.
-Public listings expose only the resolved tenant's **published** content (visible + past `publish_at`);
-teachers see all of their own content regardless of visibility.
+`course → unit → lesson → attachment` hierarchy plus the course taxonomy (categories) and **packages**
+(bundles that group courses/units into one sellable product). Every route runs inside the `tenant`
+middleware group, so the tenant is resolved from the request host (or the `X-Tenant` dev override) and
+all queries are tenant-isolated by the `BelongsToTenant` global scope. Public listings expose only the
+resolved tenant's **published** content (visible + past `publish_at`); teachers see all of their own
+content regardless of visibility.
+
+> **Buying a package** grants access to everything inside it. Purchase happens through the
+> [Commerce checkout](commerce.md#packages-bundles) (`item.type = bundle`); on payment, an enrollment
+> is granted for each course/unit in the package. A **course** item unlocks all its lessons + exams; a
+> **unit** item unlocks just that chapter's lessons. Access itself always lives in `enrollments` — the
+> single source of truth checked by playback, progress, and exams.
 
 ## Conventions (apply to every endpoint)
 
@@ -20,10 +27,11 @@ teachers see all of their own content regardless of visibility.
   before route-model binding so a bound model can never cross tenants.
 - **Auth:** Sanctum bearer token. Public browse needs no token. Teacher routes require
   `auth:sanctum` + `active` (active tenant membership) + `role:teacher`.
-- **Route binding keys:** courses bind by `uuid` on teacher routes and by `slug` on public routes
-  (no id enumeration); nested units and lessons bind by `id` (own tenant data); attachments bind by
-  `uuid`. Nested controllers additionally assert parent ownership (`unit.course_id === course.id`,
-  `lesson.unit_id === unit.id`, `attachment.lesson_id === lesson.id`) and `404` on mismatch.
+- **Route binding keys:** courses and bundles bind by `uuid` on teacher routes and by `slug` on
+  public routes (no id enumeration); nested units and lessons bind by `id` (own tenant data);
+  attachments bind by `uuid`. Nested controllers additionally assert parent ownership
+  (`unit.course_id === course.id`, `lesson.unit_id === unit.id`, `attachment.lesson_id === lesson.id`)
+  and `404` on mismatch.
 
 ## Models
 
@@ -34,10 +42,13 @@ teachers see all of their own content regardless of visibility.
 | `Unit` | `units` | A section within a course (`course_id`), ordered by `sort_order`, with its own visibility. |
 | `Lesson` | `lessons` | A leaf under a unit (`unit_id` + inherited `course_id`). Has a video source — an uploaded `video_asset_id` and/or a `youtube_url`, selected by `active_video_source` — plus many attachments. Carries `duration_sec`, `max_views`, `is_free_preview`, `gating_rule`. |
 | `LessonAttachment` | *(stored as `media_assets`)* | Not a dedicated model — attachments are `MediaAsset` rows of type `pdf` / `file` / `link` linked by `lesson_id`. The lesson's single `hls_video` asset is **not** an attachment. |
+| `Bundle` | `bundles` | A **package**: a priced group of courses/units sold as one product. Binds by `uuid` (teacher) / `slug` (public). Soft-deletes. Holds pricing, visibility, and `access_days` (the window granted on purchase). |
+| `BundleItem` | `bundle_items` | One entry in a package — either a `course` (`course_id`) or a `unit` (`unit_id`), per `item_type`. Cascades away if the bundle or the referenced course/unit is deleted. |
 
 **Hierarchy:** `Course` **hasMany** `Unit` **hasMany** `Lesson`. A lesson also stores `course_id`
 directly (copied from its unit on create) so it always agrees with its unit's course. A lesson
 **hasMany** attachments (MediaAsset, type != `hls_video`) and **belongsTo** one `videoAsset`.
+A `Bundle` **hasMany** `BundleItem`, each pointing at a `Course` or a `Unit`.
 
 ### Key enums
 
@@ -58,8 +69,9 @@ directly (copied from its unit on create) so it always agrees with its unit's co
 
 ## Endpoints
 
-23 endpoints total: 2 public catalogue + 21 teacher authoring (4 categories, 5 courses, 4 units,
-4 lessons, 3 attachments; the 21st is the 5th course route `show`).
+30 endpoints total: 2 public catalogue + 2 public packages + 21 teacher authoring (4 categories,
+5 courses, 4 units, 4 lessons, 3 attachments; the 21st is the 5th course route `show`) + 5 teacher
+packages.
 
 ### Public catalogue
 
@@ -192,6 +204,77 @@ lessons, both ordered by `sort_order`):
 }
 ```
 **Errors:** `404` slug not found in tenant, or course not published.
+
+---
+
+### Public · Packages
+
+#### `GET /v1/bundles`
+**Purpose:** List the resolved tenant's published, purchasable packages (newest first, 20/page).
+**Auth:** 🌐 Public (no token)
+**Middleware:** tenant
+
+**Query params**
+| Param | Type | Description |
+|---|---|---|
+| `page` | int | Page number (20 per page, fixed). |
+
+**Response** `200 OK` — collection of `BundleResource` + `meta`. Each item:
+```json
+{
+  "uuid": "7a2d…-bundle-uuid",
+  "title": "Term 1 Package",
+  "subtitle": "Chapters 1–3 + quizzes",
+  "slug": "term-1-package",
+  "description": "Everything for term one.",
+  "price_minor": 20000,
+  "currency": "EGP",
+  "access_days": 180,
+  "visibility": "visible",
+  "publish_at": null,
+  "is_free": false,
+  "purchase_enabled": true,
+  "cover_url": null,
+  "thumbnail_url": null,
+  "items_count": 4
+}
+```
+
+---
+
+#### `GET /v1/bundles/{bundle:slug}`
+**Purpose:** Show one published package with its items (each item's course/unit summary).
+**Auth:** 🌐 Public (no token)
+**Middleware:** tenant
+
+**Path params**
+| Param | Type | Description |
+|---|---|---|
+| `bundle` | slug | Package slug (tenant-scoped; unpublished/cross-tenant `404`s). |
+
+**Response** `200 OK` — `BundleResource` with an `items` array:
+```json
+{
+  "data": {
+    "uuid": "7a2d…-bundle-uuid",
+    "title": "Term 1 Package",
+    "slug": "term-1-package",
+    "price_minor": 20000,
+    "currency": "EGP",
+    "access_days": 180,
+    "is_free": false,
+    "purchase_enabled": true,
+    "items": [
+      { "type": "course", "sort_order": 0, "course": { "uuid": "…", "title": "Course A", "slug": "course-a" } },
+      { "type": "unit", "sort_order": 1, "unit": { "id": 12, "title": "Chapter B1", "course_id": 5 } }
+    ]
+  }
+}
+```
+**Errors:** `404` slug not found in tenant, or package not published.
+
+To buy, send the `uuid` to `POST /v1/checkout/quote|order` as
+`{ "type": "bundle", "bundle": "<uuid>" }` — see [Commerce › Packages](commerce.md#packages-bundles).
 
 ---
 
@@ -746,3 +829,110 @@ was an upload).
 **Response** `204 No Content`.
 **Errors:** `404` lesson/attachment not found, attachment not on lesson, or the target is the lesson's
 `hls_video` (the video is not deletable via the attachments endpoint).
+
+---
+
+### Teacher · Packages
+
+Bundle **packages** of courses/units into one sellable product. A package's items are set inline in
+the create/update body as an `items` array (the whole set is re-synced on each write). Buying a
+package is handled by [Commerce](commerce.md#packages-bundles); this section is authoring only.
+
+#### `GET /v1/teacher/bundles`
+**Purpose:** List all of the teacher's packages (any visibility), newest first, paginated (20/page).
+Each item includes `items_count`.
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** tenant, auth:sanctum, active, role:teacher
+
+**Response** `200 OK` — collection of `BundleResource` + `meta`.
+
+---
+
+#### `POST /v1/teacher/bundles`
+**Purpose:** Create a package. Slug is auto-generated unique-within-tenant from the title;
+`tenant_id` is filled automatically. At least one item is required.
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** tenant, auth:sanctum, active, role:teacher
+
+**Request body** (`BundleRequest`):
+```json
+{
+  "title": "Term 1 Package",
+  "subtitle": "Chapters 1–3 + quizzes",
+  "description": "Everything for term one.",
+  "price_minor": 20000,
+  "currency": "EGP",
+  "access_days": 180,
+  "visibility": "visible",
+  "publish_at": null,
+  "is_free": false,
+  "purchase_enabled": true,
+  "cover_url": "https://cdn.example.com/pkg-cover.jpg",
+  "thumbnail_url": "https://cdn.example.com/pkg-thumb.jpg",
+  "items": [
+    { "type": "course", "course": "9f1c…-course-uuid", "sort_order": 0 },
+    { "type": "unit", "unit": 12, "sort_order": 1 }
+  ]
+}
+```
+| Field | Rules |
+|---|---|
+| `title` | required, string, max 255 (slug derived from this) |
+| `subtitle` | nullable, string, max 255 |
+| `description` | nullable, string |
+| `price_minor` | nullable, integer, min 0 (minor units) |
+| `currency` | nullable, string, exactly 3 chars |
+| `access_days` | nullable, integer, min 1 (access window granted on purchase; omit = lifetime) |
+| `visibility` | nullable, enum `visible\|hidden\|scheduled` (default `hidden`) |
+| `publish_at` | nullable, date |
+| `is_free` | boolean |
+| `purchase_enabled` | boolean |
+| `cover_url` / `thumbnail_url` | nullable, url, max 2048 |
+| `items` | **required on create** (min 1), optional on update; array, max 100 |
+| `items[].type` | required, `course` or `unit` |
+| `items[].course` | required if `type=course`; a course **uuid in this tenant** |
+| `items[].unit` | required if `type=unit`; a unit **id in this tenant** |
+| `items[].sort_order` | nullable, integer, min 0 |
+
+Note: `slug` is server-generated and **not** accepted in the body.
+
+**Response** `201 Created` — `BundleResource` (with `items`).
+**Errors:** `422` validation (e.g. a course/unit that isn't in this tenant, or no items on create).
+
+---
+
+#### `GET /v1/teacher/bundles/{bundle:uuid}`
+**Purpose:** Show one of the teacher's packages (any visibility), with its items.
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** tenant, auth:sanctum, active, role:teacher
+
+**Path params:** `bundle` (uuid; tenant-scoped; cross-tenant uuid `404`s).
+**Response** `200 OK` — `BundleResource` (with `items`).
+**Errors:** `404` not found in tenant.
+
+---
+
+#### `PUT /v1/teacher/bundles/{bundle:uuid}`
+**Purpose:** Update a package. The slug stays stable. If `items` is present it **replaces** the whole
+item set; omit `items` to leave the contents unchanged.
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** tenant, auth:sanctum, active, role:teacher
+
+**Path params:** `bundle` (uuid).
+**Request body:** same fields/rules as create (`BundleRequest`); `items` optional here.
+
+**Response** `200 OK` — `BundleResource`.
+**Errors:** `404` not found; `422` validation.
+
+---
+
+#### `DELETE /v1/teacher/bundles/{bundle:uuid}`
+**Purpose:** Soft-delete (retire) a package. It leaves the catalogue, but enrollments already granted
+from it keep working.
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** tenant, auth:sanctum, active, role:teacher
+
+**Path params:** `bundle` (uuid).
+**Request body:** None
+**Response** `204 No Content` (soft delete — row retained with `deleted_at`).
+**Errors:** `404` not found in tenant.

@@ -28,10 +28,28 @@ quote  →  order  →  pay  ──(wallet)──▶ fulfil immediately
 
 **Fulfilment** (`FulfillOrderService`) is idempotent and shared by both the wallet
 path and the (possibly replayed) webhook: it posts a balanced ledger operation
-(`order:{id}:fulfill`), grants course enrollments, flips the order to `paid`, and
-issues a gap-free invoice. Course revenue is split into `teacher_earnings` and
-`platform_commission` (commission % from `config('commerce.commission_percent')`,
-0 by default).
+(`order:{id}:fulfill`), grants access (course enrollments for `course` items; a
+per-item enrollment for every course/unit inside a purchased `bundle` — see
+[Packages](#packages-bundles) below), flips the order to `paid`, and issues a
+gap-free invoice. Content revenue (courses **and** packages) is split into
+`teacher_earnings` and `platform_commission` (commission % from
+`config('commerce.commission_percent')`, 0 by default).
+
+### Packages (bundles)
+
+A **package** (`Bundle`, authored under `/teacher/bundles` — see
+[Catalog › Packages](catalog.md)) groups whole courses and/or individual units
+into one sellable product. Buying a package (`item.type = bundle`) grants, in a
+single transaction, an enrollment for **each** item it contains:
+
+- a **course** item → a whole-course enrollment (unlocks its units, lessons, and
+  exams — exam access is course-enrollment-based);
+- a **unit** item → a unit-level enrollment (unlocks just that chapter's lessons;
+  exams remain tied to a full-course enrollment).
+
+Every grant records the originating `bundle_id` and uses the package's own
+`access_days` as its access window (null = lifetime). Granting is idempotent, so a
+replayed webhook or repeat purchase never stacks duplicate enrollments.
 
 > **Paymob is a P1 stub.** The merchant account is not live yet, so
 > `PaymobGateway::createCharge()` returns a placeholder hosted-payment URL
@@ -44,9 +62,9 @@ issues a gap-free invoice. Course revenue is split into `teacher_earnings` and
 | Model | Purpose |
 |---|---|
 | `Order` | A checkout order (`uuid`, `total_minor`, `currency`, `status`). Tenant-scoped, UUID route key. Has many `items`/`payments`, one `invoice`. |
-| `OrderItem` | A priced cart line (`item_type`, `item_id`, `price_minor`, `title`). Types: `course`, `bundle`, `wallet_topup`, `book` (P1 uses `course` + `wallet_topup`). |
+| `OrderItem` | A priced cart line (`item_type`, `item_id`, `price_minor`, `title`). Types: `course`, `bundle` (package), `wallet_topup`, `book` (`book` unused in P1). |
 | `Payment` | A payment attempt against an order (`gateway`, `gateway_txn_id`, `amount_minor`, `status`, `reference_number`, `raw_payload`, `processed_at`). |
-| `Enrollment` | Grants a student access to a course/bundle — single source of truth for access (`source`, `starts_at`, `expires_at`, `status`). |
+| `Enrollment` | Grants a student access to a **course** (`course_id`) OR a single **unit** (`unit_id`, from a package) — single source of truth for access (`bundle_id`, `source`, `starts_at`, `expires_at`, `status`). |
 | `Invoice` | Internal invoice with a gap-free sequential `number` per tenant (`pdf_url`, `eta_receipt_uuid`, `issued_at`). |
 
 Supporting services: `CheckoutService` (pricing + order creation),
@@ -78,8 +96,8 @@ active member. The webhook runs **outside** the tenant group.
 ### Checkout
 
 #### `POST /v1/checkout/quote`
-**Purpose:** Price a cart server-side (courses + wallet top-ups) and return line
-items and total. Nothing is persisted.
+**Purpose:** Price a cart server-side (courses + packages + wallet top-ups) and
+return line items and total. Nothing is persisted.
 **Auth:** 👤 Authenticated
 **Middleware:** `tenant`, `auth:sanctum`, `active`
 
@@ -99,6 +117,7 @@ items and total. Nothing is persisted.
 {
   "items": [
     { "type": "course", "course": "9f1c…-course-uuid" },
+    { "type": "bundle", "bundle": "7a2d…-bundle-uuid" },
     { "type": "wallet_topup", "amount_minor": 5000 }
   ]
 }
@@ -107,8 +126,9 @@ items and total. Nothing is persisted.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `items` | array | Yes | 1–50 items |
-| `items[].type` | string | Yes | `course` or `wallet_topup` |
+| `items[].type` | string | Yes | `course`, `bundle`, or `wallet_topup` |
 | `items[].course` | string | If `type=course` | Course UUID |
+| `items[].bundle` | string | If `type=bundle` | Package (bundle) UUID; must be `purchase_enabled` |
 | `items[].amount_minor` | integer | If `type=wallet_topup` | Min 1; must also meet `min_topup_minor` (default 1000) |
 
 **Response** — `200 OK`
@@ -119,14 +139,15 @@ items and total. Nothing is persisted.
     "currency": "EGP",
     "lines": [
       { "type": "course", "title": "Grade 10 Physics", "price_minor": 15000 },
+      { "type": "bundle", "title": "Term 1 Package", "price_minor": 20000 },
       { "type": "wallet_topup", "title": "Wallet top-up", "price_minor": 5000 }
     ]
   }
 }
 ```
 
-**Errors:** `422` — unsupported item type, empty cart, course not available for
-purchase, or top-up below minimum (`items` validation message).
+**Errors:** `422` — unsupported item type, empty cart, course/package not
+available for purchase, or top-up below minimum (`items` validation message).
 
 #### `POST /v1/checkout/order`
 **Purpose:** Re-price the cart and persist a `pending` order with its items.

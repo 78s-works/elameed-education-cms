@@ -18,10 +18,13 @@ class ReviewResource extends JsonResource
     {
         return [
             'id' => $this->id,
-            'student_name' => $this->user?->name,
+            // Linked student's name, or the teacher-authored testimonial's author name.
+            'student_name' => $this->displayName(),
             'course_title' => $this->course?->title,
             'rating' => $this->rating,
             'comment' => $this->comment,
+            'is_visible' => (bool) $this->is_visible,
+            'is_teacher_authored' => $this->user_id === null,
             'created_at' => $this->created_at?->toIso8601String(),
         ];
     }

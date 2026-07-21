@@ -8,7 +8,9 @@ use App\Modules\Billing\Http\Controllers\Admin\PackageController;
 use App\Modules\Billing\Http\Controllers\Admin\TenantSubscriptionController;
 use App\Modules\Billing\Http\Controllers\Teacher\PackageController as TeacherPackageController;
 use App\Modules\Billing\Http\Controllers\Teacher\SubscriptionController;
+use App\Modules\Catalog\Http\Controllers\PublicBundleController;
 use App\Modules\Catalog\Http\Controllers\PublicCatalogController;
+use App\Modules\Catalog\Http\Controllers\Teacher\BundleController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CategoryController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CourseController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonAttachmentController;
@@ -26,6 +28,7 @@ use App\Modules\Engagement\Http\Controllers\GamificationController;
 use App\Modules\Engagement\Http\Controllers\ProgressController;
 use App\Modules\Engagement\Http\Controllers\ReviewController;
 use App\Modules\Engagement\Http\Controllers\Teacher\BadgeController;
+use App\Modules\Engagement\Http\Controllers\Teacher\ReviewController as TeacherReviewController;
 use App\Modules\Identity\Http\Controllers\AuthController;
 use App\Modules\Identity\Http\Controllers\MeController;
 use App\Modules\Identity\Http\Controllers\ParentController;
@@ -142,6 +145,10 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
     Route::get('/courses/{course:slug}', [PublicCatalogController::class, 'show']);
     Route::get('/courses/{course:slug}/reviews', [ReviewController::class, 'index']);
 
+    // Public packages (M04) — published, purchasable bundles of the resolved tenant
+    Route::get('/bundles', [PublicBundleController::class, 'index']);
+    Route::get('/bundles/{bundle:slug}', [PublicBundleController::class, 'show']);
+
     // Identity, auth & OTP (M11) — public
     Route::post('/auth/register', [AuthController::class, 'register'])->middleware('throttle:otp');
     Route::post('/auth/otp/request', [AuthController::class, 'requestOtp'])->middleware('throttle:otp');
@@ -227,6 +234,14 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::put('/teacher/landing', [TeacherLandingController::class, 'update']);
             Route::post('/teacher/landing/media', [TeacherLandingController::class, 'media']);
 
+            // Reviews & landing testimonials (M20) — teacher-panel CRUD: moderate
+            // student reviews (hide/show/edit/delete) + author curated testimonials.
+            Route::get('/teacher/reviews', [TeacherReviewController::class, 'index']);
+            Route::post('/teacher/reviews', [TeacherReviewController::class, 'store']);
+            Route::get('/teacher/reviews/{review}', [TeacherReviewController::class, 'show']);
+            Route::put('/teacher/reviews/{review}', [TeacherReviewController::class, 'update']);
+            Route::delete('/teacher/reviews/{review}', [TeacherReviewController::class, 'destroy']);
+
             // Catalog (M04) — course taxonomy + structure. Courses bind by uuid
             // (no id enumeration); nested units/lessons bind by id (own data).
             Route::get('/teacher/categories', [CategoryController::class, 'index']);
@@ -253,6 +268,14 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::get('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'index']);
             Route::post('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'store']);
             Route::delete('/teacher/lessons/{lesson}/attachments/{attachment:uuid}', [LessonAttachmentController::class, 'destroy']);
+
+            // Packages/bundles (M04) — group courses + units into a sellable package.
+            // Buying one enrolls the student in every item it contains.
+            Route::get('/teacher/bundles', [BundleController::class, 'index']);
+            Route::post('/teacher/bundles', [BundleController::class, 'store']);
+            Route::get('/teacher/bundles/{bundle:uuid}', [BundleController::class, 'show']);
+            Route::put('/teacher/bundles/{bundle:uuid}', [BundleController::class, 'update']);
+            Route::delete('/teacher/bundles/{bundle:uuid}', [BundleController::class, 'destroy']);
 
             // Self-hosted video (M04) — upload → transcode → status.
             Route::post('/teacher/media/uploads', [TeacherMediaController::class, 'startUpload']);
@@ -342,7 +365,12 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             // Parents (M13)
             Route::get('/teacher/students/{student:uuid}/parents', [StudentParentController::class, 'index']);
             Route::post('/teacher/students/{student:uuid}/parents', [StudentParentController::class, 'store']);
-            Route::delete('/teacher/students/{student:uuid}/parents/{parent:uuid}', [StudentParentController::class, 'destroy']);
+            // `parent` is resolved independently of `student` — the controller already
+            // scopes the ParentLink delete by (student, parent). Without this, Laravel
+            // auto-enables scoped binding for the custom-key child and tries to resolve
+            // it via a nonexistent User::parents() relationship → 500. (Bug fix.)
+            Route::delete('/teacher/students/{student:uuid}/parents/{parent:uuid}', [StudentParentController::class, 'destroy'])
+                ->withoutScopedBindings();
         });
     });
 });

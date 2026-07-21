@@ -2,6 +2,7 @@
 
 namespace App\Modules\Commerce\Services;
 
+use App\Modules\Catalog\Models\Bundle;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Commerce\Models\OrderItem;
@@ -10,8 +11,8 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Prices a cart server-side (never trusts client prices — 04_API_Spec §4) and
- * persists orders. P1 supports single-course purchase and wallet top-up;
- * bundles/coupons are P1.5.
+ * persists orders. Supports single-course purchase, package (bundle) purchase,
+ * and wallet top-up. Coupons are P1.5.
  */
 class CheckoutService
 {
@@ -29,6 +30,7 @@ class CheckoutService
         foreach ($items as $item) {
             $line = match ($item['type']) {
                 OrderItem::TYPE_COURSE => $this->priceCourse($item),
+                OrderItem::TYPE_BUNDLE => $this->priceBundle($item),
                 OrderItem::TYPE_WALLET_TOPUP => $this->priceTopup($item),
                 default => throw ValidationException::withMessages(['items' => 'Unsupported item type.']),
             };
@@ -75,6 +77,22 @@ class CheckoutService
             'item_id' => $course->id,
             'price_minor' => $course->is_free ? 0 : (int) $course->price_minor,
             'title' => $course->title,
+        ];
+    }
+
+    private function priceBundle(array $item): array
+    {
+        $bundle = Bundle::query()->where('uuid', $item['bundle'] ?? null)->first();
+
+        if ($bundle === null || ! $bundle->purchase_enabled) {
+            throw ValidationException::withMessages(['items' => 'Package not available for purchase.']);
+        }
+
+        return [
+            'item_type' => OrderItem::TYPE_BUNDLE,
+            'item_id' => $bundle->id,
+            'price_minor' => $bundle->is_free ? 0 : (int) $bundle->price_minor,
+            'title' => $bundle->title,
         ];
     }
 

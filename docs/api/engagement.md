@@ -4,7 +4,7 @@
 
 ## Models
 
-- **`Review`** — A student's rating (`integer` 1–5) + `comment` on a `course` (unique per `course_id` + `user_id`; upserted). Read-only input to the landing `testimonials` section and a course's aggregate rating. Fillable: `course_id`, `user_id`, `rating`, `comment`.
+- **`Review`** — A rating (`integer` 1–5) + `comment` on a `course`. Either a **student's own** review (`user_id` set, unique per `course_id` + `user_id`, upserted by the student) or a **teacher-authored testimonial** (`user_id` null, `author_name` set) created from the teacher panel. `is_visible` (default `true`) is the moderation gate — only visible rows feed the public course page, the landing `testimonials` section, and a course's aggregate rating. Fillable: `course_id`, `user_id`, `author_name`, `rating`, `comment`, `is_visible`.
 - **`LessonProgress`** — Per-student watch state for a lesson (table `lesson_progress`). Fields: `enrollment_id`, `lesson_id`, `user_id`, `watch_percent`, `watch_seconds`, `sessions_count`, `last_position_sec`, `completed_at` (datetime). Powers resume, activity, and completion points.
 - **`Favorite`** — A student's saved course (`user_id` + `course_id`). Tenant-scoped to the current academy.
 - **`PointsEntry`** — Append-only ledger row (`const UPDATED_AT = null`). Fields: `user_id`, `points` (integer), `reason`, `ref_type`, `ref_id`, `idempotency_key`. A student's score is `SUM(points)`; the `idempotency_key` guarantees each event scores once.
@@ -28,7 +28,7 @@
 
 ## Endpoints
 
-16 endpoints: Reviews (2), Progress (3), Favorites (3), Gamification · Student (3), Gamification · Teacher (5). All sit under the `tenant` middleware group (Host resolution or `X-Tenant` override). Success envelopes are `{ "data": ... }` (paginated lists add `"meta"`); errors are `{ "error": { code, message, details } }`. Timestamps are ISO-8601 UTC.
+21 endpoints: Reviews (2), Reviews · Teacher (5), Progress (3), Favorites (3), Gamification · Student (3), Gamification · Teacher (5). All sit under the `tenant` middleware group (Host resolution or `X-Tenant` override). Success envelopes are `{ "data": ... }` (paginated lists add `"meta"`); errors are `{ "error": { code, message, details } }`. Timestamps are ISO-8601 UTC.
 
 ### Reviews
 
@@ -66,6 +66,8 @@
       "course_title": "فيزياء الصف الثالث الثانوي",
       "rating": 5,
       "comment": "شرح ممتاز وواضح جدًا.",
+      "is_visible": true,
+      "is_teacher_authored": false,
       "created_at": "2026-07-10T09:14:22+00:00"
     }
   ],
@@ -77,6 +79,9 @@
   }
 }
 ```
+
+Notes: `student_name` is the linked student's name, or the teacher-authored `author_name` when
+`is_teacher_authored` is `true`. This public list returns **visible reviews only**.
 
 **Errors:** `404` — slug resolves to no course in this tenant.
 
@@ -123,6 +128,47 @@
 - `403` — student lacks access to the course (`EnrollmentService::hasAccess` false): message `Enroll in this course before reviewing it.`
 - `422` — validation (missing/out-of-range `rating`, over-length `comment`).
 - `401` / `403` — unauthenticated, or member not `active`.
+
+---
+
+### Reviews · Teacher
+
+Teacher-panel CRUD over the tenant's reviews / landing testimonials. The teacher can **moderate**
+student-submitted reviews (hide/show via `is_visible`, edit, delete) **and author curated
+testimonials** (`author_name`, no student account). All rows are tenant-scoped by the
+`BelongsToTenant` global scope, so a review id from another tenant resolves to `404`.
+Middleware: `tenant`, `auth:sanctum`, `active`, `role:teacher`. Responses use `ReviewResource`.
+
+#### `GET /v1/teacher/reviews`
+**Purpose:** List every review in the tenant (any course, any visibility), newest first, paginated (20/page).
+**Query params (all optional):** `course_id` (int), `rating` (1–5), `visible` (bool), `q` (LIKE on `comment`).
+**Response 200** — `ReviewResource` collection + `meta`.
+
+#### `POST /v1/teacher/reviews`
+**Purpose:** Author a curated testimonial for one of the teacher's own courses (`user_id` is null).
+**Request body**
+
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `course_id` | int | yes | must be a course **in this tenant** (else `404`) |
+| `rating` | int | yes | `min:1`, `max:5` |
+| `comment` | string | no | nullable, `max:2000` |
+| `author_name` | string | no | nullable, `max:255` (display name for the testimonial) |
+| `is_visible` | bool | no | default `true` |
+
+**Response 201** — the created `ReviewResource` (`is_teacher_authored: true`).
+**Errors:** `404` course not in tenant; `422` validation.
+
+#### `GET /v1/teacher/reviews/{review}`
+**Purpose:** Show one review (tenant-scoped). **Response 200** — `ReviewResource`. **Errors:** `404` unknown/cross-tenant.
+
+#### `PUT /v1/teacher/reviews/{review}`
+**Purpose:** Update any review — moderate a student review (e.g. `is_visible: false`) or edit a testimonial.
+**Request body:** `rating` (sometimes, 1–5), `comment`, `author_name`, `is_visible`. `course_id` is **prohibited** here (a review can't be moved between courses).
+**Response 200** — `ReviewResource`. **Errors:** `404` unknown/cross-tenant; `422` validation.
+
+#### `DELETE /v1/teacher/reviews/{review}`
+**Purpose:** Delete a review (student-submitted or teacher-authored). **Response 204**. **Errors:** `404` unknown/cross-tenant.
 
 ---
 

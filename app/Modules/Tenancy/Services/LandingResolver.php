@@ -313,6 +313,7 @@ class LandingResolver
 
         $query = Review::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
+            ->where('is_visible', true)       // only teacher-approved reviews reach the landing
             ->with(['user:id,name', 'course:id,title']);
 
         if ($source === 'top_rated') {
@@ -324,7 +325,7 @@ class LandingResolver
 
         return $query->limit($limit)->get()->map(fn (Review $r) => [
             'id' => $r->id,
-            'student_name' => $r->user?->name,
+            'student_name' => $r->displayName(),
             'course_title' => $r->course?->title,
             'rating' => $r->rating,
             'comment' => $r->comment,
@@ -353,6 +354,7 @@ class LandingResolver
     {
         return Review::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)->whereIn('course_id', $ids)
+            ->where('is_visible', true)       // hidden reviews don't skew the shown rating
             ->selectRaw('course_id, avg(rating) as r')->groupBy('course_id')
             ->pluck('r', 'course_id')->all();
     }

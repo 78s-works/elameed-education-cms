@@ -20,8 +20,9 @@ class CartRequest extends FormRequest
     {
         return [
             'items' => ['required', 'array', 'min:1', 'max:50'],
-            'items.*.type' => ['required', Rule::in(['course', 'wallet_topup'])],
+            'items.*.type' => ['required', Rule::in(['course', 'bundle', 'wallet_topup'])],
             'items.*.course' => ['required_if:items.*.type,course', 'string'],
+            'items.*.bundle' => ['required_if:items.*.type,bundle', 'string'],
             'items.*.amount_minor' => ['required_if:items.*.type,wallet_topup', 'integer', 'min:1'],
         ];
     }

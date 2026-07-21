@@ -35,12 +35,12 @@ Postman collection in [`postman/`](../postman).
 | Wallet | 2 | [`api/wallet.md`](api/wallet.md) |
 | Centers | 11 | [`api/centers.md`](api/centers.md) |
 | Assessment | 13 | [`api/assessment.md`](api/assessment.md) |
-| Engagement | 16 | [`api/engagement.md`](api/engagement.md) |
+| Engagement | 21 | [`api/engagement.md`](api/engagement.md) |
 | Notifications | 2 | [`api/notifications.md`](api/notifications.md) |
 | Reporting | 4 | [`api/reporting.md`](api/reporting.md) |
 | Platform Admin | 6 | [`api/platform-admin.md`](api/platform-admin.md) |
 | Billing | 8 | [`api/billing.md`](api/billing.md) |
-| **Total** | **146** | |
+| **Total** | **151** | |
 
 > These docs describe the **implemented** behaviour. Where it diverges from the
 > design-time spec in [`../docs (1)/04_API_Specification.md`](../../docs%20(1)/04_API_Specification.md),

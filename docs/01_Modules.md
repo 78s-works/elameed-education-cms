@@ -60,7 +60,7 @@ Identity is **global** (one `User` can belong to many tenants); authorization is
 |---|---|---|--:|---|
 | 1 | [Tenancy](#1-tenancy) | M01 | 9 | Host→tenant resolution, branding, public + teacher landing pages, academy access switches |
 | 2 | [Identity](#2-identity) | M02, M11, M13 | 28 | Auth/OTP, `/me`, parent portal, teacher student management |
-| 3 | [Catalog](#3-catalog) | M04 | 23 | Course → unit → lesson → attachment hierarchy + categories |
+| 3 | [Catalog](#3-catalog) | M04 | 30 | Course → unit → lesson → attachment hierarchy + categories + packages (bundles) |
 | 4 | [Media](#4-media) | M04, M22 | 20 | Protected video: encrypted-HLS pipeline + remote OVH provider, watermarking |
 | 5 | [Commerce](#5-commerce) | M05, M06 | 4 | Checkout (quote/order/pay) + Paymob gateway + webhook |
 | 6 | [Wallet](#6-wallet) | M05 | 2 | Student wallet balance + append-only ledger (read-only API) |
@@ -106,11 +106,13 @@ activity, notifications, parent linking).
 ## 3. Catalog
 `app/Modules/Catalog` — the tenant's course library: a public storefront
 (browse/detail) plus teacher authoring of the `course → unit → lesson →
-attachment` hierarchy and the category taxonomy.
+attachment` hierarchy, the category taxonomy, and **packages** (bundles that
+group courses/units into one sellable product).
 
-- **Models:** `CourseCategory`, `Course`, `Unit`, `Lesson`. **Attachments are not a dedicated model** — they are Media's `MediaAsset` rows (type `pdf`/`file`/`link`) linked by `lesson_id`; the lesson's `hls_video` asset is excluded from the attachments list.
+- **Models:** `CourseCategory`, `Course`, `Unit`, `Lesson`, `Bundle`, `BundleItem`. **Attachments are not a dedicated model** — they are Media's `MediaAsset` rows (type `pdf`/`file`/`link`) linked by `lesson_id`; the lesson's `hls_video` asset is excluded from the attachments list.
 - **Enums:** `ContentVisibility` (`visible`/`hidden`/`scheduled`).
-- **Notes / gotchas:** binding keys differ — courses bind by `slug` (public) vs `uuid` (teacher); units/lessons by numeric `id`; attachments by `uuid`. "Published" = `visibility == visible` AND (`publish_at` null or past). Slug is server-generated and immutable. Public list is fixed at 20/page, newest-first (no `sort`/`per_page`); filters: `filter[category_id|grade|subject]`, `q`.
+- **Packages (bundles):** a `Bundle` has many `BundleItem`s, each a `course` or `unit`. Teacher CRUD at `/teacher/bundles` (items set inline as an `items` array); public browse at `/bundles`. Buying one (Commerce `bundle` item) grants an enrollment per item — a course item opens the whole course (lessons + exams), a unit item opens just that chapter's lessons. The package's `access_days` sets the window.
+- **Notes / gotchas:** binding keys differ — courses and bundles bind by `slug` (public) vs `uuid` (teacher); units/lessons by numeric `id`; attachments by `uuid`. "Published" = `visibility == visible` AND (`publish_at` null or past). Slug is server-generated and immutable. Public list is fixed at 20/page, newest-first (no `sort`/`per_page`); filters: `filter[category_id|grade|subject]`, `q`.
 
 → [`api/catalog.md`](api/catalog.md)
 
@@ -133,6 +135,7 @@ Paymob returns a hosted `redirect_url` and completes asynchronously.
 
 - **Models:** `Order`, `OrderItem`, `Payment`, `Enrollment`, `Invoice`. Services `CheckoutService`, `FulfillOrderService`, `EnrollmentService`, `InvoiceService`; `PaymobGateway` implements `Contracts\PaymentGateway`.
 - **Enums:** `OrderStatus` (pending/paid/failed/refunded), Payment status consts (pending/paid/failed), `EnrollmentStatus` (active/expired/cancelled), `EnrollmentSource` (purchase/wallet/code/manual/center).
+- **Item types:** cart items are `course`, `bundle` (package), or `wallet_topup`. `EnrollmentService` grants either a whole-**course** enrollment or a single-**unit** one (from a package); `hasAccess` (course) and `hasLessonAccess` (course-or-unit) are the read side. Fulfilling a `bundle` grants an enrollment per contained course/unit in one transaction (idempotent), using the package's `access_days`.
 - **Notes / gotchas:** `Idempotency-Key` header is **accepted but ignored in P1** — idempotency is server-side (pay short-circuits paid orders; webhook dedupes on `gateway_txn_id`; fulfilment dedupes on the ledger op-key). Paymob is a **P1 stub** (placeholder redirect URL). Webhook is **outside** the tenant group (tenant derived from the order); signature header **`X-Paymob-Hmac`** (HMAC-SHA512), `throttle:120,1`.
 
 → [`api/commerce.md`](api/commerce.md)
