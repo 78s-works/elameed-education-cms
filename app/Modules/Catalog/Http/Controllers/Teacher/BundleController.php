@@ -7,6 +7,7 @@ use App\Modules\Catalog\Http\Resources\BundleResource;
 use App\Modules\Catalog\Models\Bundle;
 use App\Modules\Catalog\Models\BundleItem;
 use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Unit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -38,13 +39,13 @@ class BundleController
 
         $this->syncItems($bundle, $data['items'] ?? []);
 
-        return (new BundleResource($bundle->load('items.course', 'items.unit')))
+        return (new BundleResource($bundle->load('items.course', 'items.unit', 'items.lesson')))
             ->response()->setStatusCode(201);
     }
 
     public function show(Bundle $bundle): BundleResource
     {
-        return new BundleResource($bundle->load('items.course', 'items.unit'));
+        return new BundleResource($bundle->load('items.course', 'items.unit', 'items.lesson'));
     }
 
     public function update(BundleRequest $request, Bundle $bundle): BundleResource
@@ -56,7 +57,7 @@ class BundleController
             $this->syncItems($bundle, $request->validated('items'));
         }
 
-        return new BundleResource($bundle->load('items.course', 'items.unit'));
+        return new BundleResource($bundle->load('items.course', 'items.unit', 'items.lesson'));
     }
 
     public function destroy(Bundle $bundle): Response
@@ -70,7 +71,7 @@ class BundleController
 
     /**
      * Replace the package's items with the supplied set. Course items are resolved
-     * by uuid, unit items by id; both were validated to belong to this tenant.
+     * by uuid, unit/lesson items by id; all were validated to belong to this tenant.
      *
      * @param  array<int, array<string, mixed>>  $items
      */
@@ -79,27 +80,29 @@ class BundleController
         $bundle->items()->delete();
 
         foreach (array_values($items) as $i => $item) {
+            $row = ['sort_order' => $item['sort_order'] ?? $i];
+
             if ($item['type'] === BundleItem::TYPE_COURSE) {
                 $course = Course::query()->where('uuid', $item['course'])->first();
                 if ($course === null) {
                     continue;
                 }
-                $bundle->items()->create([
-                    'item_type' => BundleItem::TYPE_COURSE,
-                    'course_id' => $course->getKey(),
-                    'sort_order' => $item['sort_order'] ?? $i,
-                ]);
-            } else {
+                $row += ['item_type' => BundleItem::TYPE_COURSE, 'course_id' => $course->getKey()];
+            } elseif ($item['type'] === BundleItem::TYPE_UNIT) {
                 $unit = Unit::query()->find($item['unit']);
                 if ($unit === null) {
                     continue;
                 }
-                $bundle->items()->create([
-                    'item_type' => BundleItem::TYPE_UNIT,
-                    'unit_id' => $unit->getKey(),
-                    'sort_order' => $item['sort_order'] ?? $i,
-                ]);
+                $row += ['item_type' => BundleItem::TYPE_UNIT, 'unit_id' => $unit->getKey()];
+            } else {
+                $lesson = Lesson::query()->find($item['lesson']);
+                if ($lesson === null) {
+                    continue;
+                }
+                $row += ['item_type' => BundleItem::TYPE_LESSON, 'lesson_id' => $lesson->getKey()];
             }
+
+            $bundle->items()->create($row);
         }
     }
 }

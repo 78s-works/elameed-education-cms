@@ -9,10 +9,10 @@ use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Enum;
 
 /**
- * Validation for creating/updating a package (bundle). Items are the courses and
- * units the package unlocks; each is verified to belong to THIS tenant. On create
- * (`POST`) at least one item is required; on update, `items` is optional and only
- * re-synced when supplied.
+ * Validation for creating/updating a package (bundle). Items are the courses,
+ * units, and lessons the package unlocks; each is verified to belong to THIS
+ * tenant. On create (`POST`) at least one item is required; on update, `items` is
+ * optional and only re-synced when supplied.
  */
 class BundleRequest extends FormRequest
 {
@@ -41,7 +41,7 @@ class BundleRequest extends FormRequest
             'thumbnail_url' => ['nullable', 'url', 'max:2048'],
 
             'items' => $itemsRule,
-            'items.*.type' => ['required', Rule::in(['course', 'unit'])],
+            'items.*.type' => ['required', Rule::in(['course', 'unit', 'lesson'])],
             'items.*.course' => [
                 'required_if:items.*.type,course',
                 Rule::exists('courses', 'uuid')->where('tenant_id', $tenantId),
@@ -49,6 +49,10 @@ class BundleRequest extends FormRequest
             'items.*.unit' => [
                 'required_if:items.*.type,unit',
                 Rule::exists('units', 'id')->where('tenant_id', $tenantId),
+            ],
+            'items.*.lesson' => [
+                'required_if:items.*.type,lesson',
+                Rule::exists('lessons', 'id')->where('tenant_id', $tenantId),
             ],
             'items.*.sort_order' => ['nullable', 'integer', 'min:0'],
         ];

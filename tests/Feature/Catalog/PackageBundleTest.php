@@ -127,7 +127,9 @@ class PackageBundleTest extends TestCase
 
     public function test_buying_a_package_opens_every_item_but_not_unbundled_content(): void
     {
-        // Content: Course A (unit A1 → L1) with a published exam; Course B (unit B1 → L2, unit B2 → L3).
+        // Course A (unit A1 → L1) with a published exam; Course B (unit B1 → L2,
+        // unit B2 → L3 + L4). The package bundles: whole Course A, chapter B1, and
+        // the single lesson L3 (part of chapter B2).
         $courseA = $this->course('Course A');
         $unitA1 = $this->unit($courseA, 'Chapter A1');
         $l1 = $this->lesson($unitA1, 'A1 Lesson');
@@ -139,9 +141,10 @@ class PackageBundleTest extends TestCase
         $unitB1 = $this->unit($courseB, 'Chapter B1');
         $l2 = $this->lesson($unitB1, 'B1 Lesson');
         $unitB2 = $this->unit($courseB, 'Chapter B2');
-        $l3 = $this->lesson($unitB2, 'B2 Lesson');
+        $l3 = $this->lesson($unitB2, 'B2 Lesson 3');
+        $l4 = $this->lesson($unitB2, 'B2 Lesson 4'); // sibling of L3, NOT bundled
 
-        // Teacher assembles a package: whole Course A + only chapter B1.
+        // Teacher assembles a package: whole Course A + chapter B1 + lesson L3.
         $teacher = $this->member(TenantUserRole::Teacher);
         Sanctum::actingAs($teacher);
         $bundleUuid = $this->withHeaders($this->h)->postJson('/api/v1/teacher/bundles', [
@@ -149,6 +152,7 @@ class PackageBundleTest extends TestCase
             'items' => [
                 ['type' => 'course', 'course' => $courseA->uuid],
                 ['type' => 'unit', 'unit' => $unitB1->id],
+                ['type' => 'lesson', 'lesson' => $l3->id],
             ],
         ])->assertStatus(201)->json('data.uuid');
 
@@ -169,15 +173,19 @@ class PackageBundleTest extends TestCase
             'order' => $orderUuid, 'method' => 'wallet',
         ])->assertOk()->assertJsonPath('data.status', 'paid');
 
-        // Two enrollments were granted, both linked to the bundle.
+        // Three enrollments were granted (course + unit + lesson), all bundle-linked.
         $courseGrant = Enrollment::withoutGlobalScopes()->where('user_id', $student->id)
             ->where('course_id', $courseA->id)->first();
         $unitGrant = Enrollment::withoutGlobalScopes()->where('user_id', $student->id)
             ->where('unit_id', $unitB1->id)->first();
+        $lessonGrant = Enrollment::withoutGlobalScopes()->where('user_id', $student->id)
+            ->where('lesson_id', $l3->id)->first();
         $this->assertNotNull($courseGrant, 'whole-course grant missing');
         $this->assertNotNull($unitGrant, 'unit grant missing');
+        $this->assertNotNull($lessonGrant, 'lesson grant missing');
         $this->assertNotNull($courseGrant->bundle_id);
         $this->assertNotNull($unitGrant->bundle_id);
+        $this->assertNotNull($lessonGrant->bundle_id);
 
         // Lesson access — progress store re-checks access (no video/transcode needed).
         $this->withHeaders($this->h)->postJson("/api/v1/lessons/{$l1->id}/progress", ['watch_percent' => 10])
@@ -185,7 +193,9 @@ class PackageBundleTest extends TestCase
         $this->withHeaders($this->h)->postJson("/api/v1/lessons/{$l2->id}/progress", ['watch_percent' => 10])
             ->assertOk(); // Chapter B1 → open via unit grant
         $this->withHeaders($this->h)->postJson("/api/v1/lessons/{$l3->id}/progress", ['watch_percent' => 10])
-            ->assertForbidden(); // Chapter B2 not bundled → closed
+            ->assertOk(); // Lesson L3 → open via lesson grant
+        $this->withHeaders($this->h)->postJson("/api/v1/lessons/{$l4->id}/progress", ['watch_percent' => 10])
+            ->assertForbidden(); // L4 (sibling of L3, not bundled) → closed — proves lesson-level, not unit-level
 
         // A whole-course item also unlocks that course's exams.
         $this->withHeaders($this->h)->getJson('/api/v1/exams')

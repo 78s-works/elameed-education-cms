@@ -5,6 +5,7 @@ namespace App\Modules\Commerce\Models;
 use App\Models\User;
 use App\Modules\Catalog\Models\Bundle;
 use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Unit;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
@@ -14,10 +15,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * Grants a student access to a course OR a single unit — the single source of
- * truth for access (03_Data_Model.md §5). A row carries either `course_id`
- * (whole-course access) or `unit_id` (one chapter, from a package). `bundle_id`
- * records the package the grant came from, when applicable.
+ * Grants a student access to a course, a unit, or a single lesson — the single
+ * source of truth for access (03_Data_Model.md §5). A row carries exactly one of
+ * `course_id` (whole course), `unit_id` (one chapter), or `lesson_id` (one lesson,
+ * part of a course). `bundle_id` records the package the grant came from, if any.
  *
  * @property EnrollmentStatus $status
  * @property EnrollmentSource $source
@@ -30,6 +31,7 @@ class Enrollment extends Model
         'user_id',
         'course_id',
         'unit_id',
+        'lesson_id',
         'bundle_id',
         'source',
         'starts_at',
@@ -62,6 +64,11 @@ class Enrollment extends Model
     public function unit(): BelongsTo
     {
         return $this->belongsTo(Unit::class);
+    }
+
+    public function lesson(): BelongsTo
+    {
+        return $this->belongsTo(Lesson::class);
     }
 
     public function bundle(): BelongsTo

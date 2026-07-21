@@ -26,6 +26,12 @@ class BundleItemResource extends JsonResource
                 'title' => $this->unit->title,
                 'course_id' => $this->unit->course_id,
             ] : null),
+            'lesson' => $this->whenLoaded('lesson', fn () => $this->lesson ? [
+                'id' => $this->lesson->id,
+                'title' => $this->lesson->title,
+                'unit_id' => $this->lesson->unit_id,
+                'course_id' => $this->lesson->course_id,
+            ] : null),
         ];
     }
 }

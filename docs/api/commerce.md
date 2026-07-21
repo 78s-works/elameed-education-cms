@@ -38,15 +38,16 @@ gap-free invoice. Content revenue (courses **and** packages) is split into
 ### Packages (bundles)
 
 A **package** (`Bundle`, authored under `/teacher/bundles` — see
-[Catalog › Packages](catalog.md)) groups whole courses and/or individual units
-into one sellable product. Buying a package (`item.type = bundle`) grants, in a
-single transaction, an enrollment for **each** item it contains:
+[Catalog › Packages](catalog.md)) groups whole courses, units, and/or individual
+lessons into one sellable product. Buying a package (`item.type = bundle`) grants,
+in a single transaction, an enrollment for **each** item it contains:
 
 - a **course** item → a whole-course enrollment (unlocks its units, lessons, and
   exams — exam access is course-enrollment-based);
-- a **unit** item → a unit-level enrollment (unlocks just that chapter's lessons;
-  exams remain tied to a full-course enrollment).
+- a **unit** item → a unit-level enrollment (unlocks that chapter's lessons);
+- a **lesson** item → a lesson-level enrollment (unlocks just that one lesson).
 
+Exams stay tied to a full-course enrollment, so unit/lesson grants don't open them.
 Every grant records the originating `bundle_id` and uses the package's own
 `access_days` as its access window (null = lifetime). Granting is idempotent, so a
 replayed webhook or repeat purchase never stacks duplicate enrollments.
@@ -64,7 +65,7 @@ replayed webhook or repeat purchase never stacks duplicate enrollments.
 | `Order` | A checkout order (`uuid`, `total_minor`, `currency`, `status`). Tenant-scoped, UUID route key. Has many `items`/`payments`, one `invoice`. |
 | `OrderItem` | A priced cart line (`item_type`, `item_id`, `price_minor`, `title`). Types: `course`, `bundle` (package), `wallet_topup`, `book` (`book` unused in P1). |
 | `Payment` | A payment attempt against an order (`gateway`, `gateway_txn_id`, `amount_minor`, `status`, `reference_number`, `raw_payload`, `processed_at`). |
-| `Enrollment` | Grants a student access to a **course** (`course_id`) OR a single **unit** (`unit_id`, from a package) — single source of truth for access (`bundle_id`, `source`, `starts_at`, `expires_at`, `status`). |
+| `Enrollment` | Grants a student access to a **course** (`course_id`), a **unit** (`unit_id`), or a single **lesson** (`lesson_id`, the last two from a package) — single source of truth for access (`bundle_id`, `source`, `starts_at`, `expires_at`, `status`). |
 | `Invoice` | Internal invoice with a gap-free sequential `number` per tenant (`pdf_url`, `eta_receipt_uuid`, `issued_at`). |
 
 Supporting services: `CheckoutService` (pricing + order creation),

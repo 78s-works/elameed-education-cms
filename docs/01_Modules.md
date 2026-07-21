@@ -111,7 +111,7 @@ group courses/units into one sellable product).
 
 - **Models:** `CourseCategory`, `Course`, `Unit`, `Lesson`, `Bundle`, `BundleItem`. **Attachments are not a dedicated model** — they are Media's `MediaAsset` rows (type `pdf`/`file`/`link`) linked by `lesson_id`; the lesson's `hls_video` asset is excluded from the attachments list.
 - **Enums:** `ContentVisibility` (`visible`/`hidden`/`scheduled`).
-- **Packages (bundles):** a `Bundle` has many `BundleItem`s, each a `course` or `unit`. Teacher CRUD at `/teacher/bundles` (items set inline as an `items` array); public browse at `/bundles`. Buying one (Commerce `bundle` item) grants an enrollment per item — a course item opens the whole course (lessons + exams), a unit item opens just that chapter's lessons. The package's `access_days` sets the window.
+- **Packages (bundles):** a `Bundle` has many `BundleItem`s, each a `course`, `unit`, or `lesson`. Teacher CRUD at `/teacher/bundles` (items set inline as an `items` array); public browse at `/bundles`. Buying one (Commerce `bundle` item) grants an enrollment per item — a course item opens the whole course (lessons + exams), a unit item opens that chapter's lessons, a lesson item opens just that lesson. The package's `access_days` sets the window.
 - **Notes / gotchas:** binding keys differ — courses and bundles bind by `slug` (public) vs `uuid` (teacher); units/lessons by numeric `id`; attachments by `uuid`. "Published" = `visibility == visible` AND (`publish_at` null or past). Slug is server-generated and immutable. Public list is fixed at 20/page, newest-first (no `sort`/`per_page`); filters: `filter[category_id|grade|subject]`, `q`.
 
 → [`api/catalog.md`](api/catalog.md)
@@ -135,7 +135,7 @@ Paymob returns a hosted `redirect_url` and completes asynchronously.
 
 - **Models:** `Order`, `OrderItem`, `Payment`, `Enrollment`, `Invoice`. Services `CheckoutService`, `FulfillOrderService`, `EnrollmentService`, `InvoiceService`; `PaymobGateway` implements `Contracts\PaymentGateway`.
 - **Enums:** `OrderStatus` (pending/paid/failed/refunded), Payment status consts (pending/paid/failed), `EnrollmentStatus` (active/expired/cancelled), `EnrollmentSource` (purchase/wallet/code/manual/center).
-- **Item types:** cart items are `course`, `bundle` (package), or `wallet_topup`. `EnrollmentService` grants either a whole-**course** enrollment or a single-**unit** one (from a package); `hasAccess` (course) and `hasLessonAccess` (course-or-unit) are the read side. Fulfilling a `bundle` grants an enrollment per contained course/unit in one transaction (idempotent), using the package's `access_days`.
+- **Item types:** cart items are `course`, `bundle` (package), or `wallet_topup`. `EnrollmentService` grants a whole-**course**, a **unit**, or a single-**lesson** enrollment (the last two from a package); `hasAccess` (course) and `hasLessonAccess` (course-or-unit-or-lesson) are the read side. Fulfilling a `bundle` grants an enrollment per contained course/unit/lesson in one transaction (idempotent), using the package's `access_days`.
 - **Notes / gotchas:** `Idempotency-Key` header is **accepted but ignored in P1** — idempotency is server-side (pay short-circuits paid orders; webhook dedupes on `gateway_txn_id`; fulfilment dedupes on the ledger op-key). Paymob is a **P1 stub** (placeholder redirect URL). Webhook is **outside** the tenant group (tenant derived from the order); signature header **`X-Paymob-Hmac`** (HMAC-SHA512), `throttle:120,1`.
 
 → [`api/commerce.md`](api/commerce.md)

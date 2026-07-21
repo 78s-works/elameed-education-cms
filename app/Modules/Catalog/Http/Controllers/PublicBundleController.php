@@ -30,6 +30,6 @@ class PublicBundleController
         // Route binding scopes to the tenant; hidden/scheduled packages 404 publicly.
         abort_unless($bundle->isPublished(), 404);
 
-        return new BundleResource($bundle->load('items.course', 'items.unit'));
+        return new BundleResource($bundle->load('items.course', 'items.unit', 'items.lesson'));
     }
 }

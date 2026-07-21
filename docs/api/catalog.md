@@ -11,9 +11,10 @@ content regardless of visibility.
 
 > **Buying a package** grants access to everything inside it. Purchase happens through the
 > [Commerce checkout](commerce.md#packages-bundles) (`item.type = bundle`); on payment, an enrollment
-> is granted for each course/unit in the package. A **course** item unlocks all its lessons + exams; a
-> **unit** item unlocks just that chapter's lessons. Access itself always lives in `enrollments` — the
-> single source of truth checked by playback, progress, and exams.
+> is granted for each item in the package. A **course** item unlocks all its lessons + exams; a **unit**
+> item unlocks that chapter's lessons; a **lesson** item (part of a course) unlocks just that one lesson.
+> Access itself always lives in `enrollments` — the single source of truth checked by playback,
+> progress, and exams. Enrolling in a whole course opens every lesson in it.
 
 ## Conventions (apply to every endpoint)
 
@@ -42,13 +43,13 @@ content regardless of visibility.
 | `Unit` | `units` | A section within a course (`course_id`), ordered by `sort_order`, with its own visibility. |
 | `Lesson` | `lessons` | A leaf under a unit (`unit_id` + inherited `course_id`). Has a video source — an uploaded `video_asset_id` and/or a `youtube_url`, selected by `active_video_source` — plus many attachments. Carries `duration_sec`, `max_views`, `is_free_preview`, `gating_rule`. |
 | `LessonAttachment` | *(stored as `media_assets`)* | Not a dedicated model — attachments are `MediaAsset` rows of type `pdf` / `file` / `link` linked by `lesson_id`. The lesson's single `hls_video` asset is **not** an attachment. |
-| `Bundle` | `bundles` | A **package**: a priced group of courses/units sold as one product. Binds by `uuid` (teacher) / `slug` (public). Soft-deletes. Holds pricing, visibility, and `access_days` (the window granted on purchase). |
-| `BundleItem` | `bundle_items` | One entry in a package — either a `course` (`course_id`) or a `unit` (`unit_id`), per `item_type`. Cascades away if the bundle or the referenced course/unit is deleted. |
+| `Bundle` | `bundles` | A **package**: a priced group of courses/units/lessons sold as one product. Binds by `uuid` (teacher) / `slug` (public). Soft-deletes. Holds pricing, visibility, and `access_days` (the window granted on purchase). |
+| `BundleItem` | `bundle_items` | One entry in a package — a `course` (`course_id`), a `unit` (`unit_id`), or a `lesson` (`lesson_id`), per `item_type`. Cascades away if the bundle or the referenced content is deleted. |
 
 **Hierarchy:** `Course` **hasMany** `Unit` **hasMany** `Lesson`. A lesson also stores `course_id`
 directly (copied from its unit on create) so it always agrees with its unit's course. A lesson
 **hasMany** attachments (MediaAsset, type != `hls_video`) and **belongsTo** one `videoAsset`.
-A `Bundle` **hasMany** `BundleItem`, each pointing at a `Course` or a `Unit`.
+A `Bundle` **hasMany** `BundleItem`, each pointing at a `Course`, a `Unit`, or a `Lesson`.
 
 ### Key enums
 
@@ -266,7 +267,8 @@ lessons, both ordered by `sort_order`):
     "purchase_enabled": true,
     "items": [
       { "type": "course", "sort_order": 0, "course": { "uuid": "…", "title": "Course A", "slug": "course-a" } },
-      { "type": "unit", "sort_order": 1, "unit": { "id": 12, "title": "Chapter B1", "course_id": 5 } }
+      { "type": "unit", "sort_order": 1, "unit": { "id": 12, "title": "Chapter B1", "course_id": 5 } },
+      { "type": "lesson", "sort_order": 2, "lesson": { "id": 88, "title": "Lesson 3", "unit_id": 13, "course_id": 5 } }
     ]
   }
 }
@@ -834,9 +836,9 @@ was an upload).
 
 ### Teacher · Packages
 
-Bundle **packages** of courses/units into one sellable product. A package's items are set inline in
-the create/update body as an `items` array (the whole set is re-synced on each write). Buying a
-package is handled by [Commerce](commerce.md#packages-bundles); this section is authoring only.
+Bundle **packages** of courses, units, and/or lessons into one sellable product. A package's items are
+set inline in the create/update body as an `items` array (the whole set is re-synced on each write).
+Buying a package is handled by [Commerce](commerce.md#packages-bundles); this section is authoring only.
 
 #### `GET /v1/teacher/bundles`
 **Purpose:** List all of the teacher's packages (any visibility), newest first, paginated (20/page).
@@ -871,7 +873,8 @@ Each item includes `items_count`.
   "thumbnail_url": "https://cdn.example.com/pkg-thumb.jpg",
   "items": [
     { "type": "course", "course": "9f1c…-course-uuid", "sort_order": 0 },
-    { "type": "unit", "unit": 12, "sort_order": 1 }
+    { "type": "unit", "unit": 12, "sort_order": 1 },
+    { "type": "lesson", "lesson": 88, "sort_order": 2 }
   ]
 }
 ```
@@ -889,15 +892,16 @@ Each item includes `items_count`.
 | `purchase_enabled` | boolean |
 | `cover_url` / `thumbnail_url` | nullable, url, max 2048 |
 | `items` | **required on create** (min 1), optional on update; array, max 100 |
-| `items[].type` | required, `course` or `unit` |
+| `items[].type` | required, `course`, `unit`, or `lesson` |
 | `items[].course` | required if `type=course`; a course **uuid in this tenant** |
 | `items[].unit` | required if `type=unit`; a unit **id in this tenant** |
+| `items[].lesson` | required if `type=lesson`; a lesson **id in this tenant** |
 | `items[].sort_order` | nullable, integer, min 0 |
 
 Note: `slug` is server-generated and **not** accepted in the body.
 
 **Response** `201 Created` — `BundleResource` (with `items`).
-**Errors:** `422` validation (e.g. a course/unit that isn't in this tenant, or no items on create).
+**Errors:** `422` validation (e.g. a course/unit/lesson that isn't in this tenant, or no items on create).
 
 ---
 

@@ -3,6 +3,7 @@
 namespace App\Modules\Reporting\Http\Controllers;
 
 use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Unit;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Engagement\Models\LessonProgress;
@@ -12,7 +13,8 @@ use Illuminate\Http\Request;
 /**
  * GET /me/courses (M10) — the student's purchased/available courses with a
  * progress summary. Scoped to the current tenant via BelongsToTenant. Includes
- * courses reached through a package's unit grant, not only whole-course buys.
+ * courses reached through a package's unit or lesson grant, not only whole-course
+ * buys.
  */
 class StudentCoursesController
 {
@@ -23,15 +25,20 @@ class StudentCoursesController
         $grants = Enrollment::query()
             ->where('user_id', $userId)
             ->grantsAccess()
-            ->get(['course_id', 'unit_id']);
+            ->get(['course_id', 'unit_id', 'lesson_id']);
 
-        // Whole-course grants + the parent courses of any unit (package) grants.
+        // Whole-course grants + parent courses of any unit/lesson (package) grants.
         $unitCourseIds = Unit::query()
             ->whereIn('id', $grants->pluck('unit_id')->filter()->unique())
             ->pluck('course_id');
 
+        $lessonCourseIds = Lesson::query()
+            ->whereIn('id', $grants->pluck('lesson_id')->filter()->unique())
+            ->pluck('course_id');
+
         $courseIds = $grants->pluck('course_id')->filter()
             ->merge($unitCourseIds)
+            ->merge($lessonCourseIds)
             ->unique();
 
         $courses = Course::query()->whereIn('id', $courseIds)->withCount('lessons')->get();

@@ -7,8 +7,9 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * One entry inside a {@see Bundle}: either a course or a unit. `item_type` says
- * which; the matching FK (course_id / unit_id) is set and the other is null.
+ * One entry inside a {@see Bundle}: a full course, a unit (chapter), or a single
+ * lesson (part of a course). `item_type` says which; the matching FK
+ * (course_id / unit_id / lesson_id) is set and the others are null.
  */
 class BundleItem extends Model
 {
@@ -18,11 +19,14 @@ class BundleItem extends Model
 
     public const TYPE_UNIT = 'unit';
 
+    public const TYPE_LESSON = 'lesson';
+
     protected $fillable = [
         'bundle_id',
         'item_type',
         'course_id',
         'unit_id',
+        'lesson_id',
         'sort_order',
     ];
 
@@ -43,5 +47,10 @@ class BundleItem extends Model
     public function unit(): BelongsTo
     {
         return $this->belongsTo(Unit::class);
+    }
+
+    public function lesson(): BelongsTo
+    {
+        return $this->belongsTo(Lesson::class);
     }
 }
