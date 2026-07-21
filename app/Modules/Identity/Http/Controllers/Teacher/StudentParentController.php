@@ -12,7 +12,6 @@ use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -60,24 +59,16 @@ class StudentParentController
             throw ValidationException::withMessages(['phone' => __('This parent is already linked to the student.')]);
         }
 
-        $temporaryPassword = null;
-
-        $parent = DB::transaction(function () use ($existing, $data, $tenantId, $student, &$temporaryPassword): User {
-            if ($existing !== null) {
-                $parent = $existing;
-            } else {
-                $temporaryPassword = $data['password'] ?? Str::password(10);
-                $parent = User::create([
-                    'name' => $data['name'],
-                    'phone' => $data['phone'],
-                    'email' => $data['email'] ?? null,
-                    'password' => $temporaryPassword,
-                    'phone_verified_at' => now(),
-                ]);
-                if (isset($data['password'])) {
-                    $temporaryPassword = null;
-                }
-            }
+        $parent = DB::transaction(function () use ($existing, $data, $tenantId, $student): User {
+            // Link an existing account by phone, or create a new parent with the
+            // password the teacher supplied (validation requires it when new).
+            $parent = $existing ?? User::create([
+                'name' => $data['name'],
+                'phone' => $data['phone'],
+                'email' => $data['email'] ?? null,
+                'password' => $data['password'],
+                'phone_verified_at' => now(),
+            ]);
 
             TenantUser::firstOrCreate(
                 ['tenant_id' => $tenantId, 'user_id' => $parent->id, 'role' => TenantUserRole::Parent->value],
@@ -100,7 +91,6 @@ class StudentParentController
             'name' => $parent->name,
             'phone' => $parent->phone,
             'relation' => $data['relation'] ?? null,
-            'temporary_password' => $temporaryPassword,
         ], fn ($v) => $v !== null)], 201);
     }
 

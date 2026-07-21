@@ -413,7 +413,7 @@ class EndpointSmokeTest extends TestCase
 
         // parents — link (creates parent membership) → exercise parent portal → clean up
         $this->hit('GET', "/api/v1/teacher/students/{$s->uuid}/parents", $t, [], $T, group: 'Parents');
-        $pRes = $this->hit('POST', "/api/v1/teacher/students/{$s->uuid}/parents", $t, ['name' => 'Parent One', 'phone' => '01066665555', 'relation' => 'father'], $T, ok: [200, 201], group: 'Parents');
+        $pRes = $this->hit('POST', "/api/v1/teacher/students/{$s->uuid}/parents", $t, ['name' => 'Parent One', 'phone' => '01066665555', 'relation' => 'father', 'password' => 'ParentPass1'], $T, ok: [200, 201], group: 'Parents');
         $parentUuid = $this->pick($pRes, 'data.uuid', 'data.parent.uuid');
         $parentUser = User::where('phone', '01066665555')->first();
         if ($parentUser) {

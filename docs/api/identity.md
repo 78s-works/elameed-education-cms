@@ -1295,7 +1295,7 @@ Manage the parents linked to one of the teacher's students (M13). Linking provis
 ---
 
 #### `POST /v1/teacher/students/{student:uuid}/parents`
-**Purpose:** Link a parent to the student. Reuses an existing user by phone if present; otherwise creates one with a temp password (returned once). Provisions a `parent` membership and the link.
+**Purpose:** Link a parent to the student. Reuses an existing user by phone if present; otherwise creates one with the **password the teacher supplies** (no random password is generated). Provisions a `parent` membership and the link.
 **Auth:** 🧑‍🏫 role:teacher
 **Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
 
@@ -1329,9 +1329,9 @@ Manage the parents linked to one of the teacher's students (M13). Linking provis
 | `phone` | required, string, max 20, regex `^[0-9+]{6,20}$` |
 | `email` | nullable, email, max 255 |
 | `relation` | nullable, `father` \| `mother` \| `guardian` |
-| `password` | nullable, string, min 8 (temp generated + returned once if omitted) |
+| `password` | **required** when creating a new parent (min 8); optional/ignored when the `phone` already belongs to a user (that account is just linked) |
 
-**Response** `201` (nulls stripped; `temporary_password` present only when generated)
+**Response** `201` (nulls stripped; no `temporary_password` is ever returned — the teacher already knows the password they set)
 ```json
 {
   "data": {
