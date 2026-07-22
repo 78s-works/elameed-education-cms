@@ -175,6 +175,8 @@ class EndpointSmokeTest extends TestCase
         $this->hit('PUT', '/api/v1/teacher/profile', $t, ['bio' => 'Smoke bio'], $T, group: 'Tenancy');
         $this->hit('GET', '/api/v1/teacher/access', $t, [], $T, group: 'Tenancy');
         $this->hit('PUT', '/api/v1/teacher/access', $t, ['login_enabled' => true, 'registration_enabled' => true], $T, group: 'Tenancy');
+        $this->hit('GET', '/api/v1/teacher/custom-landing', $t, [], $T, group: 'Tenancy');
+        $this->hit('PUT', '/api/v1/teacher/custom-landing', $t, ['custom_landing_enabled' => false], $T, group: 'Tenancy');
         $landing = $this->hit('GET', '/api/v1/teacher/landing', $t, [], $T, group: 'Tenancy');
         $sections = $this->pick($landing, 'data.sections') ?? [];
         $this->hit('PUT', '/api/v1/teacher/landing', $t, ['sections' => $sections], $T, ok: [200, 422], tolerant: true, group: 'Tenancy');

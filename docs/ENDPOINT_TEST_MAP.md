@@ -5,8 +5,10 @@ _Generated 2026-07-20. Full-surface live test of every `api/v1` route + a priori
 ## 1. How this was produced
 
 - **Route surface:** `php artisan route:list` → **153 registered `api/v1` routes** across 14 modules
-  (now **160** after the 2026-07-21 packages/bundles feature added 7 routes — 2 public `/bundles` +
-  5 teacher `/teacher/bundles`; all covered by `EndpointSmokeTest` and `PackageBundleTest`).
+  (now **162** after the 2026-07-21 packages/bundles feature added 7 routes — 2 public `/bundles` +
+  5 teacher `/teacher/bundles` — and the 2026-07-22 custom-landing switch added 2 teacher
+  `/teacher/custom-landing` routes; all covered by `EndpointSmokeTest`, `PackageBundleTest`, and
+  `TeacherCustomLandingTest`).
 - **Live exercise:** a new data-driven test, [`tests/Feature/EndpointSmokeTest.php`](../tests/Feature/EndpointSmokeTest.php), seeds the demo academies, builds the remaining fixtures **through the real API** (so create endpoints are exercised too), then hits **every** route with the correct actor (platform-admin / teacher / student / parent / guest), tenant header, and a valid payload — recording the real HTTP status of each call. Report is written to the scratchpad (`smoke-results.json` / `smoke-summary.txt`).
 - **Isolation:** runs on the `elameed_test` DB under `RefreshDatabase` — it never touches the live `elameed` data.
 - **Classification:** `PASS` (expected status) · `WARN` (unexpected non-5xx worth a look) · `WARN5xx` (5xx on a known-stub route) · `FAIL` (5xx / auth hole on a normal route — a real defect).
@@ -28,7 +30,7 @@ The API surface is **healthy**: every route is reachable, tenant-scoped, and ret
 
 | Module | Calls | PASS | Notes |
 |---|--:|--:|---|
-| Tenancy (`/tenant/*`, `/teacher/profile|landing|access`) | 9 | 9 | landing PUT + media upload OK |
+| Tenancy (`/tenant/*`, `/teacher/profile|landing|access|custom-landing`) | 11 | 11 | landing PUT + media upload OK; custom-landing toggle |
 | Auth / Identity (`/auth/*`, `/me`) | 8 | 8 | register→otp, login, forgot/reset, logout |
 | Catalog (courses, categories, units, lessons, attachments, **packages**) | 31 | 31 | full CRUD, public catalogue, reviews, package CRUD + public browse |
 | Media (playback, stream/segment/key, uploads, remote-videos, callbacks) | 20 | 18 | 2× **B2** stub 500 (source not transcoded) |

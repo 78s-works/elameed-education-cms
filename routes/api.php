@@ -49,6 +49,7 @@ use App\Modules\PlatformAdmin\Http\Controllers\AdminTenantController;
 use App\Modules\Reporting\Http\Controllers\AuditLogController;
 use App\Modules\Reporting\Http\Controllers\StudentCoursesController;
 use App\Modules\Reporting\Http\Controllers\TeacherReportsController;
+use App\Modules\Tenancy\Http\Controllers\TeacherCustomLandingController;
 use App\Modules\Tenancy\Http\Controllers\TeacherLandingController;
 use App\Modules\Tenancy\Http\Controllers\TeacherProfileController;
 use App\Modules\Tenancy\Http\Controllers\TenantAccessController;
@@ -223,6 +224,12 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             // this academy. Enforced at /auth/login + /auth/register (M11).
             Route::get('/teacher/access', [TenantAccessController::class, 'show']);
             Route::put('/teacher/access', [TenantAccessController::class, 'update']);
+
+            // Custom-landing switch (M02) — ON = SPA renders its own bundled
+            // custom/<slug>/ page; OFF (default) = the CMS landing sections.
+            // Mirrored in GET /tenant/context → data.landing.custom_enabled.
+            Route::get('/teacher/custom-landing', [TeacherCustomLandingController::class, 'show']);
+            Route::put('/teacher/custom-landing', [TeacherCustomLandingController::class, 'update']);
 
             // Teacher subscription (M03) — read-only view of the tenant's plan,
             // limits, and usage. The plan is managed by the platform admin.

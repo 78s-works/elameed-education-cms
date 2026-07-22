@@ -1,6 +1,6 @@
 # Tenancy Module
 
-> The Tenancy module is the platform's multi-tenant backbone. It maps an incoming **Host** (custom domain or `*.elameed.app` subdomain) to a tenant academy, binds that tenant for the rest of the request (RLS/`BelongsToTenant` scoping), and exposes the tenant's public identity, branding/theme, and teacher-authored landing page to the SPA. It also owns the teacher-facing endpoints for editing branding (profile) and the landing page (layout + typed sections), plus a media upload helper for landing images. Landing content follows the **LANDING_CONTRACT_V2** contract: a fixed catalog of typed sections where two types (`courses`, `testimonials`) are resolved server-side into real items.
+> The Tenancy module is the platform's multi-tenant backbone. It maps an incoming **Host** (custom domain or `*.elameed.app` subdomain) to a tenant academy, binds that tenant for the rest of the request (RLS/`BelongsToTenant` scoping), and exposes the tenant's public identity, branding/theme, and teacher-authored landing page to the SPA. It also owns the teacher-facing endpoints for editing branding (profile) and the landing page (layout + typed sections), a media upload helper for landing images, and per-academy switches for access (sign-in/registration) and **landing mode** (CMS sections vs. a frontend-bundled custom page). Landing content follows the **LANDING_CONTRACT_V2** contract: a fixed catalog of typed sections where two types (`courses`, `testimonials`) are resolved server-side into real items.
 >
 > **Per-section layout:** on top of the page-level `layout` (overall theme: `classic|grid|spotlight`), **every section carries its own `variant`** — one of **4 layouts defined per section type** (`LandingSchema::VARIANTS`). The teacher picks a section's variant from the editor, independently per section, so e.g. the `courses` section can render as a `carousel` while `testimonials` render as a `slider`. Variants are validated **per type** (a `courses` variant can't be set on a `hero`), and any section stored without a variant resolves to that type's default (the first variant listed).
 >
@@ -10,7 +10,7 @@
 
 - **`Tenant`** — A teacher academy; the **global** tenant-registry row (NOT tenant-scoped, no `BelongsToTenant`/RLS). Has `uuid`, `slug`, `name`, `status` (enum), soft-deletes, and relations to `domains`, `teacherProfile`, and `owner`.
 - **`TenantDomain`** — Host → tenant mapping row. **Global** (read during resolution, before any tenant scope exists). Holds `host`, `type` (subdomain|custom), `is_primary`, and Cloudflare-for-SaaS SSL fields.
-- **`TeacherProfile`** — Per-tenant branding + landing configuration; one row per tenant and the **first** tenant-scoped model (`BelongsToTenant` filters every query and auto-fills `tenant_id`). Stores `logo_url`, `cover_url`, `primary_color`, `secondary_color`, `bio`, `contact` (json), `socials` (json), `layout`, `landing_sections` (json, per-locale content), `locales` (json list of enabled languages), `primary_locale` (string), `hide_ranking`, and the access switches `login_enabled` / `registration_enabled` (both default `true`; see `GET/PUT /teacher/access`).
+- **`TeacherProfile`** — Per-tenant branding + landing configuration; one row per tenant and the **first** tenant-scoped model (`BelongsToTenant` filters every query and auto-fills `tenant_id`). Stores `logo_url`, `cover_url`, `primary_color`, `secondary_color`, `bio`, `contact` (json), `socials` (json), `layout`, `landing_sections` (json, per-locale content), `locales` (json list of enabled languages), `primary_locale` (string), `hide_ranking`, the access switches `login_enabled` / `registration_enabled` (both default `true`; see `GET/PUT /teacher/access`), and `custom_landing_enabled` (default `false`; the landing-mode switch — see `GET/PUT /teacher/custom-landing`).
 
 ## Enums
 
@@ -116,12 +116,15 @@ The teacher may add, remove, reorder, and **duplicate** sections — restricted 
       "login_enabled": true,
       "registration_enabled": true
     },
+    "landing": {
+      "custom_enabled": false
+    },
     "features": []
   }
 }
 ```
 
-Notes: `branding` fields are `null` until the teacher sets them; `socials` is an empty object `{}` when unset. `status` is one of `active`, `suspended`, `under_review`, `expired`. `features` is currently always `[]` (per-tenant flags TODO). `locale.default` is the tenant's `primary_locale` and `locale.supported` is its **enabled** languages (primary first); a tenant that has enabled none falls back to `[<default_locale>]` (e.g. `["ar"]`), not the full platform set. `auth` mirrors the teacher's per-academy access switches (`PUT /teacher/access`): the SPA hides the sign-in / sign-up forms when a flag is `false`, and the API enforces the same at `POST /auth/login` and `POST /auth/register`. Both default to `true`.
+Notes: `branding` fields are `null` until the teacher sets them; `socials` is an empty object `{}` when unset. `status` is one of `active`, `suspended`, `under_review`, `expired`. `features` is currently always `[]` (per-tenant flags TODO). `locale.default` is the tenant's `primary_locale` and `locale.supported` is its **enabled** languages (primary first); a tenant that has enabled none falls back to `[<default_locale>]` (e.g. `["ar"]`), not the full platform set. `auth` mirrors the teacher's per-academy access switches (`PUT /teacher/access`): the SPA hides the sign-in / sign-up forms when a flag is `false`, and the API enforces the same at `POST /auth/login` and `POST /auth/register`. Both default to `true`. `landing.custom_enabled` is the landing-mode switch (`PUT /teacher/custom-landing`, default `false`): when `true` the SPA renders **its own bundled `custom/<slug>/` page** (the folder keyed by this tenant's `data.slug`) instead of fetching `GET /tenant/landing`; when `false` it loads the CMS-built landing sections as usual.
 
 **Caching:** the response carries an `ETag` (derived from the tenant's identity/status + branding version) and `Cache-Control: public, max-age=<context_cache_ttl>` (default 60s). A conditional request whose `If-None-Match` equals the current `ETag` gets a bodyless **`304 Not Modified`**. `Vary: X-Tenant` guards a shared cache against the dev `X-Tenant` override.
 
@@ -432,6 +435,44 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 - `401` / `403` — not authenticated / not a teacher of this academy.
 
 > **Effect on auth (M11).** With `login_enabled=false`, `POST /auth/login` returns `403 forbidden` for everyone except the teacher (assistants/students/parents) after their credentials verify — only the teacher still gets a token. With `registration_enabled=false`, `POST /auth/register` returns `403 forbidden` and creates nothing. An OTP already issued to a mid-flight registration can still complete — closing registration only stops **new** sign-ups from starting.
+
+---
+
+### `GET /teacher/custom-landing`
+
+**Purpose:** Read the academy's **landing-mode** switch — whether the SPA renders its own bundled custom page or the CMS-built landing sections. Stored on the tenant's `teacher_profiles` row; defaults to `false` (CMS sections).
+
+**Auth:** 🔒 `role:teacher`
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+
+**Response 200**
+
+```json
+{ "data": { "custom_landing_enabled": false } }
+```
+
+---
+
+### `PUT /teacher/custom-landing`
+
+**Purpose:** Turn the custom landing on or off for the academy. When **on**, the SPA renders its own bundled `custom/<slug>/` page (the folder keyed by the tenant's `slug`, from `GET /tenant/context` → `data.slug`) and does **not** call `GET /tenant/landing`; when **off** (the default), it loads the CMS-built landing sections as usual. The flag is mirrored in `GET /tenant/context` → `data.landing.custom_enabled` so the SPA can pick the mode on boot. Always responds `200`.
+
+> **Backend vs. frontend split.** The custom page itself lives in the **frontend** bundle (`custom/<slug>/`); the backend does not store or serve its markup. This endpoint only persists the boolean and surfaces it (with the tenant `slug`) — turning it on for a slug that has no bundled page is a frontend concern, not a backend error.
+
+**Auth:** 🔒 `role:teacher`
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+
+**Request body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `custom_landing_enabled` | boolean | **yes** | `true` = render the bundled `custom/<slug>/` page; `false` = render the CMS landing sections. |
+
+**Response 200:** Same shape as `GET /teacher/custom-landing`.
+
+**Errors:**
+- `422` — `custom_landing_enabled` missing or non-boolean (`error.code: validation_error`).
+- `401` / `403` — not authenticated / not a teacher of this academy.
 
 ---
 

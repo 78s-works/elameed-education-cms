@@ -48,6 +48,12 @@ class TenantContextResource extends JsonResource
                 'login_enabled' => (bool) ($profile?->login_enabled ?? true),
                 'registration_enabled' => (bool) ($profile?->registration_enabled ?? true),
             ],
+            'landing' => [
+                // Landing mode (teacher-controlled via PUT /teacher/custom-landing).
+                // true  → the SPA renders its own bundled `custom/<slug>/` page;
+                // false → it loads the CMS sections from GET /tenant/landing.
+                'custom_enabled' => (bool) ($profile?->custom_landing_enabled ?? false),
+            ],
             'features' => [],            // TODO: per-tenant enabled feature flags
         ];
     }
