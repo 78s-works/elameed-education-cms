@@ -61,6 +61,12 @@ class Tenant extends Model
         return $this->hasOne(TeacherProfile::class);
     }
 
+    /** The tenant's key/value site metadata entries (see TeacherMeta). */
+    public function metaEntries(): HasMany
+    {
+        return $this->hasMany(TeacherMeta::class, 'tenant_id');
+    }
+
     public function owner(): BelongsTo
     {
         return $this->belongsTo(User::class, 'owner_user_id');

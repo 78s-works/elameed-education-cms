@@ -1,6 +1,6 @@
 # Tenancy Module
 
-> The Tenancy module is the platform's multi-tenant backbone. It maps an incoming **Host** (custom domain or `*.elameed.app` subdomain) to a tenant academy, binds that tenant for the rest of the request (RLS/`BelongsToTenant` scoping), and exposes the tenant's public identity, branding/theme, and teacher-authored landing page to the SPA. It also owns the teacher-facing endpoints for editing branding (profile) and the landing page (layout + typed sections), a media upload helper for landing images, per-academy switches for access (sign-in/registration) and **landing mode** (CMS sections vs. a frontend-bundled custom page), and a per-academy **site metadata** store (arbitrary key/value entries, namespaced by `group`) managed via `/teacher/meta`. Landing content follows the **LANDING_CONTRACT_V2** contract: a fixed catalog of typed sections where two types (`courses`, `testimonials`) are resolved server-side into real items.
+> The Tenancy module is the platform's multi-tenant backbone. It maps an incoming **Host** (custom domain or `*.elameed.app` subdomain) to a tenant academy, binds that tenant for the rest of the request (RLS/`BelongsToTenant` scoping), and exposes the tenant's public identity, branding/theme, and teacher-authored landing page to the SPA. It also owns the teacher-facing endpoints for editing branding (profile) and the landing page (layout + typed sections), a media upload helper for landing images, per-academy switches for access (sign-in/registration) and **landing mode** (CMS sections vs. a frontend-bundled custom page), and a per-academy **site metadata** store (arbitrary key/value entries, namespaced by `group`) managed via `/teacher/meta` and surfaced to the public landing (branding + meta bundle) via `GET /tenant/landing/meta`. Landing content follows the **LANDING_CONTRACT_V2** contract: a fixed catalog of typed sections where two types (`courses`, `testimonials`) are resolved server-side into real items.
 >
 > **Per-section layout:** on top of the page-level `layout` (overall theme: `classic|grid|spotlight`), **every section carries its own `variant`** — one of **4 layouts defined per section type** (`LandingSchema::VARIANTS`). The teacher picks a section's variant from the editor, independently per section, so e.g. the `courses` section can render as a `carousel` while `testimonials` render as a `slider`. Variants are validated **per type** (a `courses` variant can't be set on a `hero`), and any section stored without a variant resolves to that type's default (the first variant listed).
 >
@@ -276,6 +276,72 @@ Notes:
 
 **Errors:**
 - `404` / `403` — same host-gate errors as `GET /tenant/context` (`EnsureRegisteredDomain`). A required-but-missing tenant surfaces as a server error (`tenantOrFail`).
+- `429 too_many_requests` — per-IP rate limit exceeded (`throttle:public`).
+
+---
+
+### `GET /tenant/landing/meta`
+
+**Purpose:** Return everything the SPA needs to paint the landing's `<head>` and branding shell in **one** public call: the tenant's identity (`site`), `branding`/theme, and the teacher-managed key/value **site metadata** (`meta`, e.g. SEO/OG tags) grouped by `group`. This is the only public surface for the `teacher_meta` store — `GET /teacher/meta` is the teacher-only editor CRUD. Content sections are served separately by `GET /tenant/landing`; identity/auth/feature flags by `GET /tenant/context`.
+
+**Auth:** 🔓 Public (tenant middleware only)
+**Middleware:** `tenant`, `throttle:public` (per-IP rate limit — see conventions)
+
+**Request headers**
+
+| Header | Required | Example |
+|---|---|---|
+| Host | yes | `mrkhaled.elameed.app` |
+| X-Tenant | optional (dev override only) | `mrkhaled` |
+| If-None-Match | optional (conditional GET → `304`) | `"9f2b…"` |
+| Accept | yes | `application/json` |
+
+**Path / Query params:** None
+
+**Request body:** None
+
+**Response 200**
+
+```json
+{
+  "data": {
+    "site": { "slug": "mrkhaled", "name": "أكاديمية مستر خالد" },
+    "branding": {
+      "logo_url": "https://cdn.elameed.app/landing/12/logo.png",
+      "favicon_url": "https://cdn.elameed.app/landing/12/favicon.ico",
+      "cover_url": "https://cdn.elameed.app/landing/12/cover.jpg",
+      "primary_color": "#1E88E5",
+      "secondary_color": "#FFB300",
+      "bio": "مدرّس فيزياء بخبرة 10 سنوات.",
+      "socials": { "facebook": "https://facebook.com/mrkhaled" }
+    },
+    "meta": {
+      "seo": [
+        { "key": "description", "value": "أفضل شرح فيزياء." },
+        { "key": "keywords", "value": "فيزياء, ثانوية عامة" }
+      ],
+      "og": [
+        { "key": "og:image", "value": "https://cdn.elameed.app/landing/12/og.jpg" }
+      ]
+    }
+  }
+}
+```
+
+Notes: `meta` is an object keyed by the entry's `group` (`seo`, `og`, `general`, …); each group's array is ordered by `sort_order` then `key`. `meta` serializes as an empty object `{}` when the teacher has none. `branding` fields are `null` until set and `socials` is `{}` when unset (same as `GET /tenant/context`). **Not** included here (by design): the teacher-only `contact` details (PII — see `GET /teacher/profile`), the `auth`/`features`/`status` flags, and `locale` (those live in `GET /tenant/context`).
+
+**Caching:** carries an `ETag` + `Cache-Control: public, max-age=<context_cache_ttl>` (default 60s) exactly like `GET /tenant/context`. The `ETag` folds in **both** the branding version (`teacher_profiles.updated_at`) **and** the metadata version (entry count + latest `updated_at`), so any branding or meta change — including a **delete** — mints a new `ETag`. A conditional request whose `If-None-Match` matches gets a bodyless **`304 Not Modified`**. `Vary: X-Tenant` guards a shared cache against the dev override.
+
+| Response header | Example |
+|---|---|
+| ETag | `"9f2b…"` |
+| Cache-Control | `public, max-age=60` |
+| Vary | `X-Tenant` |
+
+**Errors:**
+- `304` — `If-None-Match` matched; no body.
+- `404 tenant_not_found` — the host resolved to no tenant.
+- `404` / `403` — unregistered / non-active host (thrown earlier by `EnsureRegisteredDomain`).
 - `429 too_many_requests` — per-IP rate limit exceeded (`throttle:public`).
 
 ---

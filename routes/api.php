@@ -56,6 +56,7 @@ use App\Modules\Tenancy\Http\Controllers\TeacherProfileController;
 use App\Modules\Tenancy\Http\Controllers\TenantAccessController;
 use App\Modules\Tenancy\Http\Controllers\TenantContextController;
 use App\Modules\Tenancy\Http\Controllers\TenantLandingController;
+use App\Modules\Tenancy\Http\Controllers\TenantLandingMetaController;
 use App\Modules\Wallet\Http\Controllers\WalletController;
 use Illuminate\Support\Facades\Route;
 
@@ -141,6 +142,8 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
     Route::get('/tenant/context', TenantContextController::class)->middleware('throttle:public');
     // Public landing page (resolved: layout + nav + sections). Optional auth → `enrolled`.
     Route::get('/tenant/landing', TenantLandingController::class)->middleware('throttle:public');
+    // Public landing bundle: branding + teacher site metadata (SEO/OG) for the <head>.
+    Route::get('/tenant/landing/meta', TenantLandingMetaController::class)->middleware('throttle:public');
 
     // Public catalogue (M04) — published courses of the resolved tenant
     Route::get('/courses', [PublicCatalogController::class, 'index']);

@@ -58,7 +58,7 @@ Identity is **global** (one `User` can belong to many tenants); authorization is
 
 | # | Module | PRD ref | Endpoints | Purpose |
 |---|---|---|--:|---|
-| 1 | [Tenancy](#1-tenancy) | M01 | 16 | Host→tenant resolution, branding, public + teacher landing pages, academy access switches, site metadata |
+| 1 | [Tenancy](#1-tenancy) | M01 | 17 | Host→tenant resolution, branding, public + teacher landing pages, academy access switches, site metadata |
 | 2 | [Identity](#2-identity) | M02, M11, M13 | 28 | Auth/OTP, `/me`, parent portal, teacher student management |
 | 3 | [Catalog](#3-catalog) | M04 | 30 | Course → unit → lesson → attachment hierarchy + categories + packages (bundles) |
 | 4 | [Media](#4-media) | M04, M22 | 20 | Protected video: encrypted-HLS pipeline + remote OVH provider, watermarking |
@@ -72,7 +72,7 @@ Identity is **global** (one `User` can belong to many tenants); authorization is
 | 12 | [Platform Admin](#12-platform-admin) | M01, M17 | 6 | Cross-tenant operator console (tenants + overview + audit) |
 | 13 | [Billing](#13-billing) | M03 | 8 | Teacher subscription packages: admin plan CRUD + tenant assignment + teacher view |
 
-**Total: 153 documented endpoints.**
+**Total: 154 documented endpoints.**
 
 ---
 
@@ -87,7 +87,7 @@ teacher-authored landing page.
 - **Services/Support:** `TenantContext` (request-scoped tenant holder), `TenantResolver` (host/`X-Tenant` → tenant, cached), `LandingResolver`, `LandingSchema` (the `LANDING_CONTRACT_V2` catalog: 10 section types, 3 page layouts, and 4 per-type layout `variant`s per section). Middleware `EnsureRegisteredDomain` + `ResolveTenant` form the `tenant` group.
 - **Note:** the public `GET /tenant/landing` returns *resolved* sections (with `items` + an `enrolled` flag under optional auth); the teacher `GET /teacher/landing` returns the raw editable `config` — same row, two shapes. `PUT`s are upserts (forced `200`) and heavily sanitize input.
 - **Access switches:** `GET`/`PUT /teacher/access` let a teacher open/close **sign-in** and **self-registration** for their own academy (both default on). Enforced at `POST /auth/login` (when off, only the teacher can still sign in — assistants/students/parents are blocked) and `POST /auth/register` (M11), and surfaced in `GET /tenant/context` → `data.auth` so the SPA can hide the forms.
-- **Site metadata:** `TeacherMeta` (`teacher_meta` table) is a tenant-scoped key/value store the teacher manages via full CRUD at `/teacher/meta` — arbitrary entries (`group`, `key`, `value`, `sort_order`) for SEO/OG tags or custom `<head>` data, unique per `(group, key)`. Separate from the `teacher_profiles` branding/landing row.
+- **Site metadata:** `TeacherMeta` (`teacher_meta` table) is a tenant-scoped key/value store the teacher manages via full CRUD at `/teacher/meta` — arbitrary entries (`group`, `key`, `value`, `sort_order`) for SEO/OG tags or custom `<head>` data, unique per `(group, key)`. Separate from the `teacher_profiles` branding/landing row. The public `GET /tenant/landing/meta` bundles branding + these entries (grouped) in one call for the landing page's `<head>` — ETag-cached like `/tenant/context`.
 
 → [`api/tenancy.md`](api/tenancy.md)
 

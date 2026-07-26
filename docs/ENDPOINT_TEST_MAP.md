@@ -5,11 +5,12 @@ _Generated 2026-07-20. Full-surface live test of every `api/v1` route + a priori
 ## 1. How this was produced
 
 - **Route surface:** `php artisan route:list` → **153 registered `api/v1` routes** across 14 modules
-  (now **167** after the 2026-07-21 packages/bundles feature added 7 routes — 2 public `/bundles` +
+  (now **168** after the 2026-07-21 packages/bundles feature added 7 routes — 2 public `/bundles` +
   5 teacher `/teacher/bundles` — the 2026-07-22 custom-landing switch added 2 teacher
   `/teacher/custom-landing` routes, and the 2026-07-26 site-metadata store added 5 teacher
-  `/teacher/meta` routes; all covered by `EndpointSmokeTest`, `PackageBundleTest`,
-  `TeacherCustomLandingTest`, and `TeacherMetaTest`).
+  `/teacher/meta` routes + 1 public `GET /tenant/landing/meta` bundle; all covered by
+  `EndpointSmokeTest`, `PackageBundleTest`, `TeacherCustomLandingTest`, `TeacherMetaTest`,
+  and `TenantLandingMetaTest`).
 - **Live exercise:** a new data-driven test, [`tests/Feature/EndpointSmokeTest.php`](../tests/Feature/EndpointSmokeTest.php), seeds the demo academies, builds the remaining fixtures **through the real API** (so create endpoints are exercised too), then hits **every** route with the correct actor (platform-admin / teacher / student / parent / guest), tenant header, and a valid payload — recording the real HTTP status of each call. Report is written to the scratchpad (`smoke-results.json` / `smoke-summary.txt`).
 - **Isolation:** runs on the `elameed_test` DB under `RefreshDatabase` — it never touches the live `elameed` data.
 - **Classification:** `PASS` (expected status) · `WARN` (unexpected non-5xx worth a look) · `WARN5xx` (5xx on a known-stub route) · `FAIL` (5xx / auth hole on a normal route — a real defect).
@@ -31,7 +32,7 @@ The API surface is **healthy**: every route is reachable, tenant-scoped, and ret
 
 | Module | Calls | PASS | Notes |
 |---|--:|--:|---|
-| Tenancy (`/tenant/*`, `/teacher/profile|landing|access|custom-landing|meta`) | 16 | 16 | landing PUT + media upload OK; custom-landing toggle; site-metadata CRUD (`TeacherMetaTest`) |
+| Tenancy (`/tenant/*` incl. `landing/meta`, `/teacher/profile|landing|access|custom-landing|meta`) | 17 | 17 | landing PUT + media upload OK; custom-landing toggle; site-metadata CRUD + public branding/meta bundle (`TeacherMetaTest`, `TenantLandingMetaTest`) |
 | Auth / Identity (`/auth/*`, `/me`) | 8 | 8 | register→otp, login, forgot/reset, logout |
 | Catalog (courses, categories, units, lessons, attachments, **packages**) | 31 | 31 | full CRUD, public catalogue, reviews, package CRUD + public browse |
 | Media (playback, stream/segment/key, uploads, remote-videos, callbacks) | 20 | 18 | 2× **B2** stub 500 (source not transcoded) |

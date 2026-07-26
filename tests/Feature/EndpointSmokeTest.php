@@ -171,6 +171,7 @@ class EndpointSmokeTest extends TestCase
         // ---------------------------------------------------------------
         $this->hit('GET', '/api/v1/tenant/context', null, [], $T, group: 'Tenancy');
         $this->hit('GET', '/api/v1/tenant/landing', null, [], $T, group: 'Tenancy');
+        $this->hit('GET', '/api/v1/tenant/landing/meta', null, [], $T, group: 'Tenancy');
         $this->hit('GET', '/api/v1/teacher/profile', $t, [], $T, group: 'Tenancy');
         $this->hit('PUT', '/api/v1/teacher/profile', $t, ['bio' => 'Smoke bio'], $T, group: 'Tenancy');
         $this->hit('GET', '/api/v1/teacher/access', $t, [], $T, group: 'Tenancy');
