@@ -28,6 +28,7 @@ class TenantContextResource extends JsonResource
             'status' => $this->status->value,
             'branding' => [
                 'logo_url' => $profile?->logo_url,
+                'favicon_url' => $profile?->favicon_url,
                 'cover_url' => $profile?->cover_url,
                 'primary_color' => $profile?->primary_color,
                 'secondary_color' => $profile?->secondary_color,

@@ -10,7 +10,7 @@
 
 - **`Tenant`** — A teacher academy; the **global** tenant-registry row (NOT tenant-scoped, no `BelongsToTenant`/RLS). Has `uuid`, `slug`, `name`, `status` (enum), soft-deletes, and relations to `domains`, `teacherProfile`, and `owner`.
 - **`TenantDomain`** — Host → tenant mapping row. **Global** (read during resolution, before any tenant scope exists). Holds `host`, `type` (subdomain|custom), `is_primary`, and Cloudflare-for-SaaS SSL fields.
-- **`TeacherProfile`** — Per-tenant branding + landing configuration; one row per tenant and the **first** tenant-scoped model (`BelongsToTenant` filters every query and auto-fills `tenant_id`). Stores `logo_url`, `cover_url`, `primary_color`, `secondary_color`, `bio`, `contact` (json), `socials` (json), `layout`, `landing_sections` (json, per-locale content), `locales` (json list of enabled languages), `primary_locale` (string), `hide_ranking`, the access switches `login_enabled` / `registration_enabled` (both default `true`; see `GET/PUT /teacher/access`), and `custom_landing_enabled` (default `false`; the landing-mode switch — see `GET/PUT /teacher/custom-landing`).
+- **`TeacherProfile`** — Per-tenant branding + landing configuration; one row per tenant and the **first** tenant-scoped model (`BelongsToTenant` filters every query and auto-fills `tenant_id`). Stores `logo_url`, `favicon_url` (browser-tab icon), `cover_url`, `primary_color`, `secondary_color`, `bio`, `contact` (json), `socials` (json), `layout`, `landing_sections` (json, per-locale content), `locales` (json list of enabled languages), `primary_locale` (string), `hide_ranking`, the access switches `login_enabled` / `registration_enabled` (both default `true`; see `GET/PUT /teacher/access`), and `custom_landing_enabled` (default `false`; the landing-mode switch — see `GET/PUT /teacher/custom-landing`).
 
 ## Enums
 
@@ -99,6 +99,7 @@ The teacher may add, remove, reorder, and **duplicate** sections — restricted 
     "status": "active",
     "branding": {
       "logo_url": "https://cdn.elameed.app/landing/12/logo.png",
+      "favicon_url": "https://cdn.elameed.app/landing/12/favicon.ico",
       "cover_url": "https://cdn.elameed.app/landing/12/cover.jpg",
       "primary_color": "#1E88E5",
       "secondary_color": "#FFB300",
@@ -124,7 +125,7 @@ The teacher may add, remove, reorder, and **duplicate** sections — restricted 
 }
 ```
 
-Notes: `branding` fields are `null` until the teacher sets them; `socials` is an empty object `{}` when unset. `status` is one of `active`, `suspended`, `under_review`, `expired`. `features` is currently always `[]` (per-tenant flags TODO). `locale.default` is the tenant's `primary_locale` and `locale.supported` is its **enabled** languages (primary first); a tenant that has enabled none falls back to `[<default_locale>]` (e.g. `["ar"]`), not the full platform set. `auth` mirrors the teacher's per-academy access switches (`PUT /teacher/access`): the SPA hides the sign-in / sign-up forms when a flag is `false`, and the API enforces the same at `POST /auth/login` and `POST /auth/register`. Both default to `true`. `landing.custom_enabled` is the landing-mode switch (`PUT /teacher/custom-landing`, default `false`): when `true` the SPA renders **its own bundled `custom/<slug>/` page** (the folder keyed by this tenant's `data.slug`) instead of fetching `GET /tenant/landing`; when `false` it loads the CMS-built landing sections as usual.
+Notes: `branding` fields are `null` until the teacher sets them; `socials` is an empty object `{}` when unset. `branding.favicon_url` is the academy's browser-tab icon — the SPA sets it as `<link rel="icon">` on boot (falling back to the platform default when `null`). `status` is one of `active`, `suspended`, `under_review`, `expired`. `features` is currently always `[]` (per-tenant flags TODO). `locale.default` is the tenant's `primary_locale` and `locale.supported` is its **enabled** languages (primary first); a tenant that has enabled none falls back to `[<default_locale>]` (e.g. `["ar"]`), not the full platform set. `auth` mirrors the teacher's per-academy access switches (`PUT /teacher/access`): the SPA hides the sign-in / sign-up forms when a flag is `false`, and the API enforces the same at `POST /auth/login` and `POST /auth/register`. Both default to `true`. `landing.custom_enabled` is the landing-mode switch (`PUT /teacher/custom-landing`, default `false`): when `true` the SPA renders **its own bundled `custom/<slug>/` page** (the folder keyed by this tenant's `data.slug`) instead of fetching `GET /tenant/landing`; when `false` it loads the CMS-built landing sections as usual.
 
 **Caching:** the response carries an `ETag` (derived from the tenant's identity/status + branding version) and `Cache-Control: public, max-age=<context_cache_ttl>` (default 60s). A conditional request whose `If-None-Match` equals the current `ETag` gets a bodyless **`304 Not Modified`**. `Vary: X-Tenant` guards a shared cache against the dev `X-Tenant` override.
 
@@ -304,6 +305,7 @@ Notes:
 {
   "data": {
     "logo_url": "https://cdn.elameed.app/landing/12/logo.png",
+    "favicon_url": "https://cdn.elameed.app/landing/12/favicon.ico",
     "cover_url": "https://cdn.elameed.app/landing/12/cover.jpg",
     "primary_color": "#1E88E5",
     "secondary_color": "#FFB300",
@@ -356,6 +358,7 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 ```json
 {
   "logo_url": "https://cdn.example.com/logo.png",
+  "favicon_url": "https://cdn.example.com/favicon.ico",
   "cover_url": "https://cdn.example.com/cover.jpg",
   "primary_color": "#1E88E5",
   "secondary_color": "#FFB300",
@@ -376,6 +379,7 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 | Field | Type | Required | Rules |
 |---|---|---|---|
 | `logo_url` | string | no | nullable, valid URL, max 2048 |
+| `favicon_url` | string | no | nullable, valid URL, max 2048 (browser-tab icon) |
 | `cover_url` | string | no | nullable, valid URL, max 2048 |
 | `primary_color` | string | no | nullable, hex color `#RRGGBB` or `#RRGGBBAA` |
 | `secondary_color` | string | no | nullable, hex color `#RRGGBB` or `#RRGGBBAA` |

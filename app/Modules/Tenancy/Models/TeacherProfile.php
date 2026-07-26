@@ -30,6 +30,7 @@ class TeacherProfile extends Model
 
     protected $fillable = [
         'logo_url',
+        'favicon_url',
         'cover_url',
         'primary_color',
         'secondary_color',

@@ -17,6 +17,7 @@ class UpdateTeacherProfileRequest extends FormRequest
 
         return [
             'logo_url' => ['nullable', 'url', 'max:2048'],
+            'favicon_url' => ['nullable', 'url', 'max:2048'],
             'cover_url' => ['nullable', 'url', 'max:2048'],
             'primary_color' => ['nullable', 'string', $hex],
             'secondary_color' => ['nullable', 'string', $hex],

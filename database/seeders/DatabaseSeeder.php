@@ -667,6 +667,7 @@ class DatabaseSeeder extends Seeder
     {
         TeacherProfile::create([
             'logo_url' => 'https://cdn.elameed.app/'.$config['slug'].'/logo.png',
+            'favicon_url' => 'https://cdn.elameed.app/'.$config['slug'].'/favicon.ico',
             'cover_url' => 'https://cdn.elameed.app/'.$config['slug'].'/cover.jpg',
             'primary_color' => $config['primary_color'],
             'secondary_color' => $config['secondary_color'],

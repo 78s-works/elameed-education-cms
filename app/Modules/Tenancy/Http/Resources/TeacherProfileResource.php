@@ -15,6 +15,7 @@ class TeacherProfileResource extends JsonResource
     {
         return [
             'logo_url' => $this->logo_url,
+            'favicon_url' => $this->favicon_url,
             'cover_url' => $this->cover_url,
             'primary_color' => $this->primary_color,
             'secondary_color' => $this->secondary_color,

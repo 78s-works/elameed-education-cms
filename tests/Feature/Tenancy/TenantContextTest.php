@@ -3,6 +3,7 @@
 namespace Tests\Feature\Tenancy;
 
 use App\Modules\Tenancy\Enums\TenantStatus;
+use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
@@ -40,6 +41,19 @@ class TenantContextTest extends TestCase
         $response = $this->getJson('http://ahmed.elameed.app/api/v1/tenant/context');
 
         $response->assertOk()->assertJsonPath('data.slug', 'ahmed');
+    }
+
+    public function test_context_exposes_branding_favicon(): void
+    {
+        $tenant = Tenant::create(['slug' => 'demo', 'name' => 'Demo Academy', 'status' => TenantStatus::Active]);
+
+        $profile = new TeacherProfile(['favicon_url' => 'https://cdn.example.com/favicon.ico']);
+        $profile->tenant_id = $tenant->id; // no request context in tests
+        $profile->save();
+
+        $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/tenant/context')
+            ->assertOk()
+            ->assertJsonPath('data.branding.favicon_url', 'https://cdn.example.com/favicon.ico');
     }
 
     public function test_unknown_tenant_returns_404_error_envelope(): void

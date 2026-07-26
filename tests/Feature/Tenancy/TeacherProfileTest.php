@@ -64,13 +64,17 @@ class TeacherProfileTest extends TestCase
         $this->withHeader('X-Tenant', 'demo')->putJson('/api/v1/teacher/profile', [
             'primary_color' => '#1D4ED8',
             'logo_url' => 'https://cdn.example.com/logo.png',
+            'favicon_url' => 'https://cdn.example.com/favicon.ico',
             'contact' => ['phone' => '01000000000'],
-        ])->assertOk()->assertJsonPath('data.primary_color', '#1D4ED8');
+        ])->assertOk()
+            ->assertJsonPath('data.primary_color', '#1D4ED8')
+            ->assertJsonPath('data.favicon_url', 'https://cdn.example.com/favicon.ico');
 
         $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/teacher/profile')
             ->assertOk()
             ->assertJsonPath('data.primary_color', '#1D4ED8')
-            ->assertJsonPath('data.logo_url', 'https://cdn.example.com/logo.png');
+            ->assertJsonPath('data.logo_url', 'https://cdn.example.com/logo.png')
+            ->assertJsonPath('data.favicon_url', 'https://cdn.example.com/favicon.ico');
     }
 
     public function test_invalid_color_is_rejected(): void
