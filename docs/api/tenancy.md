@@ -1,6 +1,6 @@
 # Tenancy Module
 
-> The Tenancy module is the platform's multi-tenant backbone. It maps an incoming **Host** (custom domain or `*.elameed.app` subdomain) to a tenant academy, binds that tenant for the rest of the request (RLS/`BelongsToTenant` scoping), and exposes the tenant's public identity, branding/theme, and teacher-authored landing page to the SPA. It also owns the teacher-facing endpoints for editing branding (profile) and the landing page (layout + typed sections), a media upload helper for landing images, and per-academy switches for access (sign-in/registration) and **landing mode** (CMS sections vs. a frontend-bundled custom page). Landing content follows the **LANDING_CONTRACT_V2** contract: a fixed catalog of typed sections where two types (`courses`, `testimonials`) are resolved server-side into real items.
+> The Tenancy module is the platform's multi-tenant backbone. It maps an incoming **Host** (custom domain or `*.elameed.app` subdomain) to a tenant academy, binds that tenant for the rest of the request (RLS/`BelongsToTenant` scoping), and exposes the tenant's public identity, branding/theme, and teacher-authored landing page to the SPA. It also owns the teacher-facing endpoints for editing branding (profile) and the landing page (layout + typed sections), a media upload helper for landing images, per-academy switches for access (sign-in/registration) and **landing mode** (CMS sections vs. a frontend-bundled custom page), and a per-academy **site metadata** store (arbitrary key/value entries, namespaced by `group`) managed via `/teacher/meta`. Landing content follows the **LANDING_CONTRACT_V2** contract: a fixed catalog of typed sections where two types (`courses`, `testimonials`) are resolved server-side into real items.
 >
 > **Per-section layout:** on top of the page-level `layout` (overall theme: `classic|grid|spotlight`), **every section carries its own `variant`** — one of **4 layouts defined per section type** (`LandingSchema::VARIANTS`). The teacher picks a section's variant from the editor, independently per section, so e.g. the `courses` section can render as a `carousel` while `testimonials` render as a `slider`. Variants are validated **per type** (a `courses` variant can't be set on a `hero`), and any section stored without a variant resolves to that type's default (the first variant listed).
 >
@@ -11,6 +11,7 @@
 - **`Tenant`** — A teacher academy; the **global** tenant-registry row (NOT tenant-scoped, no `BelongsToTenant`/RLS). Has `uuid`, `slug`, `name`, `status` (enum), soft-deletes, and relations to `domains`, `teacherProfile`, and `owner`.
 - **`TenantDomain`** — Host → tenant mapping row. **Global** (read during resolution, before any tenant scope exists). Holds `host`, `type` (subdomain|custom), `is_primary`, and Cloudflare-for-SaaS SSL fields.
 - **`TeacherProfile`** — Per-tenant branding + landing configuration; one row per tenant and the **first** tenant-scoped model (`BelongsToTenant` filters every query and auto-fills `tenant_id`). Stores `logo_url`, `favicon_url` (browser-tab icon), `cover_url`, `primary_color`, `secondary_color`, `bio`, `contact` (json), `socials` (json), `layout`, `landing_sections` (json, per-locale content), `locales` (json list of enabled languages), `primary_locale` (string), `hide_ranking`, the access switches `login_enabled` / `registration_enabled` (both default `true`; see `GET/PUT /teacher/access`), and `custom_landing_enabled` (default `false`; the landing-mode switch — see `GET/PUT /teacher/custom-landing`).
+- **`TeacherMeta`** — A single key/value metadata entry the teacher manages from the panel (SEO tags, custom head data, …); **many rows per tenant** in the `teacher_meta` table, tenant-scoped by `BelongsToTenant`. Columns: `group` (namespace, default `general`), `key`, `value` (nullable text), `sort_order` (default `0`). Unique per `(tenant_id, group, key)` — no duplicate key within a group. Powers the `/teacher/meta` CRUD endpoints; unrelated to the `teacher_profiles` row.
 
 ## Enums
 
@@ -719,6 +720,82 @@ Cross-field validation: `primary_locale` (when both are sent) must be one of `lo
 **Errors:**
 - `422` — missing file, non-raster/unsupported MIME type (incl. SVG), or over 5 MB.
 - `401` / `403` — as above.
+
+---
+
+### Site metadata (`/teacher/meta`)
+
+Teacher-managed **key/value metadata** for the academy, stored in the tenant-scoped `teacher_meta` table — one row per `(group, key)`. Each entry has a `group` (a free namespace, e.g. `seo`, `og`, `general`; defaults to `general`), a `key`, an optional `value`, and a `sort_order`. This is a **separate** store from the `teacher_profiles` branding/landing config: use it for SEO meta tags, Open-Graph tags, custom `<head>` data, or any ad-hoc site metadata. The SPA decides how to render the entries (e.g. emit `<meta name="{key}" content="{value}">` for the `seo` group).
+
+All five routes are tenant-scoped and require `role:teacher`. `{meta}` binds by `id` through the `BelongsToTenant` global scope, so a teacher can only ever address their own rows — an id from another tenant resolves to **`404`**.
+
+**Common auth/middleware (all five):** 🔒 `auth:sanctum` + `active` + `role:teacher`; middleware `tenant`, `auth:sanctum`, `active`, `role:teacher`. Standard headers apply (`Host` + optional dev `X-Tenant`, `Authorization: Bearer …`, `Accept: application/json`; writes also send `Content-Type: application/json`).
+
+**Resource shape** (returned by every non-delete endpoint, wrapped in `{ "data": … }` / `{ "data": [ … ] }`):
+
+```json
+{ "id": 7, "group": "seo", "key": "description", "value": "Best physics academy", "sort_order": 1 }
+```
+
+#### `GET /teacher/meta`
+
+**Purpose:** List the academy's metadata entries, ordered by `group`, then `sort_order`, then `key`.
+
+**Query params**
+
+| Param | Type | Required | Notes |
+|---|---|---|---|
+| `group` | string | no | Filter to a single namespace (e.g. `?group=seo`). Omit to return all groups. |
+
+**Response 200:** `{ "data": [ <TeacherMetaResource>, … ] }` (empty array when none).
+
+**Errors:** `401` / `403` — not authenticated / not a teacher of this academy.
+
+#### `POST /teacher/meta`
+
+**Purpose:** Create a metadata entry.
+
+**Request body**
+
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `key` | string | **yes** | max 191; chars `A–Z a–z 0–9 _ . : -`; unique within `(group)` for this tenant |
+| `group` | string | no | max 64; chars `A–Z a–z 0–9 _ . -`; **defaults to `general`** when omitted/empty |
+| `value` | string | no | nullable; max 65535 |
+| `sort_order` | integer | no | nullable; min 0 (defaults to `0`) |
+
+**Response 201:** `{ "data": <TeacherMetaResource> }`.
+
+**Errors:**
+- `422` — validation failure (missing `key`, bad chars, or a duplicate `key` in the same `group` → `error.details.key`, message *"A meta entry with this key already exists in this group."*).
+- `401` / `403` — as above.
+
+#### `GET /teacher/meta/{meta}`
+
+**Purpose:** Fetch a single entry by id.
+
+**Response 200:** `{ "data": <TeacherMetaResource> }`.
+
+**Errors:** `404` — no such entry for this tenant. `401` / `403` — as above.
+
+#### `PUT /teacher/meta/{meta}`
+
+**Purpose:** Update an entry. Same body and rules as `POST` (the unique-`key` check ignores the row being edited, so re-saving with an unchanged `key` is fine).
+
+**Response 200:** `{ "data": <TeacherMetaResource> }`.
+
+**Errors:**
+- `422` — validation failure (incl. a `key` that collides with a **different** entry in the same group).
+- `404` — no such entry for this tenant.
+- `401` / `403` — as above.
+
+#### `DELETE /teacher/meta/{meta}`
+
+**Purpose:** Delete an entry.
+
+**Response 204:** No content.
+
+**Errors:** `404` — no such entry for this tenant. `401` / `403` — as above.
 
 ---
 

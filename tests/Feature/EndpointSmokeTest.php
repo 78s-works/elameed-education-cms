@@ -182,6 +182,14 @@ class EndpointSmokeTest extends TestCase
         $this->hit('PUT', '/api/v1/teacher/landing', $t, ['sections' => $sections], $T, ok: [200, 422], tolerant: true, group: 'Tenancy');
         $this->hit('POST', '/api/v1/teacher/landing/media', $t, ['image' => UploadedFile::fake()->image('l.jpg')], $T, ok: [200, 201, 422], tolerant: true, group: 'Tenancy');
 
+        // Site metadata (key/value) — full CRUD.
+        $meta = $this->hit('POST', '/api/v1/teacher/meta', $t, ['group' => 'seo', 'key' => 'description', 'value' => 'Smoke meta'], $T, group: 'Tenancy');
+        $metaId = $this->pick($meta, 'data.id');
+        $this->hit('GET', '/api/v1/teacher/meta', $t, [], $T, group: 'Tenancy');
+        $this->hit('GET', "/api/v1/teacher/meta/{$metaId}", $t, [], $T, group: 'Tenancy');
+        $this->hit('PUT', "/api/v1/teacher/meta/{$metaId}", $t, ['group' => 'seo', 'key' => 'description', 'value' => 'Smoke meta updated'], $T, group: 'Tenancy');
+        $this->hit('DELETE', "/api/v1/teacher/meta/{$metaId}", $t, [], $T, group: 'Tenancy');
+
         // ---------------------------------------------------------------
         // IDENTITY / AUTH (public)
         // ---------------------------------------------------------------

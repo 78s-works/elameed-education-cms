@@ -51,6 +51,7 @@ use App\Modules\Reporting\Http\Controllers\StudentCoursesController;
 use App\Modules\Reporting\Http\Controllers\TeacherReportsController;
 use App\Modules\Tenancy\Http\Controllers\TeacherCustomLandingController;
 use App\Modules\Tenancy\Http\Controllers\TeacherLandingController;
+use App\Modules\Tenancy\Http\Controllers\TeacherMetaController;
 use App\Modules\Tenancy\Http\Controllers\TeacherProfileController;
 use App\Modules\Tenancy\Http\Controllers\TenantAccessController;
 use App\Modules\Tenancy\Http\Controllers\TenantContextController;
@@ -240,6 +241,15 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::get('/teacher/landing', [TeacherLandingController::class, 'show']);
             Route::put('/teacher/landing', [TeacherLandingController::class, 'update']);
             Route::post('/teacher/landing/media', [TeacherLandingController::class, 'media']);
+
+            // Site metadata (M02) — teacher-managed key/value entries (SEO tags,
+            // custom head data, …), namespaced by `group`. Separate from the
+            // landing/profile config; bound by id and tenant-scoped.
+            Route::get('/teacher/meta', [TeacherMetaController::class, 'index']);
+            Route::post('/teacher/meta', [TeacherMetaController::class, 'store']);
+            Route::get('/teacher/meta/{meta}', [TeacherMetaController::class, 'show']);
+            Route::put('/teacher/meta/{meta}', [TeacherMetaController::class, 'update']);
+            Route::delete('/teacher/meta/{meta}', [TeacherMetaController::class, 'destroy']);
 
             // Reviews & landing testimonials (M20) — teacher-panel CRUD: moderate
             // student reviews (hide/show/edit/delete) + author curated testimonials.
