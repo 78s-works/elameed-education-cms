@@ -4,6 +4,7 @@ namespace App\Modules\Commerce\Services;
 
 use App\Modules\Catalog\Models\Bundle;
 use App\Modules\Catalog\Models\Course;
+use App\Modules\Commerce\Models\Coupon;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Commerce\Models\OrderItem;
 use App\Modules\Tenancy\Services\TenantContext;
@@ -12,20 +13,24 @@ use Illuminate\Validation\ValidationException;
 /**
  * Prices a cart server-side (never trusts client prices — 04_API_Spec §4) and
  * persists orders. Supports single-course purchase, package (bundle) purchase,
- * and wallet top-up. Coupons are P1.5.
+ * wallet top-up, and an optional coupon discount (M21) applied to the content
+ * subtotal.
  */
 class CheckoutService
 {
-    public function __construct(private readonly TenantContext $context) {}
+    public function __construct(
+        private readonly TenantContext $context,
+        private readonly CouponService $coupons,
+    ) {}
 
     /**
      * @param  array<int, array<string, mixed>>  $items
-     * @return array{lines: array<int, array<string, mixed>>, total_minor: int, currency: string}
+     * @return array{lines: array<int, array<string, mixed>>, subtotal_minor: int, discount_minor: int, total_minor: int, currency: string, coupon: ?Coupon}
      */
-    public function price(array $items): array
+    public function price(array $items, ?string $couponCode = null): array
     {
         $lines = [];
-        $total = 0;
+        $subtotal = 0;
 
         foreach ($items as $item) {
             $line = match ($item['type']) {
@@ -34,7 +39,7 @@ class CheckoutService
                 OrderItem::TYPE_WALLET_TOPUP => $this->priceTopup($item),
                 default => throw ValidationException::withMessages(['items' => 'Unsupported item type.']),
             };
-            $total += $line['price_minor'];
+            $subtotal += $line['price_minor'];
             $lines[] = $line;
         }
 
@@ -42,17 +47,36 @@ class CheckoutService
             throw ValidationException::withMessages(['items' => 'The cart is empty.']);
         }
 
-        return ['lines' => $lines, 'total_minor' => $total, 'currency' => config('commerce.currency', 'EGP')];
+        $discount = 0;
+        $coupon = null;
+
+        if ($couponCode !== null && $couponCode !== '') {
+            $applied = $this->coupons->apply($couponCode, $lines);
+            $coupon = $applied['coupon'];
+            $discount = $applied['discount_minor'];
+        }
+
+        return [
+            'lines' => $lines,
+            'subtotal_minor' => $subtotal,
+            'discount_minor' => $discount,
+            'total_minor' => max(0, $subtotal - $discount),
+            'currency' => config('commerce.currency', 'EGP'),
+            'coupon' => $coupon,
+        ];
     }
 
-    public function createOrder(int $userId, array $items): Order
+    public function createOrder(int $userId, array $items, ?string $couponCode = null): Order
     {
-        $quote = $this->price($items);
+        $quote = $this->price($items, $couponCode);
 
         $order = new Order([
             'user_id' => $userId,
             'total_minor' => $quote['total_minor'],
+            'subtotal_minor' => $quote['subtotal_minor'],
+            'discount_minor' => $quote['discount_minor'],
             'currency' => $quote['currency'],
+            'coupon_id' => $quote['coupon']?->getKey(),
         ]);
         $order->tenant_id = $this->context->tenantOrFail()->getKey();
         $order->save();

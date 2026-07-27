@@ -3,6 +3,7 @@
 namespace App\Modules\Tenancy\Models;
 
 use App\Modules\Tenancy\Enums\TenantDomainType;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -17,6 +18,19 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class TenantDomain extends Model
 {
+    use HasUuids;
+
+    /** The bigint `id` stays the primary key; HasUuids fills the public `uuid`. */
+    public function uniqueIds(): array
+    {
+        return ['uuid'];
+    }
+
+    public function getRouteKeyName(): string
+    {
+        return 'uuid';
+    }
+
     protected $fillable = [
         'tenant_id',
         'host',

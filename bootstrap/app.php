@@ -1,9 +1,11 @@
 <?php
 
 use App\Modules\Identity\Http\Middleware\EnsureActiveMembership;
+use App\Modules\Identity\Http\Middleware\EnsurePermission;
 use App\Modules\Identity\Http\Middleware\EnsureTenantRole;
 use App\Modules\PlatformAdmin\Http\Middleware\EnsureCentralHost;
 use App\Modules\PlatformAdmin\Http\Middleware\EnsurePlatformAdmin;
+use App\Modules\Tenancy\Http\Middleware\DynamicTenantCors;
 use App\Modules\Tenancy\Http\Middleware\EnsureRegisteredDomain;
 use App\Modules\Tenancy\Http\Middleware\ResolveTenant;
 use App\Support\Http\ApiExceptionRenderer;
@@ -21,10 +23,17 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Runs before Laravel's HandleCors so a registered tenant origin (custom
+        // domain or subdomain) is trusted for CORS, not just the static list.
+        $middleware->prepend(DynamicTenantCors::class);
+
         $middleware->alias([
             'role' => EnsureTenantRole::class,
             'admin' => EnsurePlatformAdmin::class,
             'active' => EnsureActiveMembership::class,
+            // Granular assistant permission gate (M18) — used inside
+            // role:teacher,assistant groups; teachers pass implicitly.
+            'permission' => EnsurePermission::class,
             // Pins the platform-admin console to a central/admin host — /admin/*
             // must never answer on a teacher academy's domain.
             'central' => EnsureCentralHost::class,

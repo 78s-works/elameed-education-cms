@@ -1,6 +1,6 @@
 # Identity Module
 
-The **Identity** module (M11, plus M02/M13 slices) owns everything about *who a user is* and *what a teacher may do with their students*. It covers public authentication (register, password + OTP login, forgot/reset password), the authenticated "current user" endpoint, the read-only **parent portal**, and the teacher's full **student-management surface**: roster CRUD, per-academy registration profiles, manual enrollments, wallet control, activity timelines, direct notifications, and parent linking.
+The **Identity** module (M11, plus M02/M13/M18 slices) owns everything about *who a user is* and *what a teacher may do with their students and assistants*. It covers public authentication (register, password + OTP login, forgot/reset password), the authenticated "current user" endpoint, the read-only **parent portal**, the teacher's full **student-management surface** (roster CRUD, per-academy registration profiles, manual enrollments, wallet control, activity timelines, direct notifications, and parent linking), and **assistant management + granular RBAC** (M18): the teacher creates assistants and grants each a subset of permissions that gate the shared teacher surface.
 
 Identity is deliberately built around the distinction between a **global user identity** (`users` — a person, who may study at several academies) and a **tenant membership** (`tenant_user` — that person's role + status inside one academy). Teacher actions almost never touch the global identity; they act on the membership and the academy-scoped data. A user who is not a student of the current tenant is reported as `404` (invisible), not `403`.
 
@@ -10,22 +10,23 @@ Identity is deliberately built around the distinction between a **global user id
 - Money is an integer in **minor units** (piastres) plus a `currency` code. Timestamps are ISO-8601 UTC.
 - **Tenancy:** every route runs through the `tenant` middleware group; the tenant is resolved from the **Host** header (or `X-Tenant: <slug>` as a dev override).
 - **Auth:** Sanctum `Authorization: Bearer <token>`. Public auth routes need no token. `role:teacher` / `role:parent` require a token **and** an *active* membership carrying that role in the resolved tenant. Platform admins bypass the role check.
+- **Granular permissions (M18):** the student- and center-management blocks run under `role:teacher,assistant` **and** a `permission:<key>` gate (`permission:students` / `permission:centers`). A **teacher** passes every permission check implicitly; an **assistant** passes only for the keys the teacher granted on their membership (else `403 forbidden`). Assistant *management itself* (`/teacher/assistants*`, `/teacher/permissions`) is `role:teacher` only.
 - **Throttling:** `register`, `otp/request`, `password/forgot`, `password/reset` use `throttle:otp`; `login` and `otp/verify` use `throttle:auth`.
 
 > **Gotcha — OTP is stubbed.** `OtpService::verify()` currently returns `true` unconditionally (the real verification is commented out, to be re-enabled "when we have a proper OTP system in place"). In the current build **any code passes** OTP verification. Codes are still issued, hashed, and dispatched via `SendOtpJob`; only the check is a no-op.
 
 ## Models
 
-- **`TenantUser`** (`tenant_user`) — a user's membership + role within one tenant. **Global** mapping table (not RLS-scoped). Casts `role` → `TenantUserRole`, `status` → `MembershipStatus`; `isActive()` helper.
+- **`TenantUser`** (`tenant_user`) — a user's membership + role within one tenant. **Global** mapping table (not RLS-scoped). Casts `role` → `TenantUserRole`, `status` → `MembershipStatus`, `permissions` → `array` (the M18 granular grant, only meaningful for assistants); `isActive()`, `hasPermission($key)`, `effectivePermissions()` helpers.
 - **`StudentProfile`** — per-academy registration details for a student (`gender`, `governorate`, `region`, `academic_year`, `education_type`, `guardian_phone`). Tenant-scoped, one row per (tenant, student). Free-text; the frontend owns the dropdown options. Exposes `FIELDS`, `rules($prefix)`, `fields($data)`.
 - **`ParentLink`** — links a parent user to a student user within a tenant, with an optional `relation`. Tenant-scoped.
 - **`OtpCode`** — a one-time passcode. Stores only `code_hash` (never plaintext), plus `identifier`, `channel`, `purpose`, `attempts`, `expires_at`, `consumed_at`. `isExpired()` / `isConsumed()` helpers.
 - **`LoginAttempt`** — an audit row for every login attempt (`user_id`, `tenant_id`, `identifier`, `ip`, `user_agent`, `success`). Create-only (`UPDATED_AT = null`).
 - **`User`** (`app/Models/User`, shared) — the global identity Identity authenticates and edits (`name`, `phone`, `email`, `password`, `locale`, verification timestamps, `isPlatformAdmin()`, `membershipFor()`).
 
-**Enums:** `TenantUserRole` (`teacher`, `assistant`, `student`, `parent` — platform admin is a *global* flag, not a membership role) · `MembershipStatus` (`active`, `pending`, `suspended`) · `OtpPurpose` (`register`, `login`, `reset`).
+**Enums:** `TenantUserRole` (`teacher`, `assistant`, `student`, `parent` — platform admin is a *global* flag, not a membership role) · `MembershipStatus` (`active`, `pending`, `suspended`) · `OtpPurpose` (`register`, `login`, `reset`) · `Permission` (M18 catalog: `students`, `centers`; `Permission::catalog()` returns each with a `label` + `description`, `Permission::values()`/`sanitize()`).
 
-**Actions / services / support:** `RegisterStudentAction`, `LoginAction`, `VerifyOtpAction`, `ResetPasswordAction`; `OtpService` (issue/verify); `UserLookup` (resolve phone-or-email → user); `SendOtpJob`. Middleware `EnsureTenantRole` (`role:…`) and `EnsureActiveMembership` (`active`).
+**Actions / services / support:** `RegisterStudentAction`, `LoginAction`, `VerifyOtpAction`, `ResetPasswordAction`; `OtpService` (issue/verify); `UserLookup` (resolve phone-or-email → user); `SendOtpJob`. Middleware `EnsureTenantRole` (`role:…`, accepts a comma list e.g. `role:teacher,assistant`), `EnsureActiveMembership` (`active`), and `EnsurePermission` (`permission:<key>`, M18 — teachers pass implicitly; assistants need the granted key).
 
 ---
 
@@ -356,12 +357,12 @@ OTP required (when `otp.login_required` is on):
     "memberships": [
       { "tenant": "academy", "tenant_name": "El Ameed Academy", "role": "student", "status": "active" }
     ],
-    "current": { "tenant": "academy", "role": "student", "permissions": [] }
+    "current": { "tenant": "academy", "role": "teacher", "permissions": ["students", "centers"] }
   }
 }
 ```
 
-`current.permissions` is always `[]` — granular permissions are P1.5.
+`current.permissions` is the caller's **effective** permission set in the current tenant (M18): a **teacher** gets the full catalog (`["students", "centers"]`), an **assistant** gets their granted subset, and any other role gets `[]`.
 
 **Errors:** `401` missing/invalid token; `403` inactive membership.
 
@@ -484,12 +485,14 @@ Only attempts with status `submitted` or `graded` are returned.
 
 The teacher's roster + student lifecycle. All actions are tenant-scoped and operate on the student's **membership** and academy data, never the global identity. Any student not a member of the current academy → `404 Student not found in this academy.`
 
+> **Access (M18).** This whole block — Students, Enrollments, Finance, Activity, and Parents below — now runs under **`role:teacher,assistant`** + **`permission:students`**. A teacher reaches it implicitly; an assistant only if granted the `students` permission (else `403 forbidden`). The per-endpoint **Middleware** lines below reflect this chain.
+
 ---
 
 #### `GET /v1/teacher/students`
 **Purpose:** Paginated roster of the academy's students, with search and status filter, plus a per-student active-enrollment count and registration profile.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -537,8 +540,8 @@ The teacher's roster + student lifecycle. All actions are tenant-scoped and oper
 
 #### `POST /v1/teacher/students`
 **Purpose:** Manually add a student to this academy (offline onboarding). Reuses an existing global identity by phone if one exists (links, never modifies it); otherwise creates the user with a temporary password. Also writes the registration profile.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -599,8 +602,8 @@ The teacher's roster + student lifecycle. All actions are tenant-scoped and oper
 
 #### `GET /v1/teacher/students/{student:uuid}`
 **Purpose:** 360° view of one student: identity + membership + registration profile + summary counts (enrollments, wallet balance, orders, completed lessons).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -648,8 +651,8 @@ The teacher's roster + student lifecycle. All actions are tenant-scoped and oper
 
 #### `PATCH /v1/teacher/students/{student:uuid}`
 **Purpose:** Edit identity (name/phone/email), change membership status (activate/suspend), and/or update the registration profile. All fields optional — patch only what's sent. Status changes are audit-logged (`student.status_changed`).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -708,8 +711,8 @@ The teacher's roster + student lifecycle. All actions are tenant-scoped and oper
 
 #### `DELETE /v1/teacher/students/{student:uuid}`
 **Purpose:** Remove the student from this academy: cancel active enrollments and delete the membership (the global identity is untouched). Audit-logged (`student.removed`).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -733,8 +736,8 @@ The teacher's roster + student lifecycle. All actions are tenant-scoped and oper
 
 #### `POST /v1/teacher/students/{student:uuid}/reset-password`
 **Purpose:** Force a password reset. Revokes the student's existing tokens. Returns the new password only if the server generated it. Audit-logged (`student.password_reset`).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -771,8 +774,8 @@ When the caller supplied `password`, the response is just `{ "data": { "uuid": "
 
 #### `GET /v1/teacher/students/{student:uuid}/export`
 **Purpose:** Export everything this academy holds on the student (data-portability): profile, membership, enrollments, orders, progress, and wallet balance.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -825,8 +828,8 @@ A teacher granting/revoking a student's course access directly (no payment) — 
 
 #### `GET /v1/teacher/students/{student:uuid}/enrollments`
 **Purpose:** List the student's enrollments in this academy.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -867,8 +870,8 @@ A teacher granting/revoking a student's course access directly (no payment) — 
 
 #### `POST /v1/teacher/students/{student:uuid}/enrollments`
 **Purpose:** Grant the student access to a course directly (`source=manual`, no payment).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -903,8 +906,8 @@ A teacher granting/revoking a student's course access directly (no payment) — 
 
 #### `DELETE /v1/teacher/students/{student:uuid}/enrollments/{enrollment}`
 **Purpose:** Revoke (cancel) an enrollment. Sets its status to `cancelled` — not a hard delete.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -935,8 +938,8 @@ Full control of a student's money. Every change is posted to the double-entry le
 
 #### `GET /v1/teacher/students/{student:uuid}/wallet`
 **Purpose:** Current balance + currency + the 15 most recent ledger entries.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -978,8 +981,8 @@ Full control of a student's money. Every change is posted to the double-entry le
 
 #### `GET /v1/teacher/students/{student:uuid}/wallet/ledger`
 **Purpose:** Full, paginated wallet history (30 per page).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -1019,8 +1022,8 @@ Full control of a student's money. Every change is posted to the double-entry le
 
 #### `POST /v1/teacher/students/{student:uuid}/wallet/adjust`
 **Purpose:** Credit or debit the wallet by an amount (a gift/top-up or a correction).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -1058,8 +1061,8 @@ Full control of a student's money. Every change is posted to the double-entry le
 
 #### `POST /v1/teacher/students/{student:uuid}/wallet/set`
 **Purpose:** Set the wallet to an exact balance; posts the difference (positive or negative) as an adjustment. No-op if already at that balance.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -1096,8 +1099,8 @@ Full control of a student's money. Every change is posted to the double-entry le
 
 #### `GET /v1/teacher/students/{student:uuid}/orders`
 **Purpose:** The student's orders in this academy, with line items.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -1142,8 +1145,8 @@ Teacher view of a student's learning activity + direct messaging.
 
 #### `GET /v1/teacher/students/{student:uuid}/progress`
 **Purpose:** Per-lesson progress for the student (includes last playback position).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -1180,8 +1183,8 @@ Teacher view of a student's learning activity + direct messaging.
 
 #### `GET /v1/teacher/students/{student:uuid}/activity`
 **Purpose:** A merged, most-recent-first activity timeline (up to 100 events): logins, playback sessions, orders, exam attempts.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -1215,8 +1218,8 @@ Teacher view of a student's learning activity + direct messaging.
 
 #### `POST /v1/teacher/students/{student:uuid}/notify`
 **Purpose:** Send the student an in-app notification (`teacher.message`).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -1258,8 +1261,8 @@ Manage the parents linked to one of the teacher's students (M13). Linking provis
 
 #### `GET /v1/teacher/students/{student:uuid}/parents`
 **Purpose:** List the parents linked to the student.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -1296,8 +1299,8 @@ Manage the parents linked to one of the teacher's students (M13). Linking provis
 
 #### `POST /v1/teacher/students/{student:uuid}/parents`
 **Purpose:** Link a parent to the student. Reuses an existing user by phone if present; otherwise creates one with the **password the teacher supplies** (no random password is generated). Provisions a `parent` membership and the link.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -1349,8 +1352,8 @@ Manage the parents linked to one of the teacher's students (M13). Linking provis
 
 #### `DELETE /v1/teacher/students/{student:uuid}/parents/{parent:uuid}`
 **Purpose:** Unlink a parent from the student (removes the `ParentLink` rows; the parent's membership/identity is left intact).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
 
 **Request headers**
 | Header | Required | Example |
@@ -1373,3 +1376,175 @@ Manage the parents linked to one of the teacher's students (M13). Linking provis
 ```
 
 **Errors:** `404` not a student here; `401`/`403`.
+
+---
+
+### Teacher · Assistants
+
+Assistant management + granular RBAC (M18). The teacher creates assistants and grants each a subset of the permission catalog; those permissions gate the shared teacher surface (see the **Granular permissions** convention and the `permission:students` / `permission:centers` gates). Like students, assistants are **global users** with an `assistant` **membership** in this academy — the teacher acts on the membership + identity link, never rewriting a foreign global user. **Assistant management itself is `role:teacher` only** (an assistant cannot manage assistants). All actions are audit-logged (`assistant.created` / `assistant.updated` / `assistant.removed`).
+
+---
+
+#### `GET /v1/teacher/permissions`
+**Purpose:** The grantable-permission catalog for the assistant editor UI.
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+
+**Request body:** None
+
+**Response** `200`
+```json
+{
+  "data": [
+    { "key": "students", "label": "Students", "description": "Add, edit and remove students; manage enrollments, wallet and activity." },
+    { "key": "centers", "label": "Centers & codes", "description": "Manage centers, attendance, and activation/recharge codes." }
+  ]
+}
+```
+
+**Errors:** `401`; `403` not a teacher of this tenant.
+
+---
+
+#### `GET /v1/teacher/assistants`
+**Purpose:** Paginated list of the academy's assistants, with search and status filter, plus each one's effective permissions.
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+
+**Path / Query params**
+| Param | In | Description |
+|---|---|---|
+| `q` | query | Search matched against user `name`, `phone`, `email` |
+| `filter[status]` | query | Filter by membership status (`active` \| `suspended`) |
+| `page` | query | Page number (30 per page) |
+
+**Response** `200` (`AssistantResource` collection, paginated → includes `meta`/`links`)
+```json
+{
+  "data": [
+    {
+      "uuid": "b7d2...",
+      "name": "Omar Adel",
+      "phone": "+201115556677",
+      "email": "omar@example.com",
+      "status": "active",
+      "permissions": ["students"],
+      "joined_at": "2026-07-01T09:00:00+00:00"
+    }
+  ],
+  "meta": { "current_page": 1, "per_page": 30, "total": 3, "last_page": 1 }
+}
+```
+
+`uuid` is the assistant's global-user uuid; `permissions` is the effective granted subset.
+
+**Errors:** `401`; `403` not a teacher.
+
+---
+
+#### `POST /v1/teacher/assistants`
+**Purpose:** Add an assistant to this academy. Reuses an existing global identity by phone if one exists (links, never modifies it); otherwise creates the user with a temporary password. Enforces the plan's `max_assistants` limit (M03).
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+
+**Request body**
+```json
+{
+  "name": "Omar Adel",
+  "phone": "+201115556677",
+  "email": "omar@example.com",
+  "password": "TempPass123",
+  "permissions": ["students", "centers"]
+}
+```
+
+| Field | Rules |
+|---|---|
+| `name` | required, string, max 255 |
+| `phone` | required, string, max 20, regex `^[0-9+]{6,20}$` |
+| `email` | nullable, email, max 255 |
+| `password` | nullable, string, min 8 (if omitted a temp password is generated and returned once) |
+| `permissions` | optional array; each value must be a catalog key (`students`, `centers`) — unknown values rejected |
+
+**Response** `201` (nulls stripped; `temporary_password` present only when the server generated it)
+```json
+{
+  "data": {
+    "uuid": "b7d2...",
+    "name": "Omar Adel",
+    "phone": "+201115556677",
+    "email": "omar@example.com",
+    "status": "active",
+    "permissions": ["students", "centers"],
+    "temporary_password": "aB3xK9mQ2p"
+  }
+}
+```
+
+**Errors:** `422` `phone` (`This person is already a member of your academy.`) when the phone already belongs to a member of this tenant; `403 plan_limit_reached` (`details: { key: "max_assistants", limit, used }`) when the plan's assistant quota is hit; `422` validation; `401`/`403`.
+
+---
+
+#### `GET /v1/teacher/assistants/{assistant:uuid}`
+**Purpose:** One assistant's membership + identity + effective permissions.
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+
+**Path / Query params**
+| Param | In | Description |
+|---|---|---|
+| `assistant` | path | Assistant (user) **uuid** |
+
+**Response** `200` — a single `AssistantResource` (shape as in the list).
+
+**Errors:** `404` not an assistant of this academy; `401`/`403`.
+
+---
+
+#### `PATCH /v1/teacher/assistants/{assistant:uuid}`
+**Purpose:** Edit identity (name/email), re-scope permissions, and/or change membership status (activate/suspend). All fields optional — patch only what's sent. Suspending revokes the assistant's tokens (immediate sign-out).
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+
+**Path / Query params**
+| Param | In | Description |
+|---|---|---|
+| `assistant` | path | Assistant (user) **uuid** |
+
+**Request body**
+```json
+{
+  "name": "Omar Adel Hassan",
+  "status": "active",
+  "permissions": ["students"]
+}
+```
+
+| Field | Rules |
+|---|---|
+| `name` | sometimes, string, max 255 |
+| `email` | sometimes, nullable, email, max 255 |
+| `status` | sometimes, `active` \| `suspended` |
+| `permissions` | sometimes, array; each value a catalog key (`students`, `centers`) |
+
+**Response** `200` — the updated `AssistantResource`.
+
+**Errors:** `422` validation; `404` not an assistant here; `401`/`403`.
+
+---
+
+#### `DELETE /v1/teacher/assistants/{assistant:uuid}`
+**Purpose:** Remove the assistant from this academy: delete the membership and revoke their tokens (the global identity is untouched).
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+
+**Path / Query params**
+| Param | In | Description |
+|---|---|---|
+| `assistant` | path | Assistant (user) **uuid** |
+
+**Request body:** None
+
+**Response** `204 No Content`
+
+**Errors:** `404` not an assistant here; `401`/`403`.

@@ -3,6 +3,7 @@
 namespace App\Modules\Identity\Http\Controllers\Teacher;
 
 use App\Models\User;
+use App\Modules\Billing\Services\PlanLimitGuard;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Order;
@@ -38,6 +39,7 @@ class StudentController
     public function __construct(
         private readonly TenantContext $context,
         private readonly LedgerService $ledger,
+        private readonly PlanLimitGuard $limits,
     ) {}
 
     public function index(Request $request): AnonymousResourceCollection
@@ -105,6 +107,10 @@ class StudentController
             ->where('tenant_id', $tenantId)->where('user_id', $existing->id)->exists()) {
             throw ValidationException::withMessages(['phone' => __('This person is already a member of your academy.')]);
         }
+
+        // Subscription-package ceiling (FR-M03-02): a new active student membership
+        // counts toward the plan's student quota — reject before provisioning.
+        $this->limits->ensure($tenantId, 'max_students');
 
         $temporaryPassword = null;
 

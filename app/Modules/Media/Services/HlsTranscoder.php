@@ -3,6 +3,7 @@
 namespace App\Modules\Media\Services;
 
 use App\Models\User;
+use App\Modules\Media\Exceptions\MediaException;
 use App\Modules\Media\Models\MediaAsset;
 use App\Modules\Media\Models\MediaRendition;
 use Illuminate\Support\Facades\Process;
@@ -47,11 +48,14 @@ class HlsTranscoder
             return $rendition;
         }
 
+        // Guard readiness BEFORE attempting the (synchronous, in-request) transcode,
+        // so an unready asset or a missing backend returns a clean mapped envelope
+        // (see MediaException / ApiExceptionRenderer) instead of a raw 500.
         if (! $this->available()) {
-            throw new RuntimeException('FFmpeg is not configured; cannot produce encrypted HLS.');
+            throw MediaException::processingUnavailable();
         }
         if (! $asset->source_key || ! Storage::disk($this->disk)->exists($asset->source_key)) {
-            throw new RuntimeException('Source file for this media is missing.');
+            throw MediaException::sourceMissing();
         }
 
         $key = random_bytes(16);
@@ -69,8 +73,10 @@ class HlsTranscoder
             $segments = $this->transcode($asset->source_key, $dir, $key, $iv, $watermark);
             $rendition->fill(['status' => 'ready', 'segment_count' => $segments])->save();
         } catch (\Throwable $e) {
+            // Persist the raw reason on the rendition for operators, but never surface
+            // FFmpeg output / paths to the client — return a clean mapped error.
             $rendition->fill(['status' => 'failed', 'error' => mb_substr($e->getMessage(), 0, 2000)])->save();
-            throw $e;
+            throw $e instanceof MediaException ? $e : MediaException::processingFailed($e);
         }
 
         return $rendition;

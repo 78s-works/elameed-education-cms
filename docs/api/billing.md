@@ -14,10 +14,10 @@ Money is integer minor units (`price_minor`), base currency EGP. Timestamps are 
 
 - **`SubscriptionPackage`** (`app/Modules/Billing/Models`) — global, soft-deletes. `interval` cast to `BillingInterval` (`monthly`/`yearly`); `limits` cast to array. `LIMIT_KEYS = [max_students, max_courses, storage_mb, max_assistants]`; a `null` limit value = **unlimited**.
 - **`TenantSubscription`** — global (`tenant_id` present but not scoped). `status` cast to `SubscriptionStatus` (`trialing`/`active`/`past_due`/`canceled`/`expired`). `price_minor` is locked at assignment (may differ from the plan price for a discount).
-- **Services:** `SubscriptionService` (assign/supersede + `current(tenantId)`), `PackageUsage` (usage-vs-limits snapshot). Enums `SubscriptionStatus`, `BillingInterval`.
+- **Services:** `SubscriptionService` (assign/supersede + `current(tenantId)`), `PackageUsage` (usage-vs-limits snapshot), `PlanLimitGuard` (creation-time enforcement, FR-M03-02). Enums `SubscriptionStatus`, `BillingInterval`.
 - **Resources:** `PackageResource`, `TenantSubscriptionResource`.
 
-> **Not yet enforced:** the limits are **reported** (admin sets them, the teacher view shows usage vs limit) but creation paths (course/student/assistant/storage) do **not** yet block on them — that enforcement is a tracked follow-up. `storage_mb.used` is always `0` until media-tier byte counting lands.
+> **Now enforced (FR-M03-02).** `PlanLimitGuard::ensure()` **blocks creation** once the plan quota is hit at four create paths: courses (`POST /teacher/courses` → `max_courses`), students (`POST /teacher/students` → `max_students`), assistants (`POST /teacher/assistants` → `max_assistants`), and media storage (`POST /teacher/media/uploads` → `storage_mb`, checked on the direct-upload path against the incoming file size). Over-limit → **`403`** with the error envelope `code: plan_limit_reached` and `details: { key, limit, used }` (a reusable `App\Support\Exceptions\DomainException`, rendered by `ApiExceptionRenderer`). A tenant with **no active plan** or a **`null`** limit for that key = unlimited (never blocks). `PackageUsage` now reports **real** `storage_mb.used` — summed from the per-asset `media_assets.size_bytes` recorded at upload (rounded up to whole MB; assets predating byte-tracking count as `0` until back-filled).
 
 ---
 
@@ -219,7 +219,7 @@ Fetch one package by uuid. `404` if not found or retired. → single `PackageRes
 Notes:
 - `subscription` is `null` when the academy has no current plan; `usage` is still returned (limits are `null` = unlimited, `remaining` `null`).
 - A `null` `limit` means unlimited → `remaining` is `null`.
-- `used` counts **active** student/assistant memberships and non-deleted courses for the tenant; `storage_mb.used` is `0` (deferred).
+- `used` counts **active** student/assistant memberships and non-deleted courses for the tenant; `storage_mb.used` is the tenant's stored media summed from `media_assets.size_bytes` (whole MB, rounded up).
 - Cross-tenant safe: a teacher only ever sees their own tenant's subscription (explicit `tenant_id` filter).
 
 **Errors:** `403` (not a teacher / inactive membership) · `404` (unregistered host) · `401`.

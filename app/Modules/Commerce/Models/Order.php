@@ -22,6 +22,8 @@ class Order extends Model
     protected $fillable = [
         'user_id',
         'total_minor',
+        'subtotal_minor',
+        'discount_minor',
         'currency',
         'coupon_id',
         'status',
@@ -30,11 +32,14 @@ class Order extends Model
     protected $attributes = [
         'currency' => 'EGP',
         'status' => 'pending',
+        'discount_minor' => 0,
     ];
 
     protected $casts = [
         'status' => OrderStatus::class,
         'total_minor' => 'integer',
+        'subtotal_minor' => 'integer',
+        'discount_minor' => 'integer',
     ];
 
     public function uniqueIds(): array
@@ -65,6 +70,11 @@ class Order extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function coupon(): BelongsTo
+    {
+        return $this->belongsTo(Coupon::class);
     }
 
     public function isPaid(): bool

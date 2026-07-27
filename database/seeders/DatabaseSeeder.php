@@ -139,9 +139,18 @@ class DatabaseSeeder extends Seeder
     private function truncateAll(): void
     {
         Schema::disableForeignKeyConstraints();
+
+        // TRUNCATE is DDL and implicitly COMMITs on MySQL — which would silently
+        // end an ambient transaction (e.g. a RefreshDatabase test wrapper), leaving
+        // the connection in autocommit while the framework still believes it is in a
+        // transaction (later ROLLBACK-to-savepoint then fails). So when we are already
+        // inside a transaction, clear rows with DELETE (DML, transaction-safe); only
+        // fall back to the faster, id-resetting TRUNCATE for plain CLI seeding.
+        $inTransaction = DB::transactionLevel() > 0;
         foreach (self::MANAGED_TABLES as $table) {
-            DB::table($table)->truncate();
+            $inTransaction ? DB::table($table)->delete() : DB::table($table)->truncate();
         }
+
         Schema::enableForeignKeyConstraints();
 
         app(TenantContext::class)->forget();

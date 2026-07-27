@@ -33,22 +33,45 @@ class CheckoutController
 
     public function quote(CartRequest $request): JsonResponse
     {
-        $quote = $this->checkout->price($request->validated('items'));
+        $quote = $this->checkout->price($request->validated('items'), $request->validated('coupon'));
 
         return response()->json(['data' => [
+            'subtotal_minor' => $quote['subtotal_minor'],
+            'discount_minor' => $quote['discount_minor'],
             'total_minor' => $quote['total_minor'],
             'currency' => $quote['currency'],
+            'coupon' => $quote['coupon']?->code,
             'lines' => array_map(fn ($l) => [
                 'type' => $l['item_type'], 'title' => $l['title'], 'price_minor' => $l['price_minor'],
             ], $quote['lines']),
         ]]);
     }
 
+    /**
+     * Validate a coupon against a cart without creating an order (M21). Returns
+     * the discount when valid; an invalid/expired/used-up code yields 422.
+     */
+    public function validateCoupon(CartRequest $request): JsonResponse
+    {
+        $quote = $this->checkout->price($request->validated('items'), $request->validated('coupon'));
+
+        return response()->json(['data' => [
+            'valid' => $quote['coupon'] !== null,
+            'coupon' => $quote['coupon']?->code,
+            'discount_minor' => $quote['discount_minor'],
+            'total_minor' => $quote['total_minor'],
+        ]]);
+    }
+
     public function order(CartRequest $request): JsonResponse
     {
-        $order = $this->checkout->createOrder($request->user()->getKey(), $request->validated('items'));
+        $order = $this->checkout->createOrder(
+            $request->user()->getKey(),
+            $request->validated('items'),
+            $request->validated('coupon'),
+        );
 
-        return (new OrderResource($order->load('items')))->response()->setStatusCode(201);
+        return (new OrderResource($order->load('items', 'coupon')))->response()->setStatusCode(201);
     }
 
     public function pay(PayRequest $request): JsonResponse

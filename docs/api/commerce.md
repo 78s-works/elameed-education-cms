@@ -1,8 +1,9 @@
 # Commerce Module
 
 The Commerce module (`app/Modules/Commerce`) owns the **checkout pipeline**, the
-**Paymob payment gateway** adapter, and the **payment webhook** that confirms
-gateway payments. It turns a cart into a priced order, collects payment (from the
+**Paymob payment gateway** adapter, the **payment webhook** that confirms
+gateway payments, and **coupons / promo codes** (M21). It turns a cart into a
+priced order, applies an optional coupon discount, collects payment (from the
 student wallet or a card via Paymob), and on success fulfils the order —
 enrolling the student, posting balanced ledger entries, and issuing an invoice.
 
@@ -30,10 +31,13 @@ quote  →  order  →  pay  ──(wallet)──▶ fulfil immediately
 path and the (possibly replayed) webhook: it posts a balanced ledger operation
 (`order:{id}:fulfill`), grants access (course enrollments for `course` items; a
 per-item enrollment for every course/unit inside a purchased `bundle` — see
-[Packages](#packages-bundles) below), flips the order to `paid`, and issues a
-gap-free invoice. Content revenue (courses **and** packages) is split into
-`teacher_earnings` and `platform_commission` (commission % from
-`config('commerce.commission_percent')`, 0 by default).
+[Packages](#packages-bundles) below), flips the order to `paid`, issues a
+gap-free invoice, and renders that invoice to a PDF on a private disk (best-effort,
+outside the money transaction — see [Invoices](#invoices)). Content revenue (courses **and** packages,
+**net of any coupon discount**) is split into `teacher_earnings` and
+`platform_commission` (commission % from `config('commerce.commission_percent')`,
+0 by default) — so the teacher absorbs the coupon reduction. When the order carries
+a `coupon_id`, its `used_count` is incremented once inside this transaction.
 
 ### Packages (bundles)
 
@@ -62,16 +66,20 @@ replayed webhook or repeat purchase never stacks duplicate enrollments.
 
 | Model | Purpose |
 |---|---|
-| `Order` | A checkout order (`uuid`, `total_minor`, `currency`, `status`). Tenant-scoped, UUID route key. Has many `items`/`payments`, one `invoice`. |
+| `Order` | A checkout order (`uuid`, `subtotal_minor`, `discount_minor`, `total_minor`, `currency`, `status`, `coupon_id`). Tenant-scoped, UUID route key. Has many `items`/`payments`, one `invoice`, one `coupon`. |
 | `OrderItem` | A priced cart line (`item_type`, `item_id`, `price_minor`, `title`). Types: `course`, `bundle` (package), `wallet_topup`, `book` (`book` unused in P1). |
+| `Coupon` | A discount code (M21): `uuid`, `code` (unique per tenant), `type` (`percent`/`fixed`), `value`, `course_id` (nullable = cart-wide), `min_subtotal_minor`, `usage_limit`, `used_count`, `starts_at`/`expires_at`, `is_active`. Tenant-scoped, soft-deletes, UUID route key. `isRedeemable()` + `discountFor()`. |
 | `Payment` | A payment attempt against an order (`gateway`, `gateway_txn_id`, `amount_minor`, `status`, `reference_number`, `raw_payload`, `processed_at`). |
 | `Enrollment` | Grants a student access to a **course** (`course_id`), a **unit** (`unit_id`), or a single **lesson** (`lesson_id`, the last two from a package) — single source of truth for access (`bundle_id`, `source`, `starts_at`, `expires_at`, `status`). |
-| `Invoice` | Internal invoice with a gap-free sequential `number` per tenant (`pdf_url`, `eta_receipt_uuid`, `issued_at`). |
+| `Invoice` | Internal invoice with a gap-free sequential `number` per tenant (`uuid` route key, `pdf_url` = private-disk path to the rendered PDF, `eta_receipt_uuid`, `issued_at`). |
 
 Supporting services: `CheckoutService` (pricing + order creation),
+`CouponService` (validates a code against a priced cart + computes the discount),
 `FulfillOrderService` (idempotent fulfilment), `EnrollmentService`,
-`InvoiceService`. Gateway: `PaymobGateway` implements the
-`Contracts\PaymentGateway` interface.
+`InvoiceService` (gap-free numbering), `InvoicePdfService` (renders the
+`invoices.pdf` Blade view to a PDF via `barryvdh/laravel-dompdf`, stores it on the
+private `invoices.disk`, and populates `pdf_url`; regenerates on demand if missing).
+Gateway: `PaymobGateway` implements the `Contracts\PaymentGateway` interface.
 
 ## Order / payment states
 
@@ -120,7 +128,8 @@ return line items and total. Nothing is persisted.
     { "type": "course", "course": "9f1c…-course-uuid" },
     { "type": "bundle", "bundle": "7a2d…-bundle-uuid" },
     { "type": "wallet_topup", "amount_minor": 5000 }
-  ]
+  ],
+  "coupon": "SUMMER25"
 }
 ```
 
@@ -131,13 +140,17 @@ return line items and total. Nothing is persisted.
 | `items[].course` | string | If `type=course` | Course UUID |
 | `items[].bundle` | string | If `type=bundle` | Package (bundle) UUID; must be `purchase_enabled` |
 | `items[].amount_minor` | integer | If `type=wallet_topup` | Min 1; must also meet `min_topup_minor` (default 1000) |
+| `coupon` | string | No | Optional promo code (M21), max 64. Validated + priced server-side; only discounts **content** lines (courses/bundles) — never wallet top-ups. |
 
 **Response** — `200 OK`
 ```json
 {
   "data": {
-    "total_minor": 20000,
+    "subtotal_minor": 40000,
+    "discount_minor": 10000,
+    "total_minor": 30000,
     "currency": "EGP",
+    "coupon": "SUMMER25",
     "lines": [
       { "type": "course", "title": "Grade 10 Physics", "price_minor": 15000 },
       { "type": "bundle", "title": "Term 1 Package", "price_minor": 20000 },
@@ -147,8 +160,13 @@ return line items and total. Nothing is persisted.
 }
 ```
 
+`subtotal_minor` is the pre-discount sum of all lines; `discount_minor` is the
+coupon reduction (0 with no coupon); `total_minor` = `subtotal − discount` (floored
+at 0); `coupon` is the accepted code, or `null` when none was supplied.
+
 **Errors:** `422` — unsupported item type, empty cart, course/package not
-available for purchase, or top-up below minimum (`items` validation message).
+available for purchase, top-up below minimum (`items` validation message), or an
+invalid/expired/used-up/not-applicable `coupon` (`coupon` validation message).
 
 #### `POST /v1/checkout/order`
 **Purpose:** Re-price the cart and persist a `pending` order with its items.
@@ -166,12 +184,13 @@ available for purchase, or top-up below minimum (`items` validation message).
 
 **Path / Query params:** None
 
-**Request body** — same shape as `/checkout/quote`.
+**Request body** — same shape as `/checkout/quote` (incl. the optional `coupon`).
 ```json
 {
   "items": [
     { "type": "course", "course": "9f1c…-course-uuid" }
-  ]
+  ],
+  "coupon": "SUMMER25"
 }
 ```
 
@@ -181,8 +200,11 @@ available for purchase, or top-up below minimum (`items` validation message).
   "data": {
     "uuid": "3d2b…-order-uuid",
     "status": "pending",
-    "total_minor": 15000,
+    "subtotal_minor": 15000,
+    "discount_minor": 3750,
+    "total_minor": 11250,
     "currency": "EGP",
+    "coupon": "SUMMER25",
     "items": [
       { "type": "course", "title": "Grade 10 Physics", "price_minor": 15000 }
     ]
@@ -190,7 +212,12 @@ available for purchase, or top-up below minimum (`items` validation message).
 }
 ```
 
-**Errors:** `422` — same pricing validation errors as quote.
+`OrderResource` now exposes `subtotal_minor`, `discount_minor`, and `coupon` (the
+code) alongside `total_minor`. `total_minor` is the payable amount (already net of
+the discount). The coupon's `used_count` is **not** incremented here — only at
+fulfilment.
+
+**Errors:** `422` — same pricing/coupon validation errors as quote.
 
 #### `POST /v1/checkout/pay`
 **Purpose:** Pay an existing order from the wallet (fulfils immediately) or via
@@ -244,6 +271,105 @@ Paymob payment (hosted redirect; order remains pending):
 **Errors:**
 - `422` — `order`: "Order not found." (unknown UUID or not owned by caller)
 - `422` — `wallet`: "Insufficient wallet balance." (wallet balance < order total)
+
+### Coupons (M21)
+
+Discount codes the teacher issues and the student applies at checkout. A coupon is
+`percent` (value = 1–100) or `fixed` (value = minor units), optionally scoped to a
+single `course` (else it discounts the whole **content** subtotal). Coupons never
+discount wallet top-ups. The teacher **absorbs** the discount at fulfilment (it
+reduces `teacher_earnings`, so the ledger stays balanced), and `used_count`
+increments **once** at fulfilment (a replayed webhook can't double-count).
+
+#### `POST /v1/coupons/validate`
+**Purpose:** Preview a coupon against a cart without creating an order. Returns the
+computed discount when the code is valid.
+**Auth:** 👤 Authenticated
+**Middleware:** `tenant`, `auth:sanctum`, `active`
+
+**Request body** — same shape as `/checkout/quote` (`items` + `coupon`).
+
+**Response** — `200 OK`
+```json
+{
+  "data": {
+    "valid": true,
+    "coupon": "SUMMER25",
+    "discount_minor": 10000,
+    "total_minor": 30000
+  }
+}
+```
+
+`valid` is `false` only when **no** `coupon` was supplied (an empty cart-price
+preview). A supplied-but-invalid/expired/used-up/not-applicable code raises the
+`422` below instead of returning `valid: false`.
+
+**Errors:** `422` — `coupon` (`This coupon is not valid.` / `…does not apply to
+the items in your cart.` / `Your cart has not reached this coupon's minimum.`), or
+`items` pricing errors as in quote.
+
+---
+
+The five endpoints below manage the teacher's own coupons. All run inside the
+`tenant` group and require an active **teacher**. Coupons bind by `uuid` and are
+tenant-scoped (`BelongsToTenant`), so a valid uuid from another tenant resolves to
+`404`. Common middleware: `tenant`, `auth:sanctum`, `active`, `role:teacher`.
+
+The `CouponResource` shape (returned by every non-delete endpoint):
+```json
+{
+  "uuid": "8c1a…-coupon-uuid",
+  "code": "SUMMER25",
+  "type": "percent",
+  "value": 25,
+  "course": "9f1c…-course-uuid",
+  "min_subtotal_minor": null,
+  "usage_limit": 100,
+  "used_count": 12,
+  "starts_at": null,
+  "expires_at": "2026-09-01T00:00:00+00:00",
+  "is_active": true,
+  "redeemable": true,
+  "created_at": "2026-07-27T10:00:00+00:00"
+}
+```
+`course` is the scoped course **uuid** (or `null` = cart-wide); `redeemable`
+reflects `isRedeemable()` (active, within the date window, under `usage_limit`).
+
+#### `GET /v1/teacher/coupons`
+**Purpose:** List the academy's coupons, newest first, paginated 20/page.
+**Response** — `200 OK` — `CouponResource` collection + `meta`/`links`.
+
+#### `POST /v1/teacher/coupons`
+**Purpose:** Create a coupon.
+
+**Request body**
+
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `code` | string | Yes | max 64; unique per tenant |
+| `type` | string | Yes | `percent` \| `fixed` |
+| `value` | integer | Yes | ≥ 1; a `percent` value may not exceed 100 |
+| `course` | string | No | nullable; a course **uuid** in this tenant (null = cart-wide) |
+| `min_subtotal_minor` | integer | No | nullable; ≥ 0 |
+| `usage_limit` | integer | No | nullable; ≥ 1 (null = unlimited) |
+| `starts_at` | date | No | nullable |
+| `expires_at` | date | No | nullable; `after_or_equal:starts_at` |
+| `is_active` | boolean | No | defaults `true` |
+
+**Response** — `201 Created` — the created `CouponResource`.
+**Errors:** `422` — validation (duplicate `code`, percent > 100, unknown `course`, bad dates).
+
+#### `GET /v1/teacher/coupons/{coupon:uuid}`
+**Purpose:** Show one coupon. **Response** — `200 OK` `CouponResource`. **Errors:** `404` unknown/cross-tenant.
+
+#### `PUT /v1/teacher/coupons/{coupon:uuid}`
+**Purpose:** Update a coupon. All fields `sometimes` (partial); `code` unique-ignoring-self.
+**Response** — `200 OK` `CouponResource`. **Errors:** `422` validation; `404` unknown/cross-tenant.
+
+#### `DELETE /v1/teacher/coupons/{coupon:uuid}`
+**Purpose:** Retire a coupon (soft delete). **Response** — `204 No Content`. **Errors:** `404` unknown/cross-tenant.
 
 ### Webhooks
 
@@ -309,3 +435,55 @@ the signing string is `transaction_id|order_uuid|amount_cents|<true|false>`.
 
 An already-`paid` transaction (matched by `gateway_txn_id`) returns
 `200 { "data": { "status": "already_processed" } }` — the idempotent replay path.
+
+### Invoices
+
+Every paid order gets a gap-free invoice; its PDF is rendered on fulfilment and
+stored on a **private** disk (`config('invoices.disk')`, default `local`). The PDF
+is never served directly — it is streamed only through the access-controlled
+download endpoint below. All three endpoints run inside the `tenant` group and
+require an authenticated, active member; invoices bind by `uuid` and are
+tenant-scoped, so a valid uuid from another tenant resolves to **404**.
+
+**Access rule (detail + download):** the **buyer** (the order's owner), or an
+active **teacher/assistant** of the invoice's tenant. Anyone else → `403`.
+
+#### `GET /v1/invoices`
+**Purpose:** List the current user's invoices in this tenant (most recent first, paginated 30/page).
+**Auth:** 👤 Authenticated · **Middleware:** `tenant`, `auth:sanctum`, `active`
+
+**Response** — `200 OK` (`InvoiceResource` collection)
+```json
+{
+  "data": [
+    {
+      "uuid": "b2c1…-invoice-uuid",
+      "number": 42,
+      "issued_at": "2026-07-27T10:15:00+00:00",
+      "pdf_available": true,
+      "download_url": "https://academy.elameed.app/api/v1/invoices/b2c1…-invoice-uuid/download",
+      "order": { "uuid": "3d2b…-order-uuid", "total_minor": 15000, "currency": "EGP", "items": [ … ] }
+    }
+  ],
+  "links": { … }, "meta": { … }
+}
+```
+
+#### `GET /v1/invoices/{invoice:uuid}`
+**Purpose:** One invoice's detail (incl. order + line items + `download_url`).
+**Auth:** 👤 Buyer or tenant teacher/assistant · **Middleware:** `tenant`, `auth:sanctum`, `active`
+**Response** — `200 OK` — a single `InvoiceResource` under `data`.
+**Errors:** `403` — not the buyer and not tenant staff · `404` — unknown/other-tenant uuid.
+
+#### `GET /v1/invoices/{invoice:uuid}/download`
+**Purpose:** Stream the invoice PDF (`Content-Type: application/pdf`, `attachment`).
+Renders on first request if the file is missing.
+**Auth:** 👤 Buyer or tenant teacher/assistant · **Middleware:** `tenant`, `auth:sanctum`, `active`
+**Response** — `200 OK` — binary PDF body.
+**Errors:** `403` · `404` as above.
+
+> **Arabic note.** The `invoices.pdf` template is bilingual (EN/AR labels) and
+> RTL-ready, rendered with dompdf's Unicode `DejaVu Sans`. Full Arabic **glyph
+> shaping/joining** (e.g. an Arabic academy name) needs an Arabic-capable TTF
+> bundled + a shaping step (dompdf has no bidi engine) — a follow-up polish item;
+> the PDF renders and downloads correctly today with English content reliable.

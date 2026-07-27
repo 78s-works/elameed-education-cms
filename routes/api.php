@@ -22,16 +22,22 @@ use App\Modules\Centers\Http\Controllers\Teacher\AttendanceController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterSyncController;
 use App\Modules\Commerce\Http\Controllers\CheckoutController;
+use App\Modules\Commerce\Http\Controllers\InvoiceController;
 use App\Modules\Commerce\Http\Controllers\PaymentWebhookController;
+use App\Modules\Commerce\Http\Controllers\Teacher\CouponController;
+use App\Modules\Engagement\Http\Controllers\AttachmentController;
+use App\Modules\Engagement\Http\Controllers\CommentController;
 use App\Modules\Engagement\Http\Controllers\FavoriteController;
 use App\Modules\Engagement\Http\Controllers\GamificationController;
 use App\Modules\Engagement\Http\Controllers\ProgressController;
 use App\Modules\Engagement\Http\Controllers\ReviewController;
 use App\Modules\Engagement\Http\Controllers\Teacher\BadgeController;
+use App\Modules\Engagement\Http\Controllers\Teacher\ForumController;
 use App\Modules\Engagement\Http\Controllers\Teacher\ReviewController as TeacherReviewController;
 use App\Modules\Identity\Http\Controllers\AuthController;
 use App\Modules\Identity\Http\Controllers\MeController;
 use App\Modules\Identity\Http\Controllers\ParentController;
+use App\Modules\Identity\Http\Controllers\Teacher\AssistantController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentActivityController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentEnrollmentController;
@@ -49,6 +55,7 @@ use App\Modules\PlatformAdmin\Http\Controllers\AdminTenantController;
 use App\Modules\Reporting\Http\Controllers\AuditLogController;
 use App\Modules\Reporting\Http\Controllers\StudentCoursesController;
 use App\Modules\Reporting\Http\Controllers\TeacherReportsController;
+use App\Modules\Tenancy\Http\Controllers\Teacher\DomainController;
 use App\Modules\Tenancy\Http\Controllers\TeacherCustomLandingController;
 use App\Modules\Tenancy\Http\Controllers\TeacherLandingController;
 use App\Modules\Tenancy\Http\Controllers\TeacherMetaController;
@@ -179,6 +186,14 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::post('/checkout/quote', [CheckoutController::class, 'quote']);
         Route::post('/checkout/order', [CheckoutController::class, 'order']);
         Route::post('/checkout/pay', [CheckoutController::class, 'pay'])->middleware('throttle:auth');
+        // Validate a promo code against a cart without ordering (M21).
+        Route::post('/coupons/validate', [CheckoutController::class, 'validateCoupon']);
+
+        // Invoices (M06) — the buyer's own invoices + access-controlled PDF download.
+        // A tenant teacher/assistant may also read/download any invoice in their academy.
+        Route::get('/invoices', [InvoiceController::class, 'index']);
+        Route::get('/invoices/{invoice:uuid}', [InvoiceController::class, 'show']);
+        Route::get('/invoices/{invoice:uuid}/download', [InvoiceController::class, 'download']);
 
         // Protected playback (M04, M22) — authorize issues a short-lived token.
         Route::post('/media/lessons/{lesson}/playback', [PlaybackController::class, 'authorize']);
@@ -189,6 +204,13 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::post('/lessons/{lesson}/progress', [ProgressController::class, 'store']);
         Route::get('/me/activity', [ProgressController::class, 'activity']);
         Route::get('/me/resume', [ProgressController::class, 'resume']);
+
+        // Q&A comments + polymorphic attachments (M09). Shared by students (need
+        // lesson access) and staff; {lesson} binds by id, {comment} by uuid.
+        Route::post('/attachments', [AttachmentController::class, 'store'])->middleware('throttle:60,1');
+        Route::get('/lessons/{lesson}/comments', [CommentController::class, 'index']);
+        Route::post('/lessons/{lesson}/comments', [CommentController::class, 'store']);
+        Route::post('/comments/{comment}/replies', [CommentController::class, 'reply']);
 
         // Favorites (M20)
         Route::get('/me/favorites', [FavoriteController::class, 'index']);
@@ -234,6 +256,14 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             // Mirrored in GET /tenant/context → data.landing.custom_enabled.
             Route::get('/teacher/custom-landing', [TeacherCustomLandingController::class, 'show']);
             Route::put('/teacher/custom-landing', [TeacherCustomLandingController::class, 'update']);
+
+            // Custom domains (M02) — attach the academy's own domain. The host
+            // resolves to this tenant once the DNS record is set; the auto
+            // subdomain stays read-only. {domain} is a uuid, scoped in-controller.
+            Route::get('/teacher/domains', [DomainController::class, 'index']);
+            Route::post('/teacher/domains', [DomainController::class, 'store']);
+            Route::post('/teacher/domains/{domain}/primary', [DomainController::class, 'setPrimary']);
+            Route::delete('/teacher/domains/{domain}', [DomainController::class, 'destroy']);
 
             // Teacher subscription (M03) — read-only view of the tenant's plan,
             // limits, and usage. The plan is managed by the platform admin.
@@ -297,6 +327,19 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::put('/teacher/bundles/{bundle:uuid}', [BundleController::class, 'update']);
             Route::delete('/teacher/bundles/{bundle:uuid}', [BundleController::class, 'destroy']);
 
+            // Coupons & promo codes (M21) — teacher-managed discounts at checkout.
+            Route::get('/teacher/coupons', [CouponController::class, 'index']);
+            Route::post('/teacher/coupons', [CouponController::class, 'store']);
+            Route::get('/teacher/coupons/{coupon:uuid}', [CouponController::class, 'show']);
+            Route::put('/teacher/coupons/{coupon:uuid}', [CouponController::class, 'update']);
+            Route::delete('/teacher/coupons/{coupon:uuid}', [CouponController::class, 'destroy']);
+
+            // Q&A forum + moderation (M09) — aggregate of lesson questions across
+            // the academy's courses. Teachers reply via /comments/{comment}/replies.
+            Route::get('/teacher/forum', [ForumController::class, 'index']);
+            Route::patch('/teacher/comments/{comment}', [ForumController::class, 'update']);
+            Route::delete('/teacher/comments/{comment}', [ForumController::class, 'destroy']);
+
             // Self-hosted video (M04) — upload → transcode → status.
             Route::post('/teacher/media/uploads', [TeacherMediaController::class, 'startUpload']);
             Route::post('/teacher/media/uploads/{media:uuid}/complete', [TeacherMediaController::class, 'completeUpload']);
@@ -344,53 +387,71 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             // Audit log (M18)
             Route::get('/teacher/audit-logs', [AuditLogController::class, 'teacher']);
 
-            // Centers (M12) — branches, activation codes, attendance, offline sync
-            Route::get('/teacher/centers', [CenterController::class, 'index']);
-            Route::post('/teacher/centers', [CenterController::class, 'store']);
-            Route::put('/teacher/centers/{center:uuid}', [CenterController::class, 'update']);
-            Route::delete('/teacher/centers/{center:uuid}', [CenterController::class, 'destroy']);
-            Route::post('/teacher/centers/sync', CenterSyncController::class);
-            Route::get('/teacher/centers/{center:uuid}/attendance', [AttendanceController::class, 'index']);
-            Route::post('/teacher/centers/{center:uuid}/attendance', [AttendanceController::class, 'store']);
-            Route::get('/teacher/codes', [ActivationCodeController::class, 'index']);
-            Route::post('/teacher/codes/batch', [ActivationCodeController::class, 'batch']);
-            Route::post('/teacher/codes/{code:uuid}/disable', [ActivationCodeController::class, 'disable']);
-
-            // Students (M17) — the teacher's full control over their own students.
-            Route::get('/teacher/students', [StudentController::class, 'index']);
-            Route::post('/teacher/students', [StudentController::class, 'store']);
-            Route::get('/teacher/students/{student:uuid}', [StudentController::class, 'show']);
-            Route::patch('/teacher/students/{student:uuid}', [StudentController::class, 'update']);
-            Route::delete('/teacher/students/{student:uuid}', [StudentController::class, 'destroy']);
-            Route::post('/teacher/students/{student:uuid}/reset-password', [StudentController::class, 'resetPassword']);
-            Route::get('/teacher/students/{student:uuid}/export', [StudentController::class, 'export']);
-
-            // Access (enrollments)
-            Route::get('/teacher/students/{student:uuid}/enrollments', [StudentEnrollmentController::class, 'index']);
-            Route::post('/teacher/students/{student:uuid}/enrollments', [StudentEnrollmentController::class, 'store']);
-            Route::delete('/teacher/students/{student:uuid}/enrollments/{enrollment}', [StudentEnrollmentController::class, 'destroy']);
-
-            // Money
-            Route::get('/teacher/students/{student:uuid}/wallet', [StudentFinanceController::class, 'wallet']);
-            Route::get('/teacher/students/{student:uuid}/wallet/ledger', [StudentFinanceController::class, 'ledger']);
-            Route::post('/teacher/students/{student:uuid}/wallet/adjust', [StudentFinanceController::class, 'adjust']);
-            Route::post('/teacher/students/{student:uuid}/wallet/set', [StudentFinanceController::class, 'setBalance']);
-            Route::get('/teacher/students/{student:uuid}/orders', [StudentFinanceController::class, 'orders']);
-
-            // Activity
-            Route::get('/teacher/students/{student:uuid}/progress', [StudentActivityController::class, 'progress']);
-            Route::get('/teacher/students/{student:uuid}/activity', [StudentActivityController::class, 'history']);
-            Route::post('/teacher/students/{student:uuid}/notify', [StudentActivityController::class, 'notify']);
-
-            // Parents (M13)
-            Route::get('/teacher/students/{student:uuid}/parents', [StudentParentController::class, 'index']);
-            Route::post('/teacher/students/{student:uuid}/parents', [StudentParentController::class, 'store']);
-            // `parent` is resolved independently of `student` — the controller already
-            // scopes the ParentLink delete by (student, parent). Without this, Laravel
-            // auto-enables scoped binding for the custom-key child and tries to resolve
-            // it via a nonexistent User::parents() relationship → 500. (Bug fix.)
-            Route::delete('/teacher/students/{student:uuid}/parents/{parent:uuid}', [StudentParentController::class, 'destroy'])
-                ->withoutScopedBindings();
+            // Assistants + granular permissions (M18) — teacher-only management.
+            Route::get('/teacher/permissions', [AssistantController::class, 'catalog']);
+            Route::get('/teacher/assistants', [AssistantController::class, 'index']);
+            Route::post('/teacher/assistants', [AssistantController::class, 'store']);
+            Route::get('/teacher/assistants/{assistant:uuid}', [AssistantController::class, 'show']);
+            Route::patch('/teacher/assistants/{assistant:uuid}', [AssistantController::class, 'update']);
+            Route::delete('/teacher/assistants/{assistant:uuid}', [AssistantController::class, 'destroy']);
         });
+
+        // Shared teacher + assistant surface (M18): an assistant reaches these
+        // only for the permissions the teacher granted; a teacher passes every
+        // permission check implicitly.
+        Route::middleware('role:teacher,assistant')->group(function (): void {
+
+            // Centers (M12) — branches, activation codes, attendance, offline sync
+            Route::middleware('permission:centers')->group(function (): void {
+                Route::get('/teacher/centers', [CenterController::class, 'index']);
+                Route::post('/teacher/centers', [CenterController::class, 'store']);
+                Route::put('/teacher/centers/{center:uuid}', [CenterController::class, 'update']);
+                Route::delete('/teacher/centers/{center:uuid}', [CenterController::class, 'destroy']);
+                Route::post('/teacher/centers/sync', CenterSyncController::class);
+                Route::get('/teacher/centers/{center:uuid}/attendance', [AttendanceController::class, 'index']);
+                Route::post('/teacher/centers/{center:uuid}/attendance', [AttendanceController::class, 'store']);
+                Route::get('/teacher/codes', [ActivationCodeController::class, 'index']);
+                Route::post('/teacher/codes/batch', [ActivationCodeController::class, 'batch']);
+                Route::post('/teacher/codes/{code:uuid}/disable', [ActivationCodeController::class, 'disable']);
+            }); // permission:centers
+
+            // Students (M17) — teacher, or an assistant granted the `students` permission.
+            Route::middleware('permission:students')->group(function (): void {
+                Route::get('/teacher/students', [StudentController::class, 'index']);
+                Route::post('/teacher/students', [StudentController::class, 'store']);
+                Route::get('/teacher/students/{student:uuid}', [StudentController::class, 'show']);
+                Route::patch('/teacher/students/{student:uuid}', [StudentController::class, 'update']);
+                Route::delete('/teacher/students/{student:uuid}', [StudentController::class, 'destroy']);
+                Route::post('/teacher/students/{student:uuid}/reset-password', [StudentController::class, 'resetPassword']);
+                Route::get('/teacher/students/{student:uuid}/export', [StudentController::class, 'export']);
+
+                // Access (enrollments)
+                Route::get('/teacher/students/{student:uuid}/enrollments', [StudentEnrollmentController::class, 'index']);
+                Route::post('/teacher/students/{student:uuid}/enrollments', [StudentEnrollmentController::class, 'store']);
+                Route::delete('/teacher/students/{student:uuid}/enrollments/{enrollment}', [StudentEnrollmentController::class, 'destroy']);
+
+                // Money
+                Route::get('/teacher/students/{student:uuid}/wallet', [StudentFinanceController::class, 'wallet']);
+                Route::get('/teacher/students/{student:uuid}/wallet/ledger', [StudentFinanceController::class, 'ledger']);
+                Route::post('/teacher/students/{student:uuid}/wallet/adjust', [StudentFinanceController::class, 'adjust']);
+                Route::post('/teacher/students/{student:uuid}/wallet/set', [StudentFinanceController::class, 'setBalance']);
+                Route::get('/teacher/students/{student:uuid}/orders', [StudentFinanceController::class, 'orders']);
+
+                // Activity
+                Route::get('/teacher/students/{student:uuid}/progress', [StudentActivityController::class, 'progress']);
+                Route::get('/teacher/students/{student:uuid}/activity', [StudentActivityController::class, 'history']);
+                Route::post('/teacher/students/{student:uuid}/notify', [StudentActivityController::class, 'notify']);
+
+                // Parents (M13)
+                Route::get('/teacher/students/{student:uuid}/parents', [StudentParentController::class, 'index']);
+                Route::post('/teacher/students/{student:uuid}/parents', [StudentParentController::class, 'store']);
+                // `parent` is resolved independently of `student` — the controller already
+                // scopes the ParentLink delete by (student, parent). Without this, Laravel
+                // auto-enables scoped binding for the custom-key child and tries to resolve
+                // it via a nonexistent User::parents() relationship → 500. (Bug fix.)
+                Route::delete('/teacher/students/{student:uuid}/parents/{parent:uuid}', [StudentParentController::class, 'destroy'])
+                    ->withoutScopedBindings();
+            }); // permission:students
+        }); // role:teacher,assistant
     });
 });

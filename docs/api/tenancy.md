@@ -9,7 +9,7 @@
 ## Models
 
 - **`Tenant`** — A teacher academy; the **global** tenant-registry row (NOT tenant-scoped, no `BelongsToTenant`/RLS). Has `uuid`, `slug`, `name`, `status` (enum), soft-deletes, and relations to `domains`, `teacherProfile`, and `owner`.
-- **`TenantDomain`** — Host → tenant mapping row. **Global** (read during resolution, before any tenant scope exists). Holds `host`, `type` (subdomain|custom), `is_primary`, and Cloudflare-for-SaaS SSL fields.
+- **`TenantDomain`** — Host → tenant mapping row. **Global** (read during resolution, before any tenant scope exists). Holds a public `uuid` (now `HasUuids`, route key `uuid`), `host`, `type` (subdomain|custom), `is_primary`, and Cloudflare-for-SaaS SSL fields (`cf_custom_hostname_id`, `ssl_status`, `verified_at`). Because it is global, the teacher domain API resolves `{domain}` **scoped-by-tenant in the controller**, not via implicit route-model binding.
 - **`TeacherProfile`** — Per-tenant branding + landing configuration; one row per tenant and the **first** tenant-scoped model (`BelongsToTenant` filters every query and auto-fills `tenant_id`). Stores `logo_url`, `favicon_url` (browser-tab icon), `cover_url`, `primary_color`, `secondary_color`, `bio`, `contact` (json), `socials` (json), `layout`, `landing_sections` (json, per-locale content), `locales` (json list of enabled languages), `primary_locale` (string), `hide_ranking`, the access switches `login_enabled` / `registration_enabled` (both default `true`; see `GET/PUT /teacher/access`), and `custom_landing_enabled` (default `false`; the landing-mode switch — see `GET/PUT /teacher/custom-landing`).
 - **`TeacherMeta`** — A single key/value metadata entry the teacher manages from the panel (SEO tags, custom head data, …); **many rows per tenant** in the `teacher_meta` table, tenant-scoped by `BelongsToTenant`. Columns: `group` (namespace, default `general`), `key`, `value` (nullable text), `sort_order` (default `0`). Unique per `(tenant_id, group, key)` — no duplicate key within a group. Powers the `/teacher/meta` CRUD endpoints; unrelated to the `teacher_profiles` row.
 
@@ -25,7 +25,9 @@
 - **`LandingResolver`** — Resolves the teacher's stored landing config into the fully rendered public payload: normalizes `layout` **and each section's `variant`** (defaulting a variant-less section to its type default), emits **per-locale** section content (all enabled locales, missing ones filled from the primary), resolves dynamic `courses`/`testimonials` sections to real `items`, derives the anchor `nav` (per-locale labels), and overlays each student's `enrolled` flag via `applyEnrollment()`.
 - **`LandingSchema`** (Support) — The v2 landing contract: page layout list, section-type catalog, the **per-type layout-variant catalog** (`VARIANTS`, with `variantsFor()`/`variantOrDefault()` helpers), per-type content/config validation rules, locale helpers (`supportedLocales()`, `normalizeLocales()`), per-locale `sanitize()` for saving (with unique-key dedup + per-section variant resolution), and the `defaults()` seed. See below for the section-type + variant tables.
 - **`EntityVersion`** (Support) — Optimistic-concurrency helper for the editor endpoints: derives an `ETag` from a model's identity + `updated_at`, and enforces an optional `If-Match` precondition on writes (`412` on mismatch) so two editors can't silently overwrite the shared `teacher_profiles` row.
-- **`EnsureRegisteredDomain`** + **`ResolveTenant`** (Middleware) — the `tenant` middleware group: the first hard-gates unregistered/inactive hosts (404/403), the second resolves + binds the tenant and RLS session.
+- **`CustomDomainService`** — Registers/lists/removes a tenant's custom domains and switches the primary host (M02, custom domains Part 2). Normalizes + validates the host (rejects central/platform hosts, the base-domain apex, any `*.<base_domain>` subdomain, malformed hosts, and duplicates; honours `config('domains.custom_enabled')` and the `max_per_tenant` ceiling), writes the row with `ssl_status='pending'`, and builds the `dns` CNAME instruction (target = `config('domains.cname_target')`). `tenant_domains` is global, so every read/write is explicitly constrained to the tenant.
+- **`EnsureRegisteredDomain`** + **`ResolveTenant`** (Middleware) — the `tenant` middleware group: the first hard-gates unregistered/inactive hosts (404/403), the second resolves + binds the tenant and RLS session. A registered **custom** host resolves exactly like a subdomain (the resolver/gate are type-agnostic).
+- **`DynamicTenantCors`** (Middleware, **prepended** before Laravel's `HandleCors`, not an alias) — reflects a request `Origin` into `cors.allowed_origins` when its host is a registered, **active** tenant host (subdomain OR custom domain) or a central/dev host, replacing the static localhost-only list. Validated against the same `tenant_domains` source of truth as routing, so CORS can never trust a host that wouldn't resolve to a tenant.
 
 ### Landing section types (`LandingSchema::TYPES`)
 
@@ -862,6 +864,79 @@ All five routes are tenant-scoped and require `role:teacher`. `{meta}` binds by 
 **Response 204:** No content.
 
 **Errors:** `404` — no such entry for this tenant. `401` / `403` — as above.
+
+---
+
+### Custom domains (`/teacher/domains`)
+
+Attach the academy's own domain (M02, custom domains Part 2). A teacher points a CNAME at the platform's shared origin (`config('domains.cname_target')`, e.g. `connect.elameed.app`); once DNS propagates the host resolves to this tenant like any subdomain, and CORS trusts it (via `DynamicTenantCors`). TLS + ownership verification are handled by **Cloudflare-for-SaaS** in production — that provisioning is the documented future seam (`ssl_status` starts `pending`); the API records the row and returns the DNS record to publish.
+
+`tenant_domains` is a **global** model, so `{domain}` (a `uuid`) is resolved **scoped-by-tenant inside the controller** (not implicit binding) — a uuid from another tenant → `404`. The auto-provisioned platform subdomain is read-only here (it can't be deleted). Config lives in `config/domains.php` (`custom_enabled`, `cname_target`, `max_per_tenant`, default 5).
+
+**Common auth/middleware (all four):** 🔒 `auth:sanctum` + `active` + `role:teacher`; middleware `tenant`, `auth:sanctum`, `active`, `role:teacher`.
+
+**Resource shape** (`TenantDomainResource`):
+```json
+{
+  "uuid": "5f2c…-domain-uuid",
+  "host": "academy.example.com",
+  "type": "custom",
+  "is_primary": false,
+  "ssl_status": "pending",
+  "verified_at": null,
+  "created_at": "2026-07-27T10:00:00+00:00"
+}
+```
+
+#### `GET /teacher/domains`
+**Purpose:** List the academy's domains (primary first, then oldest), including the auto-provisioned platform subdomain.
+**Response 200:** `{ "data": [ <TenantDomainResource>, … ] }` (not paginated).
+**Errors:** `401` / `403`.
+
+#### `POST /teacher/domains`
+**Purpose:** Register a custom domain for the academy.
+
+**Request body**
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `host` | string | **yes** | max 253; a valid domain. Rejected: central/platform hosts, the base-domain apex, any `*.<base_domain>` subdomain, malformed hosts, and duplicates. |
+| `is_primary` | boolean | no | when `true`, the new domain becomes the primary host (demotes the others) |
+
+**Response 201:** the created `TenantDomainResource` **plus** a `dns` instruction:
+```json
+{
+  "data": {
+    "uuid": "5f2c…-domain-uuid",
+    "host": "academy.example.com",
+    "type": "custom",
+    "is_primary": false,
+    "ssl_status": "pending",
+    "verified_at": null,
+    "created_at": "2026-07-27T10:00:00+00:00",
+    "dns": {
+      "type": "CNAME",
+      "name": "academy.example.com",
+      "value": "connect.elameed.app",
+      "note": "Add this record at your DNS provider. Verification and SSL are issued automatically once it propagates."
+    }
+  }
+}
+```
+Audit-logged (`domain.registered`).
+
+**Errors:**
+- `422` — `host`: invalid format, a platform-managed host (central/apex/`*.<base_domain>`), an already-registered host, custom domains disabled (`custom_enabled=false`), or the `max_per_tenant` ceiling reached.
+- `401` / `403`.
+
+#### `POST /teacher/domains/{domain}/primary`
+**Purpose:** Promote a domain to the academy's primary host (demotes the others).
+**Response 200:** the refreshed `TenantDomainResource`.
+**Errors:** `404` unknown/other-tenant uuid; `401` / `403`.
+
+#### `DELETE /teacher/domains/{domain}`
+**Purpose:** Remove a custom domain. The auto-provisioned **platform subdomain cannot be removed**.
+**Response 204:** No content. Audit-logged (`domain.removed`).
+**Errors:** `422` — attempting to delete the platform subdomain (`The platform subdomain cannot be removed.`); `404` unknown/other-tenant uuid; `401` / `403`.
 
 ---
 

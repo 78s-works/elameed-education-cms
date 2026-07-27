@@ -47,10 +47,15 @@ Identity is **global** (one `User` can belong to many tenants); authorization is
 
 - **Roles** (`TenantUserRole`): `teacher` · `assistant` · `student` · `parent`
 - **Membership status** (`MembershipStatus`): `active` · `pending` · `suspended`
+- **Granular permissions** (`Permission`, M18): an **assistant** membership carries a
+  `tenant_user.permissions` JSON subset of the catalog (`students`, `centers`);
+  teachers hold **every** permission implicitly. Enforced by the `permission:<key>`
+  middleware (`EnsurePermission`) inside `role:teacher,assistant` route groups.
 - **Platform admin** is a separate flag on `User` (`isPlatformAdmin()`), not a tenant role.
 
-`GET /me` returns the user, **all** their memberships, and their role in the
-**current** tenant.
+`GET /me` returns the user, **all** their memberships, and their role +
+**effective `permissions`** in the **current** tenant (teacher = full catalog,
+assistant = granted subset, everyone else `[]`).
 
 ---
 
@@ -58,21 +63,21 @@ Identity is **global** (one `User` can belong to many tenants); authorization is
 
 | # | Module | PRD ref | Endpoints | Purpose |
 |---|---|---|--:|---|
-| 1 | [Tenancy](#1-tenancy) | M01 | 17 | Host→tenant resolution, branding, public + teacher landing pages, academy access switches, site metadata |
-| 2 | [Identity](#2-identity) | M02, M11, M13 | 28 | Auth/OTP, `/me`, parent portal, teacher student management |
+| 1 | [Tenancy](#1-tenancy) | M01, M02 | 21 | Host→tenant resolution, branding, public + teacher landing pages, academy access switches, site metadata, custom domains |
+| 2 | [Identity](#2-identity) | M02, M11, M13, M18 | 34 | Auth/OTP, `/me`, parent portal, teacher student **and assistant** management (granular RBAC) |
 | 3 | [Catalog](#3-catalog) | M04 | 30 | Course → unit → lesson → attachment hierarchy + categories + packages (bundles) |
 | 4 | [Media](#4-media) | M04, M22 | 20 | Protected video: encrypted-HLS pipeline + remote OVH provider, watermarking |
-| 5 | [Commerce](#5-commerce) | M05, M06 | 4 | Checkout (quote/order/pay) + Paymob gateway + webhook |
+| 5 | [Commerce](#5-commerce) | M05, M06, M21 | 10 | Checkout (quote/order/pay) + coupons + Paymob gateway + webhook + invoices |
 | 6 | [Wallet](#6-wallet) | M05 | 2 | Student wallet balance + append-only ledger (read-only API) |
 | 7 | [Centers](#7-centers) | M12 | 11 | Physical branches, activation/recharge codes, attendance, offline sync, code redeem |
 | 8 | [Assessment](#8-assessment) | M08 | 13 | Exams/quizzes/assignments: student attempts + teacher authoring & grading |
-| 9 | [Engagement](#9-engagement) | M10, M19, M20 | 16 | Reviews, lesson progress, favorites, gamification |
+| 9 | [Engagement](#9-engagement) | M09, M10, M19, M20 | 28 | Reviews, lesson progress, Q&A comments + teacher forum + attachments, favorites, gamification |
 | 10 | [Notifications](#10-notifications) | M10, M14 | 2 | In-app notification feed + SMS-sender abstraction |
 | 11 | [Reporting](#11-reporting) | M17, M18 | 4 | Student/teacher summary reports + audit log |
 | 12 | [Platform Admin](#12-platform-admin) | M01, M17 | 6 | Cross-tenant operator console (tenants + overview + audit) |
-| 13 | [Billing](#13-billing) | M03 | 8 | Teacher subscription packages: admin plan CRUD + tenant assignment + teacher view |
+| 13 | [Billing](#13-billing) | M03 | 8 | Teacher subscription packages: admin plan CRUD + tenant assignment + teacher view + limit enforcement |
 
-**Total: 154 documented endpoints.**
+**Total: 182 documented endpoints.**
 
 ---
 
@@ -82,9 +87,10 @@ Identity is **global** (one `User` can belong to many tenants); authorization is
 the request, and serves the tenant's public identity/branding plus the
 teacher-authored landing page.
 
-- **Models:** `Tenant` (global registry: `uuid`/`slug`/`name`/`status`, soft-deletes), `TenantDomain` (global host→tenant map with Cloudflare SSL fields), `TeacherProfile` (first tenant-scoped model — branding + `landing_sections`/`layout` + the `login_enabled`/`registration_enabled` access switches).
+- **Models:** `Tenant` (global registry: `uuid`/`slug`/`name`/`status`, soft-deletes), `TenantDomain` (global host→tenant map — now `HasUuids` with a public `uuid`, plus Cloudflare SSL fields), `TeacherProfile` (first tenant-scoped model — branding + `landing_sections`/`layout` + the `login_enabled`/`registration_enabled` access switches).
 - **Enums:** `TenantStatus` (active/suspended/under_review/expired), `TenantDomainType` (subdomain/custom).
-- **Services/Support:** `TenantContext` (request-scoped tenant holder), `TenantResolver` (host/`X-Tenant` → tenant, cached), `LandingResolver`, `LandingSchema` (the `LANDING_CONTRACT_V2` catalog: 10 section types, 3 page layouts, and 4 per-type layout `variant`s per section). Middleware `EnsureRegisteredDomain` + `ResolveTenant` form the `tenant` group.
+- **Services/Support:** `TenantContext` (request-scoped tenant holder), `TenantResolver` (host/`X-Tenant` → tenant, cached), `CustomDomainService` (register/list/remove + primary switch + DNS-instruction builder for teacher custom domains), `LandingResolver`, `LandingSchema` (the `LANDING_CONTRACT_V2` catalog: 10 section types, 3 page layouts, and 4 per-type layout `variant`s per section). Middleware `EnsureRegisteredDomain` + `ResolveTenant` form the `tenant` group; `DynamicTenantCors` (prepended before `HandleCors`) trusts any registered active-tenant origin for CORS.
+- **Custom domains (M02, Part 2):** a teacher attaches their own host at `/teacher/domains` (GET list, POST register → row + a `dns` CNAME instruction, POST `{domain}/primary`, DELETE). `tenant_domains` is **global**, so the teacher API resolves `{domain}` (a uuid) **scoped-by-tenant in the controller**, not via implicit binding. Registration rejects platform/central hosts, the base-domain apex, any `*.<base_domain>` subdomain, malformed hosts, and duplicates; the auto-provisioned platform subdomain cannot be deleted. A registered custom host resolves to the tenant immediately (same resolver/gate, type-agnostic); TLS/verification via Cloudflare-for-SaaS is the documented future seam (`ssl_status='pending'` on register). Feature flag + tunables in `config/domains.php` (`custom_enabled`, `cname_target`, `max_per_tenant`).
 - **Note:** the public `GET /tenant/landing` returns *resolved* sections (with `items` + an `enrolled` flag under optional auth); the teacher `GET /teacher/landing` returns the raw editable `config` — same row, two shapes. `PUT`s are upserts (forced `200`) and heavily sanitize input.
 - **Access switches:** `GET`/`PUT /teacher/access` let a teacher open/close **sign-in** and **self-registration** for their own academy (both default on). Enforced at `POST /auth/login` (when off, only the teacher can still sign in — assistants/students/parents are blocked) and `POST /auth/register` (M11), and surfaced in `GET /tenant/context` → `data.auth` so the SPA can hide the forms.
 - **Site metadata:** `TeacherMeta` (`teacher_meta` table) is a tenant-scoped key/value store the teacher manages via full CRUD at `/teacher/meta` — arbitrary entries (`group`, `key`, `value`, `sort_order`) for SEO/OG tags or custom `<head>` data, unique per `(group, key)`. Separate from the `teacher_profiles` branding/landing row. The public `GET /tenant/landing/meta` bundles branding + these entries (grouped) in one call for the landing page's `<head>` — ETag-cached like `/tenant/context`.
@@ -97,10 +103,11 @@ forgot/reset), the `/me` endpoint, the read-only parent portal, and the
 teacher's full student-management surface (roster CRUD, enrollments, wallet,
 activity, notifications, parent linking).
 
-- **Models:** `TenantUser` (membership + role, global), `StudentProfile` (per-academy registration fields), `ParentLink`, `OtpCode` (hash-only), `LoginAttempt` (create-only audit). Authenticates the shared global `User`.
-- **Actions/Services:** `RegisterStudentAction`, `LoginAction`, `VerifyOtpAction`, `ResetPasswordAction`; `OtpService` + `SendOtpJob`; `UserLookup` (phone-or-email). Middleware `EnsureTenantRole` (`role:`) + `EnsureActiveMembership` (`active`).
-- **Enums:** `TenantUserRole`, `MembershipStatus`, `OtpPurpose` (register/login/reset).
-- **Notes / gotchas:** foreign-tenant students return **404** (invisible, not forbidden); `register` → `202`; `/me`'s `current.permissions` is a `[]` placeholder (P1.5); **OTP verify is currently stubbed** (`OtpService::verify()` returns `true` — real logic pending). Wallet adjust/set post balanced double-entry ledger legs and are audit-logged.
+- **Models:** `TenantUser` (membership + role + `permissions` JSON, global), `StudentProfile` (per-academy registration fields), `ParentLink`, `OtpCode` (hash-only), `LoginAttempt` (create-only audit). Authenticates the shared global `User`.
+- **Actions/Services:** `RegisterStudentAction`, `LoginAction`, `VerifyOtpAction`, `ResetPasswordAction`; `OtpService` + `SendOtpJob`; `UserLookup` (phone-or-email). Middleware `EnsureTenantRole` (`role:`) + `EnsureActiveMembership` (`active`) + `EnsurePermission` (`permission:`, M18).
+- **Enums:** `TenantUserRole`, `MembershipStatus`, `OtpPurpose` (register/login/reset), `Permission` (M18 catalog: `students`, `centers`; `catalog()` returns each with a `label`+`description`).
+- **Assistants + granular RBAC (M18):** the teacher manages assistants at `/teacher/assistants` (GET/POST, GET/PATCH/DELETE `{assistant:uuid}`) plus a `GET /teacher/permissions` catalog. Assistant create **mirrors student create** (create-or-link a global user by phone, provision an `assistant` membership, return `temporary_password` once, enforce the `max_assistants` plan limit). The `/teacher/centers*`+`/teacher/codes*` and `/teacher/students*` route blocks now sit in a `role:teacher,assistant` group gated by `permission:centers` and `permission:students` respectively (teachers pass implicitly; assistants only with the grant). `TenantUser::hasPermission()`/`effectivePermissions()` back the gate + `/me`. Assistant CRUD is audit-logged (`assistant.created`/`updated`/`removed`).
+- **Notes / gotchas:** foreign-tenant students return **404** (invisible, not forbidden); `register` → `202`; `/me`'s `current.permissions` is **now populated** (teacher = full catalog, assistant = granted subset, else `[]`); **OTP verify is currently stubbed** (`OtpService::verify()` returns `true` — real logic pending). Wallet adjust/set post balanced double-entry ledger legs and are audit-logged.
 
 → [`api/identity.md`](api/identity.md)
 
@@ -134,9 +141,10 @@ by `MEDIA_PROVIDER` (`local` default / `remote`).
 gateway adapter, and its confirmation webhook. Wallet payment fulfils inline;
 Paymob returns a hosted `redirect_url` and completes asynchronously.
 
-- **Models:** `Order`, `OrderItem`, `Payment`, `Enrollment`, `Invoice`. Services `CheckoutService`, `FulfillOrderService`, `EnrollmentService`, `InvoiceService`; `PaymobGateway` implements `Contracts\PaymentGateway`.
-- **Enums:** `OrderStatus` (pending/paid/failed/refunded), Payment status consts (pending/paid/failed), `EnrollmentStatus` (active/expired/cancelled), `EnrollmentSource` (purchase/wallet/code/manual/center).
+- **Models:** `Order`, `OrderItem`, `Payment`, `Enrollment`, `Invoice`, `Coupon` (M21). Services `CheckoutService`, `FulfillOrderService`, `EnrollmentService`, `InvoiceService`, `CouponService`; `PaymobGateway` implements `Contracts\PaymentGateway`.
+- **Enums:** `OrderStatus` (pending/paid/failed/refunded), Payment status consts (pending/paid/failed), `EnrollmentStatus` (active/expired/cancelled), `EnrollmentSource` (purchase/wallet/code/manual/center), `CouponType` (percent/fixed).
 - **Item types:** cart items are `course`, `bundle` (package), or `wallet_topup`. `EnrollmentService` grants a whole-**course**, a **unit**, or a single-**lesson** enrollment (the last two from a package); `hasAccess` (course) and `hasLessonAccess` (course-or-unit-or-lesson) are the read side. Fulfilling a `bundle` grants an enrollment per contained course/unit/lesson in one transaction (idempotent), using the package's `access_days`.
+- **Coupons & promo codes (M21):** teacher CRUD at `/teacher/coupons` (GET/POST, GET/PUT/DELETE `{coupon:uuid}`) + a `POST /coupons/validate` preview (auth+active). `/checkout/quote` + `/checkout/order` accept an optional `coupon` code; the quote returns `subtotal_minor`/`discount_minor`/`total_minor`/`coupon`, and `OrderResource` exposes the same. A coupon is `percent` or `fixed`, optionally scoped to one `course` (else cart-wide), with `min_subtotal_minor`/`usage_limit`/`starts_at`/`expires_at`. Discounts apply to **content** (courses/bundles) only — never wallet top-ups — and a course-scoped coupon discounts just that course. The **teacher absorbs** the discount at fulfilment (it reduces `teacher_earnings`, so the ledger stays balanced) and `used_count` increments **once** at fulfilment. Invalid/expired/used-up/not-applicable → `422`. New `orders.subtotal_minor`/`orders.discount_minor` columns (`coupon_id` already existed).
 - **Notes / gotchas:** `Idempotency-Key` header is **accepted but ignored in P1** — idempotency is server-side (pay short-circuits paid orders; webhook dedupes on `gateway_txn_id`; fulfilment dedupes on the ledger op-key). Paymob is a **P1 stub** (placeholder redirect URL). Webhook is **outside** the tenant group (tenant derived from the order); signature header **`X-Paymob-Hmac`** (HMAC-SHA512), `throttle:120,1`.
 
 → [`api/commerce.md`](api/commerce.md)
@@ -178,9 +186,11 @@ exams + questions and hand-grade subjective answers.
 reviews, lesson-progress tracking (resume/activity), favorites, and gamification
 (points/badges/leaderboard) plus teacher badge management.
 
-- **Models:** `Review`, `LessonProgress` (table `lesson_progress`), `Favorite`, `PointsEntry` (append-only), `Badge`, `StudentBadge` (uses `awarded_at`). Service `PointsService`.
+- **Models:** `Review`, `LessonProgress` (table `lesson_progress`), `Favorite`, `PointsEntry` (append-only), `Badge`, `StudentBadge` (uses `awarded_at`), `Comment` (M09 Q&A), `Attachment` (M09 polymorphic uploads). Service `PointsService`.
+- **Enums:** `CommentStatus` (`new`/`answered`/`closed`).
 - **Values:** `rating` 1–5; completion at `watch_percent >= 95`; per-event points from `config/gamification.php` (`lesson_points`, `exam_points`).
-- **Notes / gotchas:** review store is an **upsert** gated on course access (`403` otherwise), returns `201` even on update. Progress never regresses (`max(existing, incoming)`); crossing 95% awards points once (idempotent). Favorites are idempotent (`firstOrCreate`, always `201`; missing course → `422`). Leaderboard honours the teacher's `hide_ranking` toggle → `{ hidden: true, entries: [] }`.
+- **Q&A comments + forum + attachments (M09):** `comments` (uuid, `lesson_id`, `user_id`, `parent_id` nullable=reply, `body`, `status`, `is_hidden`, soft-deletes) + `attachments` (polymorphic: `attachable_type`/`id` nullable, `kind` image/audio/file, `storage_key`, `mime`, `size_bytes`, `duration_sec`, `uploaded_by`). Endpoints: `POST /attachments` (auth+active, `throttle:60,1`); `GET`/`POST /lessons/{lesson}/comments` (lesson binds by id; students need lesson access, staff bypass, students never see hidden); `POST /comments/{comment}/replies` (a **staff reply flips the parent question to `answered`**); teacher `GET /teacher/forum` (`?status` filter), `PATCH /teacher/comments/{comment}` (moderate status/`is_hidden`), `DELETE /teacher/comments/{comment}`. Comments accept `attachment_ids` (uuids of the caller's own prior uploads). The **"forum" (FR-M09-02) is an aggregate query over `comments` across the tenant's courses — not a separate table.** Naming caveat: `Comment::attachments()` (polymorphic user uploads) is distinct from `Lesson::attachments()` (media materials).
+- **Notes / gotchas:** review store is an **upsert** gated on course access (`403` otherwise), returns `201` even on update. Progress never regresses (`max(existing, incoming)`); crossing 95% awards points once (idempotent). Favorites are idempotent (`firstOrCreate`, always `201`; missing course → `422`). Leaderboard honours the teacher's `hide_ranking` toggle → `{ hidden: true, entries: [] }`. Comment moderation (`comment.moderated`/`deleted`) is audit-logged.
 
 → [`api/engagement.md`](api/engagement.md)
 
@@ -221,8 +231,9 @@ each teacher sees their own plan, limits, and usage.
 
 - **Models:** `SubscriptionPackage` (global, soft-deletes: price/interval/trial/`limits` JSON/`is_active`), `TenantSubscription` (global, `tenant_id` but not RLS-scoped: locked `price_minor` + lifecycle `status`). `tenants.package_id` FK points at the current plan.
 - **Enums:** `SubscriptionStatus` (`trialing`/`active`/`past_due`/`canceled`/`expired`), `BillingInterval` (`monthly`/`yearly`).
-- **Services:** `SubscriptionService` (assign supersedes the prior plan + syncs `tenants.package_id`; `current()`), `PackageUsage` (usage-vs-limits snapshot).
-- **Endpoints:** admin `packages` index/store/show/update/destroy (destroy = soft retire) + `tenants/{uuid}/subscription` show/store (assign, with discount/trial overrides); teacher `GET /teacher/subscription`. Admin routes share the host-pinned `/admin/*` group; the teacher route is tenant-scoped `role:teacher`.
-- **Notes / gotchas:** `limits` keys `max_students|max_courses|storage_mb|max_assistants`, `null` = unlimited; limits are **reported, not yet enforced** at create paths (follow-up), and `storage_mb.used` is `0` until media byte-counting lands. Packages/tenants bind by `uuid`. Both tables are **global** (admin-managed cross-tenant; teacher reads via explicit `tenant_id`).
+- **Services:** `SubscriptionService` (assign supersedes the prior plan + syncs `tenants.package_id`; `current()`), `PackageUsage` (usage-vs-limits snapshot), `PlanLimitGuard` (`check()`/`ensure()` — creation-time enforcement, FR-M03-02).
+- **Endpoints:** admin `packages` index/store/show/update/destroy (destroy = soft retire) + `tenants/{uuid}/subscription` show/store (assign, with discount/trial overrides); teacher `GET /teacher/subscription` + `GET /teacher/packages`. Admin routes share the host-pinned `/admin/*` group; the teacher routes are tenant-scoped `role:teacher`.
+- **Limit enforcement (FR-M03-02):** `PlanLimitGuard::ensure()` now **blocks creation** once the plan quota is hit — courses (`POST /teacher/courses`), students (`POST /teacher/students`), assistants (`POST /teacher/assistants`), and media storage (`POST /teacher/media/uploads`). Over-limit → **`403` `plan_limit_reached`** (a reusable `App\Support\Exceptions\DomainException`) with `details: { key, limit, used }`. A tenant with no plan or a `null` limit = unlimited. `media_assets.size_bytes` is populated at upload, so `PackageUsage` now reports **real** `storage_mb` (previously a stubbed `0`).
+- **Notes / gotchas:** `limits` keys `max_students|max_courses|storage_mb|max_assistants`, `null` = unlimited. Packages/tenants bind by `uuid`. Both tables are **global** (admin-managed cross-tenant; teacher reads via explicit `tenant_id`).
 
 → [`api/billing.md`](api/billing.md)

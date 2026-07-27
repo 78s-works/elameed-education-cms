@@ -65,7 +65,7 @@ class EndpointSmokeTest extends TestCase
 
     private CourseCategory $category1;
 
-    private const TENANT = 'ahmed-physics';
+    private const TENANT = 'farag-physics';
 
     protected function setUp(): void
     {
@@ -79,9 +79,9 @@ class EndpointSmokeTest extends TestCase
     private function arrangeDirect(): void
     {
         $this->t1 = Tenant::where('slug', self::TENANT)->firstOrFail();
-        $this->admin = User::where('phone', '01000000009')->firstOrFail();
-        $this->teacher1 = User::where('phone', '01500000001')->firstOrFail();
-        $this->student1 = User::where('phone', '01281000001')->firstOrFail();
+        $this->admin = User::where('phone', '01000000000')->firstOrFail();
+        $this->teacher1 = User::where('phone', '0101000001')->firstOrFail();
+        $this->student1 = User::where('phone', '0101000101')->firstOrFail();
 
         $ctx = app(TenantContext::class);
         $ctx->setTenant($this->t1);
@@ -197,9 +197,9 @@ class EndpointSmokeTest extends TestCase
         $this->hit('POST', '/api/v1/auth/register', null, ['name' => 'New Reg', 'phone' => '01099998888', 'password' => 'password123', 'password_confirmation' => 'password123'], $T, ok: [202, 429], group: 'Auth');
         $this->hit('POST', '/api/v1/auth/otp/request', null, ['identifier' => '01099998888', 'purpose' => 'register'], $T, ok: [200, 429], group: 'Auth');
         $this->hit('POST', '/api/v1/auth/otp/verify', null, ['identifier' => '01099998888', 'purpose' => 'register', 'code' => '000000'], $T, ok: [200, 422, 429], group: 'Auth');
-        $this->hit('POST', '/api/v1/auth/login', null, ['identifier' => '01500000001', 'password' => 'password'], $T, ok: [200, 429], group: 'Auth');
-        $this->hit('POST', '/api/v1/auth/password/forgot', null, ['identifier' => '01500000001'], $T, ok: [200, 429], group: 'Auth');
-        $this->hit('POST', '/api/v1/auth/password/reset', null, ['identifier' => '01500000001', 'code' => '000000', 'password' => 'password123'], $T, ok: [200, 422, 429], group: 'Auth');
+        $this->hit('POST', '/api/v1/auth/login', null, ['identifier' => '0101000001', 'password' => 'password'], $T, ok: [200, 429], group: 'Auth');
+        $this->hit('POST', '/api/v1/auth/password/forgot', null, ['identifier' => '0101000001'], $T, ok: [200, 429], group: 'Auth');
+        $this->hit('POST', '/api/v1/auth/password/reset', null, ['identifier' => '0101000001', 'code' => '000000', 'password' => 'password123'], $T, ok: [200, 422, 429], group: 'Auth');
         $this->hit('GET', '/api/v1/me', $s, [], $T, group: 'Auth');
         $this->hit('POST', '/api/v1/auth/logout', $t, [], $T, group: 'Auth');
 
@@ -316,6 +316,14 @@ class EndpointSmokeTest extends TestCase
         $orderUuid = $this->pick($orderRes, 'data.uuid', 'data.order.uuid', 'data.order_uuid');
         $this->hit('POST', '/api/v1/checkout/pay', $this->payStudent, ['order' => $orderUuid, 'method' => 'wallet'], $T, ok: [200, 201, 402, 422], group: 'Commerce');
         $this->hit('POST', '/api/v1/webhooks/paymob', null, ['obj' => []], null, ok: [200, 400, 401, 403, 422], tolerant: true, group: 'Commerce');
+
+        // Invoices — the paid order above issued one; list → detail → PDF download.
+        $invList = $this->hit('GET', '/api/v1/invoices', $this->payStudent, [], $T, group: 'Commerce');
+        $invUuid = $this->pick($invList, 'data.0.uuid');
+        if ($invUuid) {
+            $this->hit('GET', "/api/v1/invoices/{$invUuid}", $this->payStudent, [], $T, group: 'Commerce');
+            $this->hit('GET', "/api/v1/invoices/{$invUuid}/download", $this->payStudent, [], $T, ok: [200], group: 'Commerce');
+        }
 
         // ---------------------------------------------------------------
         // ENGAGEMENT (student)
@@ -480,7 +488,7 @@ class EndpointSmokeTest extends TestCase
 
     private function report(): void
     {
-        $dir = 'C:/Users/IGFI/AppData/Local/Temp/claude/D--Web-repo-Edu-system/15df9bfb-5ed7-45cb-beea-1f25dd74797e/scratchpad';
+        $dir = rtrim(sys_get_temp_dir(), '/\\');
         @file_put_contents($dir.'/smoke-results.json', json_encode($this->results, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
         $counts = ['PASS' => 0, 'WARN' => 0, 'WARN5xx' => 0, 'FAIL' => 0];

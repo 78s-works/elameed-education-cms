@@ -1,6 +1,6 @@
 # Engagement Module
 
-> The Engagement module owns the learner's post-enrollment relationship with the academy: **course reviews** (a gated 1–5 rating + comment, upserted one-per-student-per-course and surfaced on the landing `testimonials` section), **lesson progress** tracking (watch %/seconds/position, feeding "continue watching" resume and an activity feed), **favorites** (a student's saved-courses shortlist), and **gamification** (append-only points, threshold-awarded badges, and a leaderboard). Teachers manage their own badge catalog and a single leaderboard-visibility toggle. Every model is tenant-scoped via `BelongsToTenant`; points and badges are tallied with `withoutGlobalScopes()` inside `PointsService` and re-filtered by `tenant_id` explicitly.
+> The Engagement module owns the learner's post-enrollment relationship with the academy: **course reviews** (a gated 1–5 rating + comment, upserted one-per-student-per-course and surfaced on the landing `testimonials` section), **lesson progress** tracking (watch %/seconds/position, feeding "continue watching" resume and an activity feed), **Q&A comments + a teacher forum** (M09: threaded lesson questions with polymorphic image/voice/file attachments, moderation, and an academy-wide forum aggregate), **favorites** (a student's saved-courses shortlist), and **gamification** (append-only points, threshold-awarded badges, and a leaderboard). Teachers manage their own badge catalog, moderate the forum, and hold a single leaderboard-visibility toggle. Every model is tenant-scoped via `BelongsToTenant`; points and badges are tallied with `withoutGlobalScopes()` inside `PointsService` and re-filtered by `tenant_id` explicitly.
 
 ## Models
 
@@ -10,6 +10,8 @@
 - **`PointsEntry`** — Append-only ledger row (`const UPDATED_AT = null`). Fields: `user_id`, `points` (integer), `reason`, `ref_type`, `ref_id`, `idempotency_key`. A student's score is `SUM(points)`; the `idempotency_key` guarantees each event scores once.
 - **`Badge`** — A teacher-defined award. Fields: `name`, `description`, `icon`, `points_threshold` (integer, nullable). A non-null threshold auto-awards the badge when a student's total crosses it.
 - **`StudentBadge`** — Join row recording a badge earned by a student (`user_id`, `badge_id`, `awarded_at`). No timestamps (`CREATED_AT`/`UPDATED_AT` both null); uses `awarded_at` instead.
+- **`Comment`** (M09) — A lesson question/comment (`uuid`, `lesson_id`, `user_id`, `body`, `status`, `is_hidden`, soft-deletes), or a **reply** when `parent_id` is set. Tenant-scoped, UUID route key. `topLevel()` / `visible()` scopes; `replies()`, `parent()`, and a **polymorphic `attachments()`** (`morphMany`). **Naming caveat:** this `Comment::attachments()` (user uploads) is distinct from `Lesson::attachments()` (media materials).
+- **`Attachment`** (M09) — A **polymorphic** user upload — image, voice note, or file (`uuid`, `attachable_type`/`attachable_id` nullable until linked, `kind` (`image`/`audio`/`file`), `storage_key`, `mime`, `size_bytes`, `duration_sec`, `uploaded_by`). Uploaded standalone, then linked to a comment via its `attachment_ids`. Tenant-scoped, UUID route key; `url()` serves from the attachments disk.
 
 ## Services / Support
 
@@ -22,13 +24,14 @@
 - **`rating`**: integer 1–5.
 - **Completion threshold**: `watch_percent >= 95` sets `completed_at` and (on first crossing only) awards points.
 - **Points `reason`**: e.g. `lesson.completed` (this module). Exams award elsewhere with `exam_points`.
-- No formal PHP enums in this module; the above are literal constraints in FormRequests / controllers.
+- **`CommentStatus`** (M09): `new` · `answered` · `closed` — the lifecycle of a lesson question. A staff reply flips a `new` question to `answered`.
+- The rating/completion values are literal constraints in FormRequests / controllers; `CommentStatus` is the module's one formal PHP enum.
 
 ---
 
 ## Endpoints
 
-21 endpoints: Reviews (2), Reviews · Teacher (5), Progress (3), Favorites (3), Gamification · Student (3), Gamification · Teacher (5). All sit under the `tenant` middleware group (Host resolution or `X-Tenant` override). Success envelopes are `{ "data": ... }` (paginated lists add `"meta"`); errors are `{ "error": { code, message, details } }`. Timestamps are ISO-8601 UTC.
+28 endpoints: Reviews (2), Reviews · Teacher (5), Progress (3), Q&A · Comments & Attachments (4), Favorites (3), Gamification · Student (3), Gamification · Teacher (5), Q&A · Teacher Forum (3). All sit under the `tenant` middleware group (Host resolution or `X-Tenant` override). Success envelopes are `{ "data": ... }` (paginated lists add `"meta"`); errors are `{ "error": { code, message, details } }`. Timestamps are ISO-8601 UTC.
 
 ### Reviews
 
@@ -306,6 +309,98 @@ Note: plain `{ "data": [...] }` (no pagination meta).
   ]
 }
 ```
+
+---
+
+### Q&A · Comments & Attachments
+
+Lesson Q&A (M09). Comments live per lesson; a top-level row is a question, a row with `parent_id` is a reply within that thread. **Shared by students and staff** (teacher/assistant) — the actor's tenant role decides privileges: a **student** needs access to the lesson (enrollment, or `is_free_preview`) and never sees hidden comments; **staff bypass** the access check and see held (hidden) comments. A **staff reply flips the parent question's `status` to `answered`**. Comments may carry image/voice/file **attachments**, uploaded first via `POST /attachments` and then referenced by `attachment_ids`.
+
+`{lesson}` binds by **id**; `{comment}` binds by **uuid**. Comments/attachments are tenant-scoped (`BelongsToTenant`).
+
+**`CommentResource` shape:**
+```json
+{
+  "uuid": "a1b2…-comment-uuid",
+  "body": "لم أفهم الجزء الأخير من الشرح.",
+  "status": "answered",
+  "is_hidden": false,
+  "author": { "uuid": "9b2c…", "name": "سارة محمد" },
+  "attachments": [
+    { "uuid": "7c3d…", "kind": "image", "url": "https://cdn.elameed.app/storage/attachments/…png", "mime": "image/png", "size_bytes": 84213, "duration_sec": null, "created_at": "2026-07-27T10:00:00+00:00" }
+  ],
+  "replies": [ { "uuid": "…", "body": "…", "status": "new", "author": { "…": "…" }, "attachments": [], "created_at": "…" } ],
+  "created_at": "2026-07-27T09:55:00+00:00"
+}
+```
+(In the teacher forum, each comment also carries a `lesson: { id, title, course_id }` block.)
+
+---
+
+#### `POST /v1/attachments`
+
+**Purpose:** Upload an attachment (image, voice note, or file) and get its uuid to reference in a comment's `attachment_ids`. The attachment is **unattached** until a comment links it; `kind` is derived server-side from the extension.
+**Auth:** 👤 Authenticated · **Middleware:** `tenant`, `auth:sanctum`, `active`, `throttle:60,1`
+
+**Request body** (`multipart/form-data`)
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `file` | file | yes | max 20 MB; `mimes:jpg,jpeg,png,gif,webp,mp3,m4a,ogg,wav,webm,pdf,doc,docx` |
+| `duration_sec` | integer | no | nullable, 0–86400 (for voice notes) |
+
+**Response 201** — an `AttachmentResource`:
+```json
+{ "data": { "uuid": "7c3d…", "kind": "image", "url": "https://…png", "mime": "image/png", "size_bytes": 84213, "duration_sec": null, "created_at": "2026-07-27T10:00:00+00:00" } }
+```
+
+**Errors:** `422` — missing file, unsupported type, or over 20 MB; `429` — over `throttle:60,1`; `401` / `403`.
+
+---
+
+#### `GET /v1/lessons/{lesson}/comments`
+
+**Purpose:** List a lesson's top-level comments (newest first, 20/page), each with its author, attachments, and threaded replies.
+**Auth:** 👤 Authenticated · **Middleware:** `tenant`, `auth:sanctum`, `active`
+
+**Path params:** `lesson` — lesson **id**.
+
+**Response 200** — `CommentResource` collection + `meta`. Students see **visible** comments only; staff also see hidden ones.
+
+**Errors:** `403` — student without access to the lesson (`You do not have access to this lesson.`); `401` / `403`.
+
+---
+
+#### `POST /v1/lessons/{lesson}/comments`
+
+**Purpose:** Post a question/comment on a lesson (`status: new`), optionally attaching prior uploads.
+**Auth:** 👤 Authenticated · **Middleware:** `tenant`, `auth:sanctum`, `active`
+
+**Path params:** `lesson` — lesson **id**.
+
+**Request body**
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `body` | string | yes | max 5000 |
+| `attachment_ids` | array | no | max 10; uuids of the **caller's own** still-unattached uploads (others silently ignored) |
+
+**Response 201** — the created `CommentResource` (`status: "new"`).
+
+**Errors:** `403` — student without lesson access; `422` — validation; `401` / `403`.
+
+---
+
+#### `POST /v1/comments/{comment}/replies`
+
+**Purpose:** Reply within a thread. Replying to a reply attaches to the same top-level parent. A **staff** reply flips the parent question's status to `answered`.
+**Auth:** 👤 Authenticated · **Middleware:** `tenant`, `auth:sanctum`, `active`
+
+**Path params:** `comment` — a comment **uuid** (the question or any reply in its thread).
+
+**Request body:** same as posting a comment (`body`, optional `attachment_ids`).
+
+**Response 201** — the created reply as a `CommentResource`.
+
+**Errors:** `403` — student without access to the thread's lesson; `404` — unknown comment / missing lesson; `422` — validation; `401` / `403`.
 
 ---
 
@@ -691,3 +786,54 @@ All teacher endpoints require the token holder to be an `active` member with the
 ```
 
 **Errors:** `422` — missing/non-boolean `hide_ranking`; `403` — not a teacher.
+
+---
+
+### Q&A · Teacher Forum
+
+The academy-wide forum + moderation (M09). The **"forum" (FR-M09-02) is not a separate table** — it is an aggregate query over `comments` (top-level questions) across the tenant's courses, filterable by `status`. Moderation flips a question's `status` or hides it from students. Tenant-scoping is via `BelongsToTenant` (list) and `{comment:uuid}` binding (a cross-tenant uuid → `404`). Moderation actions are audit-logged (`comment.moderated` / `comment.deleted`).
+
+**Common auth/middleware (all three):** 🧑‍🏫 role:teacher; middleware `tenant`, `auth:sanctum`, `active`, `role:teacher`.
+
+#### `GET /v1/teacher/forum`
+
+**Purpose:** Every lesson question across the academy's courses in one feed (top-level only, newest first, 20/page), each with its author, `lesson: { id, title, course_id }`, attachments, and replies.
+
+**Query params**
+| Param | Type | Required | Notes |
+|---|---|---|---|
+| `status` | string | no | filter by `new` \| `answered` \| `closed` |
+
+**Response 200** — `CommentResource` collection + `meta` (each item carries the `lesson` block).
+
+**Errors:** `422` — invalid `status`; `401` / `403`.
+
+---
+
+#### `PATCH /v1/teacher/comments/{comment}`
+
+**Purpose:** Moderate a comment — change its `status` and/or hide it from students.
+
+**Path params:** `comment` — a comment **uuid**.
+
+**Request body**
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `status` | string | no | `new` \| `answered` \| `closed` |
+| `is_hidden` | boolean | no | hide (`true`) / unhide (`false`) from students |
+
+**Response 200** — the updated `CommentResource` (with `replies`).
+
+**Errors:** `422` — validation; `404` — unknown/cross-tenant; `401` / `403`.
+
+---
+
+#### `DELETE /v1/teacher/comments/{comment}`
+
+**Purpose:** Delete a comment (soft delete).
+
+**Path params:** `comment` — a comment **uuid**.
+
+**Response 204** — no content.
+
+**Errors:** `404` — unknown/cross-tenant; `401` / `403`.

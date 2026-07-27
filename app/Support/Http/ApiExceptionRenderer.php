@@ -2,6 +2,8 @@
 
 namespace App\Support\Http;
 
+use App\Modules\Media\Exceptions\MediaException;
+use App\Support\Exceptions\DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -41,6 +43,18 @@ final class ApiExceptionRenderer
 
         if ($e instanceof ModelNotFoundException) {
             return self::envelope('not_found', 'Resource not found.', 404);
+        }
+
+        // Media pipeline failures (unready source, no transcode backend, transcode
+        // failed) map to a clean 409/422/503 envelope — never a raw 500.
+        if ($e instanceof MediaException) {
+            return self::envelope($e->errorCode, $e->getMessage(), $e->status);
+        }
+
+        // Business-rule rejections that carry their own machine code (e.g.
+        // plan_limit_reached, coupon_invalid) — see App\Support\Exceptions\DomainException.
+        if ($e instanceof DomainException) {
+            return self::envelope($e->errorCode, $e->getMessage(), $e->status, $e->details);
         }
 
         if ($e instanceof HttpExceptionInterface) {

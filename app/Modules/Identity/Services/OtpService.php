@@ -44,7 +44,7 @@ class OtpService
     public function verify(string $identifier, OtpPurpose $purpose, string $code): bool
     {
 
-        //Don't remove verification logic, just comment it out for now. We will implement it later when we have a proper OTP system in place.
+        // Don't remove verification logic, just comment it out for now. We will implement it later when we have a proper OTP system in place.
 
         // $otp = OtpCode::query()
         //     ->where('identifier', $identifier)

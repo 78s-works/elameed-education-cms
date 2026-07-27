@@ -28,6 +28,7 @@ class FulfillOrderService
         private readonly EnrollmentService $enrollments,
         private readonly InvoiceService $invoices,
         private readonly NotificationService $notifications,
+        private readonly InvoicePdfService $invoicePdf,
     ) {}
 
     public function fulfill(Order $order, string $funding): void
@@ -56,6 +57,10 @@ class FulfillOrderService
                 $legs[] = $this->leg(LedgerEntry::STUDENT_WALLET, LedgerEntry::CREDIT, (int) $item->price_minor, $wallet->id);
             }
         }
+
+        // A coupon discount (M21) is absorbed by the teacher's content revenue so
+        // the ledger balances against the discounted order total.
+        $contentTotal = max(0, $contentTotal - (int) $order->discount_minor);
 
         // Split content revenue (courses + packages) between teacher earnings and
         // platform commission.
@@ -90,9 +95,27 @@ class FulfillOrderService
                 }
             }
 
+            // Count the coupon redemption once, at first fulfilment (this method
+            // returns early on a replayed webhook, so it can't double-count).
+            if ($order->coupon_id !== null) {
+                DB::table('coupons')->where('id', $order->coupon_id)->increment('used_count');
+            }
+
             $order->update(['status' => OrderStatus::Paid->value]);
             $this->invoices->issueFor($order);
         });
+
+        // Render the invoice PDF outside the money transaction — best-effort, so a
+        // rendering hiccup never rolls back a completed purchase. The download
+        // endpoint also regenerates on demand if this is ever skipped.
+        try {
+            $invoice = $order->invoice()->first();
+            if ($invoice !== null) {
+                $this->invoicePdf->generate($invoice);
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
 
         $this->notifications->inApp($tenantId, (int) $order->user_id, 'purchase.completed', [
             'order_uuid' => $order->uuid,

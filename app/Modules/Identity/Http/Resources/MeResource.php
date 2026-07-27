@@ -9,8 +9,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * GET /me payload: the user, all their tenant memberships (identity spans
- * tenants), and their role in the current tenant. Granular permissions are
- * P1.5 — `permissions` is a placeholder until then.
+ * tenants), and their role + granular permissions in the current tenant (M18).
  *
  * @mixin User
  */
@@ -40,7 +39,9 @@ class MeResource extends JsonResource
             'current' => [
                 'tenant' => $currentTenant?->slug,
                 'role' => $currentMembership?->role->value,
-                'permissions' => [], // P1.5 (granular permissions)
+                // Granular permissions (M18): teachers get the full catalog,
+                // assistants their granted subset, everyone else none.
+                'permissions' => $currentMembership?->effectivePermissions() ?? [],
             ],
         ];
     }

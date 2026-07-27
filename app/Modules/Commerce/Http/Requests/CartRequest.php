@@ -24,6 +24,8 @@ class CartRequest extends FormRequest
             'items.*.course' => ['required_if:items.*.type,course', 'string'],
             'items.*.bundle' => ['required_if:items.*.type,bundle', 'string'],
             'items.*.amount_minor' => ['required_if:items.*.type,wallet_topup', 'integer', 'min:1'],
+            // Optional promo code (M21); validated + priced server-side.
+            'coupon' => ['sometimes', 'nullable', 'string', 'max:64'],
         ];
     }
 }

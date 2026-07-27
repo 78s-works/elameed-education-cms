@@ -16,8 +16,11 @@ class OrderResource extends JsonResource
         return [
             'uuid' => $this->uuid,
             'status' => $this->status->value,
+            'subtotal_minor' => $this->subtotal_minor ?? $this->total_minor,
+            'discount_minor' => (int) $this->discount_minor,
             'total_minor' => $this->total_minor,
             'currency' => $this->currency,
+            'coupon' => $this->whenLoaded('coupon', fn () => $this->coupon?->code),
             'items' => $this->whenLoaded('items', fn () => $this->items->map(fn ($i) => [
                 'type' => $i->item_type,
                 'title' => $i->title,

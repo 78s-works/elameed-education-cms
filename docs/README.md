@@ -27,20 +27,20 @@ Postman collection in [`postman/`](../postman).
 
 | Module | Endpoints | Reference |
 |---|--:|---|
-| Tenancy | 17 | [`api/tenancy.md`](api/tenancy.md) |
-| Identity | 28 | [`api/identity.md`](api/identity.md) |
+| Tenancy | 21 | [`api/tenancy.md`](api/tenancy.md) |
+| Identity | 34 | [`api/identity.md`](api/identity.md) |
 | Catalog | 23 | [`api/catalog.md`](api/catalog.md) |
 | Media | 20 | [`api/media.md`](api/media.md) |
-| Commerce | 4 | [`api/commerce.md`](api/commerce.md) |
+| Commerce | 10 | [`api/commerce.md`](api/commerce.md) |
 | Wallet | 2 | [`api/wallet.md`](api/wallet.md) |
 | Centers | 11 | [`api/centers.md`](api/centers.md) |
 | Assessment | 13 | [`api/assessment.md`](api/assessment.md) |
-| Engagement | 21 | [`api/engagement.md`](api/engagement.md) |
+| Engagement | 28 | [`api/engagement.md`](api/engagement.md) |
 | Notifications | 2 | [`api/notifications.md`](api/notifications.md) |
 | Reporting | 4 | [`api/reporting.md`](api/reporting.md) |
 | Platform Admin | 6 | [`api/platform-admin.md`](api/platform-admin.md) |
 | Billing | 8 | [`api/billing.md`](api/billing.md) |
-| **Total** | **159** | |
+| **Total** | **182** | |
 
 > These docs describe the **implemented** behaviour. Where it diverges from the
 > design-time spec in [`../docs (1)/04_API_Specification.md`](../../docs%20(1)/04_API_Specification.md),
@@ -82,8 +82,10 @@ EnsureRegisteredDomain  →  ResolveTenant  →  (route-model binding)
 - Authenticated routes add `auth:sanctum` + **`active`** (`EnsureActiveMembership`
   — the caller must be a non-suspended member of the resolved tenant).
 - Role-gated routes add **`role:teacher`** / **`role:parent`**
-  (`EnsureTenantRole`). Assistants share the teacher surface with scoped
-  permissions (P1.5).
+  (`EnsureTenantRole`; accepts a comma list, e.g. `role:teacher,assistant`).
+  Assistants share parts of the teacher surface, gated by granular
+  **`permission:<key>`** checks (`EnsurePermission`, M18) — teachers pass
+  implicitly; assistants need the granted key (`students` / `centers`).
 - **Platform admin** (`/admin/*`) uses **`central`** (`EnsureCentralHost`, host-pins
   the console to the admin host — off-host → `404`) + `auth:sanctum` + **`admin`**
   (`EnsurePlatformAdmin`) and is **not** tenant-scoped. A platform-admin token has
@@ -142,15 +144,20 @@ Failure — the API error envelope (`App\Support\Http\ApiExceptionRenderer`):
 | `401` | Unauthenticated → `code: unauthenticated` |
 | `403` | Forbidden (role / inactive / access check) → `code: forbidden` |
 | `404` | Not found (incl. cross-tenant resources) → `code: not_found` |
+| `403` | Forbidden — **plan limit** → `code: plan_limit_reached`, `details: { key, limit, used }` (subscription-package quota hit; see [billing](api/billing.md)) |
 | `409` | Conflict (state machine, idempotency) |
+| `412` | Precondition failed (`If-Match` mismatch on editor writes) → `code: precondition_failed` |
 | `422` | Validation error → `code: validation_error`, `details` = field errors |
-| `429` | Rate-limited (`throttle:otp`, `throttle:auth`, `throttle:120,1`) |
+| `429` | Rate-limited (`throttle:otp`, `throttle:auth`, `throttle:120,1`, `throttle:60,1`) |
 | `5xx` | Server error (internals never leaked in production) |
 
-> Only `401/403/404/405/429` get semantic `code` values from the renderer; other
-> 4xx thrown as `HttpException` fall through to `code: "error"` with the
-> exception's message. Laravel `ValidationException` always maps to `422`
-> `validation_error`.
+> Beyond the generic `401/403/404/405/412/429` codes, a `DomainException`
+> (`App\Support\Exceptions\DomainException`) carries its own machine `code` +
+> HTTP status through the renderer — currently **`plan_limit_reached`** (`403`,
+> with `details: { key, limit, used }`), thrown by `PlanLimitGuard` when a
+> subscription-package quota is exceeded. Other 4xx thrown as a bare
+> `HttpException` fall through to `code: "error"` with the exception's message.
+> Laravel `ValidationException` always maps to `422` `validation_error`.
 
 ### Versioning
 URI-versioned under `/v1`. Breaking changes ship under `/v2`.
@@ -164,7 +171,15 @@ URI-versioned under `/v1`. Breaking changes ship under `/v2`.
 | `tenant` (group) | `EnsureRegisteredDomain` + `ResolveTenant` | Reject unknown host, resolve tenant + bind RLS |
 | `auth:sanctum` | Sanctum guard | Require a valid bearer token |
 | `active` | `EnsureActiveMembership` | Require an active membership in the tenant |
-| `role:<role>` | `EnsureTenantRole` | Require that tenant role (`teacher`/`parent`/…) |
+| `role:<role>` | `EnsureTenantRole` | Require that tenant role (`teacher`/`assistant`/`parent`/…; accepts a comma list, e.g. `role:teacher,assistant`) |
+| `permission:<key>` | `EnsurePermission` | Require a granular assistant permission (`students`/`centers`); teachers pass implicitly (M18) |
 | `admin` | `EnsurePlatformAdmin` | Require the platform-admin flag |
+| `central` | `EnsureCentralHost` | Host-pin `/admin/*` to the central console host |
 | `signed` | Laravel signed-URL | Validate a signed upload URL |
-| `throttle:otp` / `throttle:auth` / `throttle:120,1` | Rate limiters | OTP/auth/webhook rate limits |
+| `throttle:otp` / `throttle:auth` / `throttle:120,1` / `throttle:60,1` | Rate limiters | OTP/auth/webhook/attachment-upload rate limits |
+
+> **`DynamicTenantCors`** (`App\Modules\Tenancy\Http\Middleware`) is **prepended**
+> to the global stack (before Laravel's `HandleCors`), not an alias. It reflects a
+> request `Origin` into `cors.allowed_origins` when the origin host is a registered,
+> active tenant host (subdomain **or** custom domain) or a central/dev host —
+> replacing the static localhost-only list.

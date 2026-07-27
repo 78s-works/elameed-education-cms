@@ -2,6 +2,7 @@
 
 namespace App\Modules\Media\Http\Controllers;
 
+use App\Modules\Billing\Services\PlanLimitGuard;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Media\Contracts\MediaProvider;
 use App\Modules\Media\Enums\MediaStatus;
@@ -34,6 +35,7 @@ class TeacherMediaController
         private readonly TenantContext $context,
         private readonly MediaProvider $provider,
         private readonly PlaybackService $playback,
+        private readonly PlanLimitGuard $limits,
     ) {}
 
     public function startUpload(Request $request): JsonResponse
@@ -57,9 +59,16 @@ class TeacherMediaController
         $asset->tenant_id = $tenantId;
 
         if ($request->hasFile('file')) {
+            $file = $request->file('file');
+
+            // Subscription-package storage ceiling (FR-M03-02): reject before we
+            // write the file when it would push the tenant over its media quota.
+            $this->limits->ensure($tenantId, 'storage_mb', max(1, (int) ceil($file->getSize() / 1048576)));
+
             // Direct local upload: store the source privately and mark it ready.
             // The encrypted, watermarked HLS is produced per viewer on first play.
-            $asset->source_key = $request->file('file')->store('media/source', $this->disk());
+            $asset->source_key = $file->store('media/source', $this->disk());
+            $asset->size_bytes = $file->getSize();
             $asset->status = MediaStatus::Ready->value;
             $asset->save();
 
@@ -99,7 +108,14 @@ class TeacherMediaController
         $path = "media/source/{$uuid}.mp4";
         Storage::disk($this->disk())->put($path, $bytes);
 
-        $asset->forceFill(['source_key' => $path, 'status' => MediaStatus::Ready->value])->save();
+        // Record the stored size so it counts toward the tenant's storage quota
+        // (FR-M03-02). The async path can't pre-check at startUpload (size is
+        // unknown then), so accounting lands here on receipt.
+        $asset->forceFill([
+            'source_key' => $path,
+            'size_bytes' => strlen($bytes),
+            'status' => MediaStatus::Ready->value,
+        ])->save();
         $this->attachThumbnail($asset);
 
         if ($asset->lesson_id) {

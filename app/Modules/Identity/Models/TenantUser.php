@@ -4,6 +4,7 @@ namespace App\Modules\Identity\Models;
 
 use App\Models\User;
 use App\Modules\Identity\Enums\MembershipStatus;
+use App\Modules\Identity\Enums\Permission;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Database\Eloquent\Model;
@@ -28,12 +29,14 @@ class TenantUser extends Model
         'user_id',
         'role',
         'status',
+        'permissions',
         'joined_at',
     ];
 
     protected $casts = [
         'role' => TenantUserRole::class,
         'status' => MembershipStatus::class,
+        'permissions' => 'array',
         'joined_at' => 'datetime',
     ];
 
@@ -50,5 +53,38 @@ class TenantUser extends Model
     public function isActive(): bool
     {
         return $this->status === MembershipStatus::Active;
+    }
+
+    /**
+     * Whether this membership grants a permission (M18). Teachers (academy
+     * owners) hold every permission implicitly; assistants only the ones granted
+     * on their row; any other role holds none.
+     */
+    public function hasPermission(string $permission): bool
+    {
+        if ($this->role === TenantUserRole::Teacher) {
+            return true;
+        }
+
+        if ($this->role !== TenantUserRole::Assistant) {
+            return false;
+        }
+
+        return in_array($permission, (array) ($this->permissions ?? []), true);
+    }
+
+    /**
+     * The effective permission set (teachers = the full catalog; assistants =
+     * the granted subset, intersected with the catalog so retired keys drop out).
+     *
+     * @return list<string>
+     */
+    public function effectivePermissions(): array
+    {
+        if ($this->role === TenantUserRole::Teacher) {
+            return Permission::values();
+        }
+
+        return array_values(array_intersect(Permission::values(), (array) ($this->permissions ?? [])));
     }
 }
