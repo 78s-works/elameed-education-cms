@@ -41,14 +41,19 @@ content regardless of visibility.
 | `CourseCategory` | `course_categories` | Teacher's taxonomy (name + grade/subject/level/section + sort_order). A course optionally belongs to one. |
 | `Course` | `courses` | The top-level product. Binds by `uuid` (teacher) / `slug` (public). Soft-deletes. Holds pricing, visibility, marketing copy (`learning_outcomes`, `requirements`, `audience`, `parts`). |
 | `Unit` | `units` | A section within a course (`course_id`), ordered by `sort_order`, with its own visibility. |
-| `Lesson` | `lessons` | A leaf under a unit (`unit_id` + inherited `course_id`). Has a video source — an uploaded `video_asset_id` and/or a `youtube_url`, selected by `active_video_source` — plus many attachments. Carries `duration_sec`, `max_views`, `is_free_preview`, `gating_rule`. |
+| `Lesson` | `lessons` | A leaf under a unit (`unit_id` + inherited `course_id`). Has a video source — an uploaded `video_asset_id` and/or a `youtube_url`, selected by `active_video_source` — plus many attachments and typed **sections**. Carries `duration_sec`, `max_views`, `is_free_preview`, `gating_rule`, and the time-box config `availability_days` / `max_extensions` / `extension_hours`. |
 | `LessonAttachment` | *(stored as `media_assets`)* | Not a dedicated model — attachments are `MediaAsset` rows of type `pdf` / `file` / `link` linked by `lesson_id`. The lesson's single `hls_video` asset is **not** an attachment. |
+| `LessonSection` | `lesson_sections` | A typed content section of a lesson (ordered): `lecture_video` / `assignment_video` / `pdf` / `assignment` / `quiz`. Points at one `MediaAsset` (`media_asset_id`) or one `Exam` (`exam_id`); `pdf` sections carry a `pdf_kind`. |
+| `ContentDependency` | `content_dependencies` | An unlock rule: section stays locked until a `trigger` (`submitted`/`passed`/`completed`) is met on `depends_on_section_id`. `enforcement` = `mandatory` (blocks) or `optional` (advisory). |
+| `LessonAccessWindow` | `lesson_access_windows` | A student's time-boxed access window for one lesson (`started_at`, `expires_at`, `locked_at`, `extensions_used`). Opens on first start/play; auto-locks at expiry. |
+| `LessonExtensionRequest` | `lesson_extension_requests` | A student's post-expiry request for more time; staff grant/deny. A grant extends the window by the lesson's `extension_hours`. |
 | `Bundle` | `bundles` | A **package**: a priced group of courses/units/lessons sold as one product. Binds by `uuid` (teacher) / `slug` (public). Soft-deletes. Holds pricing, visibility, and `access_days` (the window granted on purchase). |
 | `BundleItem` | `bundle_items` | One entry in a package — a `course` (`course_id`), a `unit` (`unit_id`), or a `lesson` (`lesson_id`), per `item_type`. Cascades away if the bundle or the referenced content is deleted. |
 
 **Hierarchy:** `Course` **hasMany** `Unit` **hasMany** `Lesson`. A lesson also stores `course_id`
 directly (copied from its unit on create) so it always agrees with its unit's course. A lesson
-**hasMany** attachments (MediaAsset, type != `hls_video`) and **belongsTo** one `videoAsset`.
+**hasMany** attachments (MediaAsset, type != `hls_video`) and **belongsTo** one `videoAsset`, and
+**hasMany** typed `LessonSection`s (each **hasMany** `ContentDependency` unlock rules).
 A `Bundle` **hasMany** `BundleItem`, each pointing at a `Course`, a `Unit`, or a `Lesson`.
 
 ### Key enums
@@ -70,9 +75,17 @@ A `Bundle` **hasMany** `BundleItem`, each pointing at a `Course`, a `Unit`, or a
 
 ## Endpoints
 
-30 endpoints total: 2 public catalogue + 2 public packages + 21 teacher authoring (4 categories,
+46 endpoints total: 2 public catalogue + 2 public packages + 21 teacher authoring (4 categories,
 5 courses, 4 units, 4 lessons, 3 attachments; the 21st is the 5th course route `show`) + 5 teacher
-packages.
+packages + **12 teacher lesson-content** (4 sections, 3 dependencies, 2 availability, 3
+extension-requests) + **4 student lesson content & access** (sections listing, start, access,
+extension-request).
+
+> **Lesson content model (built 2026-07-28).** A lesson is now composed of ordered **typed sections**
+> (`lesson_sections`), gated by **content dependencies** (unlock rules), and optionally **time-boxed**
+> by a per-student availability window with a countdown + extension flow. Playback is blocked once a
+> window is locked/expired (enforced in [Media](media.md)). See the model map in
+> `docs (1)/09_Lesson_Content_Model_Task_Mapping.md`.
 
 ### Public catalogue
 
@@ -831,6 +844,174 @@ was an upload).
 **Response** `204 No Content`.
 **Errors:** `404` lesson/attachment not found, attachment not on lesson, or the target is the lesson's
 `hls_video` (the video is not deletable via the attachments endpoint).
+
+---
+
+### Teacher · Lesson content sections
+
+Typed content sections of a lesson (FR-M04-01). A lesson holds an ordered list of sections, each with
+one payload per `type`: media types (`lecture_video`, `assignment_video`, `pdf`) reference a
+`media_asset_id`; exam types (`assignment`, `quiz`) reference an `exam_id`; only `pdf` accepts a
+`pdf_kind`. Sections bind by `id` and assert `section.lesson_id === lesson.id`.
+
+#### `GET /v1/teacher/lessons/{lesson}/sections`
+**Purpose:** List a lesson's sections (media + dependencies eager-loaded), ordered by `sort_order`.
+**Auth:** 🧑‍🏫 role:teacher · **Middleware:** tenant, auth:sanctum, active, role:teacher
+**Response** `200 OK` — collection of `LessonSectionResource`:
+```json
+{
+  "data": [
+    {
+      "id": 5, "lesson_id": 101, "type": "quiz", "title": "Checkpoint",
+      "sort_order": 1, "media_asset_id": null, "exam_id": 42, "pdf_kind": null,
+      "dependencies": []
+    },
+    {
+      "id": 6, "lesson_id": 101, "type": "pdf", "title": "Answer sheet",
+      "sort_order": 2, "media_asset_id": 88, "exam_id": null, "pdf_kind": "exam_answer_sheet",
+      "dependencies": [
+        { "id": 1, "section_id": 6, "depends_on_section_id": 5, "trigger": "submitted", "enforcement": "mandatory" }
+      ]
+    }
+  ]
+}
+```
+
+#### `POST /v1/teacher/lessons/{lesson}/sections`
+**Purpose:** Create a typed section.
+**Auth:** 🧑‍🏫 role:teacher · **Middleware:** tenant, auth:sanctum, active, role:teacher
+
+**Request body** (`LessonSectionRequest`):
+```json
+{ "type": "pdf", "title": "Answer sheet", "media_asset_id": 88, "pdf_kind": "exam_answer_sheet", "sort_order": 2 }
+```
+| Field | Rules |
+|---|---|
+| `type` | required, enum `lecture_video\|assignment_video\|pdf\|assignment\|quiz` |
+| `title` | nullable, string, max 255 |
+| `sort_order` | nullable, integer, min 0 |
+| `media_asset_id` | nullable, integer — **required for media types** (`lecture_video`/`assignment_video`/`pdf`) |
+| `exam_id` | nullable, integer — **required for exam types** (`assignment`/`quiz`) |
+| `pdf_kind` | nullable, enum `lecture_notes\|assignment_answer_sheet\|exam_answer_sheet` — **only valid on a `pdf` section** |
+
+**Response** `201 Created` — `LessonSectionResource`.
+**Errors:** `404` lesson not found; `422` validation (missing payload for the type, `pdf_kind` on non-pdf).
+
+#### `PUT /v1/teacher/lessons/{lesson}/sections/{section}` · `DELETE …/sections/{section}`
+Update / delete a section (same body/rules as create). **Response** `200 OK` `LessonSectionResource` / `204 No Content`. **Errors:** `404` section not in lesson; `422` validation.
+
+---
+
+### Teacher · Content dependencies (unlock rules)
+
+Gate one section behind another. Only `mandatory` rules lock the dependent section; `optional` ones are
+advisory. The prerequisite must be a **sibling section of the same lesson**; a section cannot depend on
+itself; the `(section, depends_on)` pair is unique.
+
+#### `GET /v1/teacher/lessons/{lesson}/sections/{section}/dependencies`
+List the rules gating `section`. **Response** `200 OK` — collection of `ContentDependencyResource`.
+
+#### `POST /v1/teacher/lessons/{lesson}/sections/{section}/dependencies`
+**Request body** (`ContentDependencyRequest`):
+```json
+{ "depends_on_section_id": 5, "trigger": "submitted", "enforcement": "mandatory" }
+```
+| Field | Rules |
+|---|---|
+| `depends_on_section_id` | required, integer — a sibling section id of the same lesson |
+| `trigger` | required, enum `submitted\|passed\|completed` |
+| `enforcement` | required, enum `mandatory\|optional` |
+
+Trigger evaluation: exam/assignment sections check `exam_attempts` (`submitted` = any submitted attempt;
+`passed` = score ≥ the exam's `pass_percent`); video sections check `lesson_progress.completed_at`;
+PDFs have no completion signal and never gate.
+
+**Response** `201 Created` — `ContentDependencyResource`.
+**Errors:** `404` section not in lesson; `422` self-dependency, prerequisite not in the lesson, or duplicate pair.
+
+#### `DELETE /v1/teacher/lessons/{lesson}/sections/{section}/dependencies/{dependency}`
+Remove a rule. **Response** `204 No Content`. **Errors:** `404` not found / not on section.
+
+---
+
+### Teacher · Lesson availability (time-box)
+
+Configure the per-lesson access window. `availability_days: null` = unlimited (no window).
+
+#### `GET /v1/teacher/lessons/{lesson}/availability`
+**Response** `200 OK`:
+```json
+{ "data": { "lesson_id": 101, "availability_days": 7, "max_extensions": 1, "extension_hours": 24 } }
+```
+
+#### `PUT /v1/teacher/lessons/{lesson}/availability`
+**Request body** (`LessonAvailabilityRequest`):
+| Field | Rules |
+|---|---|
+| `availability_days` | present, nullable, integer 1–3650 (null = unlimited) |
+| `max_extensions` | nullable, integer 0–100 |
+| `extension_hours` | nullable, integer 1–8760 |
+
+**Response** `200 OK` — same payload as `GET`.
+
+---
+
+### Teacher · Extension requests
+
+Staff review of student window-extension requests.
+
+#### `GET /v1/teacher/extension-requests`
+List **pending** requests across the academy's lessons (newest first). **Response** `200 OK` — collection of `LessonExtensionRequestResource`.
+
+#### `POST /v1/teacher/extension-requests/{extensionRequest}/grant` · `…/deny`
+Decide a pending request. **Grant** pushes the window's `expires_at` out by the lesson's `extension_hours`
+(from now if already expired, else from current expiry), clears the lock, and consumes one extension.
+**Response** `200 OK`:
+```json
+{ "data": { "id": 3, "access_window_id": 9, "user_id": 51, "lesson_id": 101, "status": "granted", "requested_at": "…", "decided_at": "…" } }
+```
+**Errors:** `404` request not in tenant; `409` already decided.
+
+---
+
+### Student · Lesson content & access
+
+Student-facing views of the content model. Auth: `auth:sanctum` + `active` membership (any role);
+lesson access is checked (free-preview lessons are open, otherwise an enrollment is required).
+
+#### `GET /v1/lessons/{lesson}/sections`
+**Purpose:** The student's ordered sections, each with a computed `locked` flag from the **mandatory**
+dependencies (optional rules never lock).
+**Auth:** 👤 student · **Middleware:** tenant, auth:sanctum, active
+**Response** `200 OK` — collection of `LessonSectionResource`, each including `"locked": true|false`.
+**Errors:** `403` no lesson access.
+
+#### `POST /v1/lessons/{lesson}/start`
+**Purpose:** Confirm + open the access window (starts the countdown). Idempotent — returns the running
+window if already started. No-op window for unlimited lessons.
+**Auth:** 👤 student · **Response** `200 OK`:
+```json
+{
+  "data": {
+    "lesson_id": 101, "has_window": true, "availability_days": 7,
+    "max_extensions": 1, "extension_hours": 24, "started": true,
+    "started_at": "2026-07-28T09:00:00+00:00", "expires_at": "2026-08-04T09:00:00+00:00",
+    "remaining_sec": 604800, "locked": false, "extensions_used": 0
+  }
+}
+```
+**Errors:** `403` no lesson access.
+
+#### `GET /v1/lessons/{lesson}/access`
+**Purpose:** Countdown state for the timer (same payload shape as `start`; `started:false` + null window
+fields when not yet started). `remaining_sec` is server-computed — the client must not trust its own clock.
+**Auth:** 👤 student · **Response** `200 OK`.
+
+#### `POST /v1/lessons/{lesson}/extension-request`
+**Purpose:** Request more time. Requires a started window, `max_extensions > 0`, remaining allowance, and
+no already-pending request.
+**Auth:** 👤 student · **Response** `201 Created` — `LessonExtensionRequestResource`.
+**Errors:** `403` no lesson access; `409` not started / extensions disabled / none remaining / already pending.
 
 ---
 

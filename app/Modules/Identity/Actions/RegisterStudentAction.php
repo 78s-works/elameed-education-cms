@@ -26,19 +26,22 @@ class RegisterStudentAction
 {
     public function __construct(private readonly OtpService $otp) {}
 
-    public function handle(Tenant $tenant, array $data): User
+    public function handle(Tenant $tenant, array $data, string $verificationMode = 'auto'): User
     {
         $phone = $data['phone'];
         $email = $data['email'] ?? null;
+        $sendOtp = $verificationMode === 'otp';
 
-        if (User::query()->where('phone', $phone)->exists()
-            || ($email !== null && User::query()->where('email', $email)->exists())) {
+        if (
+            User::query()->where('phone', $phone)->exists()
+            || ($email !== null && User::query()->where('email', $email)->exists())
+        ) {
             throw ValidationException::withMessages([
                 'phone' => __('An account with these details already exists. Please log in.'),
             ]);
         }
 
-        $user = DB::transaction(function () use ($tenant, $data, $phone, $email): User {
+        $user = DB::transaction(function () use ($tenant, $data, $phone, $email, $sendOtp): User {
             $user = User::create([
                 'name' => $data['name'],
                 'phone' => $phone,
@@ -47,11 +50,16 @@ class RegisterStudentAction
                 'locale' => $data['locale'] ?? 'ar',
             ]);
 
+            if (! $sendOtp) {
+                $user->forceFill(['phone_verified_at' => now()])->save();
+            }
+
             TenantUser::create([
                 'tenant_id' => $tenant->getKey(),
                 'user_id' => $user->getKey(),
                 'role' => TenantUserRole::Student->value,
-                'status' => MembershipStatus::Pending->value,
+                'status' => $sendOtp ? MembershipStatus::Pending->value : MembershipStatus::Active->value,
+                'joined_at' => $sendOtp ? null : now(),
             ]);
 
             // Per-academy registration details from the sign-up form.
@@ -63,7 +71,9 @@ class RegisterStudentAction
             return $user;
         });
 
-        $this->otp->issue($phone, OtpPurpose::Register);
+        if ($sendOtp) {
+            $this->otp->issue($phone, OtpPurpose::Register);
+        }
 
         return $user;
     }

@@ -44,6 +44,7 @@ class TeacherProfile extends Model
         'hide_ranking',
         'login_enabled',
         'registration_enabled',
+        'registration_verification_mode',
         'custom_landing_enabled',
     ];
 
@@ -53,6 +54,7 @@ class TeacherProfile extends Model
         // (firstOrNew) report the toggles as ON.
         'login_enabled' => true,
         'registration_enabled' => true,
+        'registration_verification_mode' => 'auto',
         // Custom landing is opt-in: a fresh academy uses the CMS sections until
         // the teacher turns this on (mirrors the DB default).
         'custom_landing_enabled' => false,
@@ -66,6 +68,7 @@ class TeacherProfile extends Model
         'hide_ranking' => 'boolean',
         'login_enabled' => 'boolean',
         'registration_enabled' => 'boolean',
+        'registration_verification_mode' => 'string',
         'custom_landing_enabled' => 'boolean',
     ];
 }

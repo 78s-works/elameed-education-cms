@@ -38,6 +38,9 @@ class Lesson extends Model
         'active_video_source',
         'duration_sec',
         'max_views',
+        'availability_days',
+        'max_extensions',
+        'extension_hours',
         'is_free_preview',
         'gating_rule',
         'visibility',
@@ -50,7 +53,16 @@ class Lesson extends Model
         'publish_at' => 'datetime',
         'is_free_preview' => 'boolean',
         'gating_rule' => 'array',
+        'availability_days' => 'integer',
+        'max_extensions' => 'integer',
+        'extension_hours' => 'integer',
     ];
+
+    /** Does this lesson enforce a time-boxed access window? */
+    public function hasAvailabilityWindow(): bool
+    {
+        return $this->availability_days !== null && $this->availability_days > 0;
+    }
 
     public function unit(): BelongsTo
     {
@@ -75,6 +87,12 @@ class Lesson extends Model
     public function assets(): HasMany
     {
         return $this->attachments();
+    }
+
+    /** Typed content sections (FR-M04-01). Order via the section `ordered` scope. */
+    public function sections(): HasMany
+    {
+        return $this->hasMany(LessonSection::class);
     }
 
     /** The ONE video of a lesson (referenced by lessons.video_asset_id). */

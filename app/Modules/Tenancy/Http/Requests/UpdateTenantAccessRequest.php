@@ -3,6 +3,7 @@
 namespace App\Modules\Tenancy\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateTenantAccessRequest extends FormRequest
 {
@@ -17,6 +18,7 @@ class UpdateTenantAccessRequest extends FormRequest
         return [
             'login_enabled' => ['sometimes', 'boolean'],
             'registration_enabled' => ['sometimes', 'boolean'],
+            'registration_verification_mode' => ['sometimes', 'string', Rule::in(['auto', 'otp'])],
         ];
     }
 }

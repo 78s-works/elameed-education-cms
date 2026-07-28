@@ -31,9 +31,14 @@ class LessonResource extends JsonResource
             'youtube_url' => $this->youtube_url,
             'visibility' => $this->visibility?->value,
             'publish_at' => $this->publish_at?->toIso8601String(),
+            // Time-boxed access config (null availability_days = unlimited).
+            'availability_days' => $this->availability_days,
+            'max_extensions' => $this->max_extensions,
+            'extension_hours' => $this->extension_hours,
             // One (uploaded) video when loaded + the many attachments (pdf/file/link).
             'video' => $this->whenLoaded('videoAsset', fn () => $this->videoAsset ? new MediaAssetResource($this->videoAsset) : null),
             'attachments' => MediaAssetResource::collection($this->whenLoaded('attachments')),
+            'sections' => LessonSectionResource::collection($this->whenLoaded('sections')),
         ];
     }
 }

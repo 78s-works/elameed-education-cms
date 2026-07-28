@@ -228,6 +228,14 @@ Tenant-resolved (`Host` / `X-Tenant`) + `auth:sanctum` + `active` membership.
 **Auth:** 👤 Authenticated
 **Middleware:** `tenant`, `auth:sanctum`, `active`
 
+> **Lesson availability window (built 2026-07-28).** When the lesson has a time-box
+> (`lessons.availability_days` set — see [Catalog › Lesson availability](catalog.md#teacher--lesson-availability-time-box)),
+> authorize **opens the student's access window on first play** and then **rejects playback with `403`
+> once the window is locked/expired** (`"This lesson's access period has expired."`). The same check runs
+> at key-release time, so a token issued earlier also stops the moment the window closes. Students recover
+> time via `POST /v1/lessons/{lesson}/extension-request` (granted by staff). Lessons with no
+> `availability_days` are unlimited and unaffected.
+
 **Request headers**
 | Header | Required | Example |
 |---|---|---|

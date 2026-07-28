@@ -65,7 +65,7 @@ assistant = granted subset, everyone else `[]`).
 |---|---|---|--:|---|
 | 1 | [Tenancy](#1-tenancy) | M01, M02 | 21 | Host→tenant resolution, branding, public + teacher landing pages, academy access switches, site metadata, custom domains |
 | 2 | [Identity](#2-identity) | M02, M11, M13, M18 | 34 | Auth/OTP, `/me`, parent portal, teacher student **and assistant** management (granular RBAC) |
-| 3 | [Catalog](#3-catalog) | M04 | 30 | Course → unit → lesson → attachment hierarchy + categories + packages (bundles) |
+| 3 | [Catalog](#3-catalog) | M04 | 46 | Course → unit → lesson (→ typed sections, unlock rules, availability window) + attachments + categories + packages (bundles) |
 | 4 | [Media](#4-media) | M04, M22 | 20 | Protected video: encrypted-HLS pipeline + remote OVH provider, watermarking |
 | 5 | [Commerce](#5-commerce) | M05, M06, M21 | 10 | Checkout (quote/order/pay) + coupons + Paymob gateway + webhook + invoices |
 | 6 | [Wallet](#6-wallet) | M05 | 2 | Student wallet balance + append-only ledger (read-only API) |
@@ -77,7 +77,7 @@ assistant = granted subset, everyone else `[]`).
 | 12 | [Platform Admin](#12-platform-admin) | M01, M17 | 6 | Cross-tenant operator console (tenants + overview + audit) |
 | 13 | [Billing](#13-billing) | M03 | 8 | Teacher subscription packages: admin plan CRUD + tenant assignment + teacher view + limit enforcement |
 
-**Total: 182 documented endpoints.**
+**Total: 198 documented endpoints.**
 
 ---
 
@@ -117,8 +117,9 @@ activity, notifications, parent linking).
 attachment` hierarchy, the category taxonomy, and **packages** (bundles that
 group courses/units into one sellable product).
 
-- **Models:** `CourseCategory`, `Course`, `Unit`, `Lesson`, `Bundle`, `BundleItem`. **Attachments are not a dedicated model** — they are Media's `MediaAsset` rows (type `pdf`/`file`/`link`) linked by `lesson_id`; the lesson's `hls_video` asset is excluded from the attachments list.
-- **Enums:** `ContentVisibility` (`visible`/`hidden`/`scheduled`).
+- **Models:** `CourseCategory`, `Course`, `Unit`, `Lesson`, `Bundle`, `BundleItem`, plus the lesson content-model set `LessonSection`, `ContentDependency`, `LessonAccessWindow`, `LessonExtensionRequest`. **Attachments are not a dedicated model** — they are Media's `MediaAsset` rows (type `pdf`/`file`/`link`) linked by `lesson_id`; the lesson's `hls_video` asset is excluded from the attachments list.
+- **Enums:** `ContentVisibility` (`visible`/`hidden`/`scheduled`); `LessonSectionType`, `PdfKind`, `DependencyTrigger`, `DependencyEnforcement`, `ExtensionStatus`.
+- **Lesson content model (built 2026-07-28):** a lesson is composed of ordered typed **sections** (`lesson_sections`), gated by **content dependencies** (unlock rules; mandatory blocks, optional advisory), and optionally **time-boxed** by a per-student availability window (`lesson_access_windows`) with a countdown + staff-granted **extensions** (`lesson_extension_requests`). Playback is blocked once a window locks/expires (enforced in Media). Teacher CRUD under `/teacher/lessons/{id}/sections[/dependencies]`, `/teacher/lessons/{id}/availability`, `/teacher/extension-requests`; student `GET /lessons/{id}/sections`, `POST /lessons/{id}/start`, `GET /lessons/{id}/access`, `POST /lessons/{id}/extension-request`. Full map: `docs (1)/09_Lesson_Content_Model_Task_Mapping.md`.
 - **Packages (bundles):** a `Bundle` has many `BundleItem`s, each a `course`, `unit`, or `lesson`. Teacher CRUD at `/teacher/bundles` (items set inline as an `items` array); public browse at `/bundles`. Buying one (Commerce `bundle` item) grants an enrollment per item — a course item opens the whole course (lessons + exams), a unit item opens that chapter's lessons, a lesson item opens just that lesson. The package's `access_days` sets the window.
 - **Notes / gotchas:** binding keys differ — courses and bundles bind by `slug` (public) vs `uuid` (teacher); units/lessons by numeric `id`; attachments by `uuid`. "Published" = `visibility == visible` AND (`publish_at` null or past). Slug is server-generated and immutable. Public list is fixed at 20/page, newest-first (no `sort`/`per_page`); filters: `filter[category_id|grade|subject]`, `q`.
 

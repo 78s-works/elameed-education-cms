@@ -57,15 +57,21 @@ class AuthTest extends TestCase
         return $user;
     }
 
-    private function setAccess(bool $login, bool $registration): void
+    private function setAccess(bool $login, bool $registration, string $verificationMode = 'auto'): void
     {
-        $profile = new TeacherProfile(['login_enabled' => $login, 'registration_enabled' => $registration]);
+        $profile = new TeacherProfile([
+            'login_enabled' => $login,
+            'registration_enabled' => $registration,
+            'registration_verification_mode' => $verificationMode,
+        ]);
         $profile->tenant_id = $this->tenant->id; // no request context in tests
         $profile->save();
     }
 
-    public function test_register_sends_otp_and_verify_activates_membership_and_issues_token(): void
+    public function test_register_automatically_verifies_and_activates_membership(): void
     {
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+
         $register = $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
             'name' => 'Sara',
             'phone' => '01000000001',
@@ -77,30 +83,47 @@ class AuthTest extends TestCase
             'guardian_phone' => '01099999999',
         ]);
 
-        $register->assertStatus(202)->assertJsonPath('data.requires_otp', true);
+        $register->assertCreated()->assertJsonPath('data.message', 'Registration completed. Your account is verified.');
 
         $user = User::where('phone', '01000000001')->firstOrFail();
         $membership = TenantUser::where('user_id', $user->id)->firstOrFail();
-        $this->assertSame(MembershipStatus::Pending, $membership->status);
-        $this->assertNull($user->phone_verified_at);
-
-        $code = $this->sms->lastCode();
-        $this->assertNotNull($code);
-
-        $verify = $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/otp/verify', [
-            'identifier' => '01000000001',
-            'purpose' => 'register',
-            'code' => $code,
-        ]);
-
-        $verify->assertOk()->assertJsonStructure(['data' => ['token', 'user']]);
-        $this->assertNotNull($user->fresh()->phone_verified_at);
+        $this->assertSame(MembershipStatus::Active, $membership->status);
+        $this->assertNotNull($user->phone_verified_at);
         $this->assertSame(MembershipStatus::Active, $membership->fresh()->status);
+        $this->assertCount(0, $this->sms->messages);
 
         // Registration captured the sign-up form's extra fields.
         $this->assertDatabaseHas('student_profiles', [
-            'user_id' => $user->id, 'gender' => 'أنثى', 'governorate' => 'القاهرة', 'academic_year' => 'الثالث الثانوي',
+            'user_id' => $user->id,
+            'gender' => 'أنثى',
+            'governorate' => 'القاهرة',
+            'academic_year' => 'الثالث الثانوي',
         ]);
+    }
+
+    public function test_register_sends_otp_when_teacher_chooses_otp_verification(): void
+    {
+        $this->setAccess(login: true, registration: true, verificationMode: 'otp');
+
+        $register = $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Sara OTP',
+            'phone' => '01000000014',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'gender' => 'أنثى',
+            'governorate' => 'القاهرة',
+            'academic_year' => 'الثالث الثانوي',
+            'guardian_phone' => '01099999998',
+        ]);
+
+        $register->assertStatus(202)->assertJsonPath('data.requires_otp', true);
+
+        $user = User::where('phone', '01000000014')->firstOrFail();
+        $membership = TenantUser::where('user_id', $user->id)->firstOrFail();
+
+        $this->assertSame(MembershipStatus::Pending, $membership->status);
+        $this->assertNull($user->phone_verified_at);
+        $this->assertNotNull($this->sms->lastCode());
     }
 
     public function test_register_rejects_duplicate_phone(): void
@@ -175,7 +198,9 @@ class AuthTest extends TestCase
         $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/login', [
             'identifier' => '01000000010',
             'password' => 'secret123',
-        ])->assertStatus(403)->assertJsonPath('error.code', 'forbidden');
+        ])->assertStatus(403)
+            ->assertJsonPath('error.code', 'forbidden')
+            ->assertJsonPath('error.message', 'You are not allowed to login now.');
     }
 
     public function test_teacher_can_still_sign_in_when_login_is_disabled(): void

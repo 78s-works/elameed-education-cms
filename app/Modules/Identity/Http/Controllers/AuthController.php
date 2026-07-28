@@ -42,21 +42,31 @@ class AuthController
         }
 
         // The teacher can close self-registration for their own academy.
-        $profile = TeacherProfile::query()->first();
+        $profile = TeacherProfile::query()->firstOrNew([]);
 
-        if ($profile !== null && ! $profile->registration_enabled) {
+        if (! $profile->registration_enabled) {
             throw new AccessDeniedHttpException(__('Registration is currently closed for this academy.'));
         }
 
-        $action->handle($tenant, $request->validated());
+        $verificationMode = (string) ($profile->registration_verification_mode ?? 'auto');
+        $user = $action->handle($tenant, $request->validated(), $verificationMode);
+
+        if ($verificationMode === 'otp') {
+            return response()->json([
+                'data' => [
+                    'message' => __('A verification code has been sent.'),
+                    'identifier' => $request->validated('phone'),
+                    'requires_otp' => true,
+                ],
+            ], 202);
+        }
 
         return response()->json([
             'data' => [
-                'message' => __('A verification code has been sent.'),
-                'identifier' => $request->validated('phone'),
-                'requires_otp' => true,
+                'message' => __('Registration completed. Your account is verified.'),
+                'user' => (new UserResource($user->fresh()))->resolve($request),
             ],
-        ], 202);
+        ], 201);
     }
 
     /** POST /auth/otp/request — (re)send a code. Generic response, no enumeration. */

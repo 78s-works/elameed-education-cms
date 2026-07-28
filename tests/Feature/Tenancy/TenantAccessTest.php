@@ -50,7 +50,8 @@ class TenantAccessTest extends TestCase
         $this->withHeaders($this->h)->getJson('/api/v1/teacher/access')
             ->assertOk()
             ->assertJsonPath('data.login_enabled', true)
-            ->assertJsonPath('data.registration_enabled', true);
+            ->assertJsonPath('data.registration_enabled', true)
+            ->assertJsonPath('data.registration_verification_mode', 'auto');
     }
 
     public function test_teacher_can_toggle_access_and_it_persists(): void
@@ -60,21 +61,25 @@ class TenantAccessTest extends TestCase
         $this->withHeaders($this->h)->putJson('/api/v1/teacher/access', [
             'login_enabled' => false,
             'registration_enabled' => false,
+            'registration_verification_mode' => 'otp',
         ])->assertOk()
             ->assertJsonPath('data.login_enabled', false)
-            ->assertJsonPath('data.registration_enabled', false);
+            ->assertJsonPath('data.registration_enabled', false)
+            ->assertJsonPath('data.registration_verification_mode', 'otp');
 
         // A partial update toggles one flag without clobbering the other.
         $this->withHeaders($this->h)->putJson('/api/v1/teacher/access', [
             'registration_enabled' => true,
         ])->assertOk()
             ->assertJsonPath('data.login_enabled', false)
-            ->assertJsonPath('data.registration_enabled', true);
+            ->assertJsonPath('data.registration_enabled', true)
+            ->assertJsonPath('data.registration_verification_mode', 'otp');
 
         $this->assertDatabaseHas('teacher_profiles', [
             'tenant_id' => $this->tenant->id,
             'login_enabled' => false,
             'registration_enabled' => true,
+            'registration_verification_mode' => 'otp',
         ]);
     }
 
@@ -100,6 +105,7 @@ class TenantAccessTest extends TestCase
         $this->withHeaders($this->h)->getJson('/api/v1/tenant/context')
             ->assertOk()
             ->assertJsonPath('data.auth.login_enabled', false)
-            ->assertJsonPath('data.auth.registration_enabled', true);
+            ->assertJsonPath('data.auth.registration_enabled', true)
+            ->assertJsonPath('data.auth.registration_verification_mode', 'auto');
     }
 }

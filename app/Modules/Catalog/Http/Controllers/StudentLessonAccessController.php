@@ -1,0 +1,87 @@
+<?php
+
+namespace App\Modules\Catalog\Http\Controllers;
+
+use App\Modules\Catalog\Http\Resources\LessonExtensionRequestResource;
+use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\LessonAccessWindow;
+use App\Modules\Catalog\Services\LessonAvailabilityService;
+use App\Modules\Commerce\Services\EnrollmentService;
+use App\Modules\Tenancy\Services\TenantContext;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+/**
+ * Student lesson-access + countdown ("Lesson Availability & Extension Requests"
+ * + "Lesson Countdown Timer"):
+ *   POST /lessons/{lesson}/start              → confirm + open the window
+ *   GET  /lessons/{lesson}/access             → remaining time for the timer
+ *   POST /lessons/{lesson}/extension-request  → ask for more time after expiry
+ *
+ * {lesson} binds by id and is tenant-scoped.
+ */
+class StudentLessonAccessController
+{
+    public function __construct(
+        private readonly LessonAvailabilityService $availability,
+        private readonly EnrollmentService $enrollments,
+        private readonly TenantContext $context,
+    ) {}
+
+    public function start(Request $request, Lesson $lesson): JsonResponse
+    {
+        $tenantId = (int) $this->context->tenantOrFail()->getKey();
+        $user = $request->user();
+        $this->assertLessonAccess($tenantId, $user->getKey(), $lesson);
+
+        $window = $this->availability->start($tenantId, (int) $user->getKey(), $lesson);
+
+        return response()->json(['data' => $this->windowPayload($lesson, $window)]);
+    }
+
+    public function access(Request $request, Lesson $lesson): JsonResponse
+    {
+        $tenantId = (int) $this->context->tenantOrFail()->getKey();
+        $user = $request->user();
+
+        $window = $this->availability->windowFor($tenantId, (int) $user->getKey(), $lesson);
+
+        return response()->json(['data' => $this->windowPayload($lesson, $window)]);
+    }
+
+    public function requestExtension(Request $request, Lesson $lesson): JsonResponse
+    {
+        $tenantId = (int) $this->context->tenantOrFail()->getKey();
+        $user = $request->user();
+        $this->assertLessonAccess($tenantId, $user->getKey(), $lesson);
+
+        $extension = $this->availability->requestExtension($tenantId, (int) $user->getKey(), $lesson);
+
+        return (new LessonExtensionRequestResource($extension))->response()->setStatusCode(201);
+    }
+
+    private function assertLessonAccess(int $tenantId, int|string $userId, Lesson $lesson): void
+    {
+        if (! $lesson->is_free_preview
+            && ! $this->enrollments->hasLessonAccess($tenantId, (int) $userId, $lesson)) {
+            abort(403, 'You do not have access to this lesson.');
+        }
+    }
+
+    private function windowPayload(Lesson $lesson, ?LessonAccessWindow $window): array
+    {
+        return [
+            'lesson_id' => $lesson->id,
+            'has_window' => $lesson->hasAvailabilityWindow(),
+            'availability_days' => $lesson->availability_days,
+            'max_extensions' => (int) $lesson->max_extensions,
+            'extension_hours' => (int) $lesson->extension_hours,
+            'started' => $window !== null,
+            'started_at' => $window?->started_at?->toIso8601String(),
+            'expires_at' => $window?->expires_at?->toIso8601String(),
+            'remaining_sec' => $window?->remainingSeconds(),
+            'locked' => $window?->isLocked() ?? false,
+            'extensions_used' => (int) ($window?->extensions_used ?? 0),
+        ];
+    }
+}

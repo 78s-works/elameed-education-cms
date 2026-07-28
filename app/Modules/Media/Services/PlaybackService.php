@@ -4,6 +4,7 @@ namespace App\Modules\Media\Services;
 
 use App\Models\User;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Services\LessonAvailabilityService;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
@@ -36,6 +37,7 @@ class PlaybackService
         private readonly EnrollmentService $enrollments,
         private readonly MediaProvider $provider,
         private readonly HlsTranscoder $transcoder,
+        private readonly LessonAvailabilityService $availability,
     ) {}
 
     /**
@@ -173,6 +175,13 @@ class PlaybackService
         if ($user === null
             || ! $this->enrollments->hasLessonAccess($tenantId, $user->getKey(), $lesson)) {
             throw new AccessDeniedHttpException('You do not have access to this lesson.');
+        }
+
+        // Time-boxed availability window (M04): opens on first play, auto-locks at
+        // expiry. Null when the lesson has no window (unlimited access).
+        $window = $this->availability->start($tenantId, $user->getKey(), $lesson);
+        if ($window !== null && $window->isLocked()) {
+            throw new AccessDeniedHttpException("This lesson's access period has expired.");
         }
     }
 

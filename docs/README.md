@@ -29,7 +29,7 @@ Postman collection in [`postman/`](../postman).
 |---|--:|---|
 | Tenancy | 21 | [`api/tenancy.md`](api/tenancy.md) |
 | Identity | 34 | [`api/identity.md`](api/identity.md) |
-| Catalog | 23 | [`api/catalog.md`](api/catalog.md) |
+| Catalog | 39 | [`api/catalog.md`](api/catalog.md) |
 | Media | 20 | [`api/media.md`](api/media.md) |
 | Commerce | 10 | [`api/commerce.md`](api/commerce.md) |
 | Wallet | 2 | [`api/wallet.md`](api/wallet.md) |
@@ -40,7 +40,7 @@ Postman collection in [`postman/`](../postman).
 | Reporting | 4 | [`api/reporting.md`](api/reporting.md) |
 | Platform Admin | 6 | [`api/platform-admin.md`](api/platform-admin.md) |
 | Billing | 8 | [`api/billing.md`](api/billing.md) |
-| **Total** | **182** | |
+| **Total** | **198** | |
 
 > These docs describe the **implemented** behaviour. Where it diverges from the
 > design-time spec in [`../docs (1)/04_API_Specification.md`](../../docs%20(1)/04_API_Specification.md),

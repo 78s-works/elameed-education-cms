@@ -10,11 +10,17 @@ use App\Modules\Billing\Http\Controllers\Teacher\PackageController as TeacherPac
 use App\Modules\Billing\Http\Controllers\Teacher\SubscriptionController;
 use App\Modules\Catalog\Http\Controllers\PublicBundleController;
 use App\Modules\Catalog\Http\Controllers\PublicCatalogController;
+use App\Modules\Catalog\Http\Controllers\StudentLessonAccessController;
+use App\Modules\Catalog\Http\Controllers\StudentLessonSectionsController;
 use App\Modules\Catalog\Http\Controllers\Teacher\BundleController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CategoryController;
+use App\Modules\Catalog\Http\Controllers\Teacher\ContentDependencyController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CourseController;
+use App\Modules\Catalog\Http\Controllers\Teacher\ExtensionRequestController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonAttachmentController;
+use App\Modules\Catalog\Http\Controllers\Teacher\LessonAvailabilityController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonController;
+use App\Modules\Catalog\Http\Controllers\Teacher\LessonSectionController;
 use App\Modules\Catalog\Http\Controllers\Teacher\UnitController;
 use App\Modules\Centers\Http\Controllers\RedeemCodeController;
 use App\Modules\Centers\Http\Controllers\Teacher\ActivationCodeController;
@@ -205,6 +211,17 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::get('/me/activity', [ProgressController::class, 'activity']);
         Route::get('/me/resume', [ProgressController::class, 'resume']);
 
+        // Typed content sections + unlock state (M04, FR-M04-01/06). Each section
+        // carries a `locked` flag from the mandatory content-dependency rules.
+        Route::get('/lessons/{lesson}/sections', [StudentLessonSectionsController::class, 'index']);
+
+        // Lesson availability window + countdown (M04). `start` opens the time-box
+        // (confirm dialog), `access` feeds the countdown timer, and a student may
+        // request an extension after expiry.
+        Route::post('/lessons/{lesson}/start', [StudentLessonAccessController::class, 'start']);
+        Route::get('/lessons/{lesson}/access', [StudentLessonAccessController::class, 'access']);
+        Route::post('/lessons/{lesson}/extension-request', [StudentLessonAccessController::class, 'requestExtension']);
+
         // Q&A comments + polymorphic attachments (M09). Shared by students (need
         // lesson access) and staff; {lesson} binds by id, {comment} by uuid.
         Route::post('/attachments', [AttachmentController::class, 'store'])->middleware('throttle:60,1');
@@ -318,6 +335,26 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::get('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'index']);
             Route::post('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'store']);
             Route::delete('/teacher/lessons/{lesson}/attachments/{attachment:uuid}', [LessonAttachmentController::class, 'destroy']);
+
+            // Flexible lesson content: typed sections (FR-M04-01) + their unlock
+            // rules (Content Dependencies). Sections/dependencies bind by id (own data).
+            Route::get('/teacher/lessons/{lesson}/sections', [LessonSectionController::class, 'index']);
+            Route::post('/teacher/lessons/{lesson}/sections', [LessonSectionController::class, 'store']);
+            Route::put('/teacher/lessons/{lesson}/sections/{section}', [LessonSectionController::class, 'update']);
+            Route::delete('/teacher/lessons/{lesson}/sections/{section}', [LessonSectionController::class, 'destroy']);
+
+            Route::get('/teacher/lessons/{lesson}/sections/{section}/dependencies', [ContentDependencyController::class, 'index']);
+            Route::post('/teacher/lessons/{lesson}/sections/{section}/dependencies', [ContentDependencyController::class, 'store']);
+            Route::delete('/teacher/lessons/{lesson}/sections/{section}/dependencies/{dependency}', [ContentDependencyController::class, 'destroy']);
+
+            // Lesson time-box config (availability window + extension allowance).
+            Route::get('/teacher/lessons/{lesson}/availability', [LessonAvailabilityController::class, 'show']);
+            Route::put('/teacher/lessons/{lesson}/availability', [LessonAvailabilityController::class, 'update']);
+
+            // Student extension requests — staff review + grant/deny.
+            Route::get('/teacher/extension-requests', [ExtensionRequestController::class, 'index']);
+            Route::post('/teacher/extension-requests/{extensionRequest}/grant', [ExtensionRequestController::class, 'grant']);
+            Route::post('/teacher/extension-requests/{extensionRequest}/deny', [ExtensionRequestController::class, 'deny']);
 
             // Packages/bundles (M04) — group courses + units into a sellable package.
             // Buying one enrolls the student in every item it contains.

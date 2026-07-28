@@ -33,12 +33,13 @@ class TenantAccessController
         return TeacherProfile::query()->firstOrNew([]);
     }
 
-    /** @return array{login_enabled: bool, registration_enabled: bool} */
+    /** @return array{login_enabled: bool, registration_enabled: bool, registration_verification_mode: string} */
     private function payload(TeacherProfile $profile): array
     {
         return [
             'login_enabled' => (bool) $profile->login_enabled,
             'registration_enabled' => (bool) $profile->registration_enabled,
+            'registration_verification_mode' => (string) ($profile->registration_verification_mode ?? 'auto'),
         ];
     }
 }

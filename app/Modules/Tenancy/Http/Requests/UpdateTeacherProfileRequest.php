@@ -22,6 +22,7 @@ class UpdateTeacherProfileRequest extends FormRequest
             'primary_color' => ['nullable', 'string', $hex],
             'secondary_color' => ['nullable', 'string', $hex],
             'bio' => ['nullable', 'string', 'max:2000'],
+            'registration_verification_mode' => ['sometimes', 'string', 'in:auto,otp'],
 
             'contact' => ['nullable', 'array'],
             'contact.phone' => ['nullable', 'string', 'max:32'],

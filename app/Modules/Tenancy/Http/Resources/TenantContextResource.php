@@ -48,6 +48,7 @@ class TenantContextResource extends JsonResource
                 // the forms when off; the API enforces it regardless (see M11).
                 'login_enabled' => (bool) ($profile?->login_enabled ?? true),
                 'registration_enabled' => (bool) ($profile?->registration_enabled ?? true),
+                'registration_verification_mode' => (string) ($profile?->registration_verification_mode ?? 'auto'),
             ],
             'landing' => [
                 // Landing mode (teacher-controlled via PUT /teacher/custom-landing).

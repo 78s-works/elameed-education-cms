@@ -96,7 +96,7 @@ class LoginAction
         $profile = TeacherProfile::query()->first();
 
         if ($profile !== null && ! $profile->login_enabled) {
-            throw new AccessDeniedHttpException(__('Sign-in is currently disabled for this academy.'));
+            throw new AccessDeniedHttpException(__('You are not allowed to login now.'));
         }
     }
 

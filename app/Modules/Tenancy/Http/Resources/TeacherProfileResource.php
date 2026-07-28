@@ -22,6 +22,7 @@ class TeacherProfileResource extends JsonResource
             'bio' => $this->bio,
             'contact' => $this->contact ?? (object) [],
             'socials' => $this->socials ?? (object) [],
+            'registration_verification_mode' => (string) ($this->registration_verification_mode ?? 'auto'),
         ];
     }
 }
