@@ -72,7 +72,7 @@ assistant = granted subset, everyone else `[]`).
 | 7 | [Centers](#7-centers) | M12 | 11 | Physical branches, activation/recharge codes, attendance, offline sync, code redeem |
 | 8 | [Assessment](#8-assessment) | M08 | 13 | Exams/quizzes/assignments: student attempts + teacher authoring & grading |
 | 9 | [Engagement](#9-engagement) | M09, M10, M19, M20 | 28 | Reviews, lesson progress, Q&A comments + teacher forum + attachments, favorites, gamification |
-| 10 | [Notifications](#10-notifications) | M10, M14 | 2 | In-app notification feed + SMS-sender abstraction |
+| 10 | [Notifications](#10-notifications) | M10, M14 | 4 | In-app notification feed + per-tenant SMS (WE Connekio) settings |
 | 11 | [Reporting](#11-reporting) | M17, M18 | 4 | Student/teacher summary reports + audit log |
 | 12 | [Platform Admin](#12-platform-admin) | M01, M17 | 6 | Cross-tenant operator console (tenants + overview + audit) |
 | 13 | [Billing](#13-billing) | M03 | 8 | Teacher subscription packages: admin plan CRUD + tenant assignment + teacher view + limit enforcement |
@@ -199,8 +199,8 @@ reviews, lesson-progress tracking (resume/activity), favorites, and gamification
 `app/Modules/Notifications` — a per-user in-app notification feed plus an
 SMS-sender abstraction.
 
-- **Models:** `Notification` (tenant-scoped: `channel`/`type`/`payload`/`status`/`sent_at`/`read_at`). Services: `NotificationService`, `SmsSender` contract with a `LogSmsSender` driver.
-- **Endpoints:** list the current user's notifications; mark one read.
+- **Models:** `Notification` (tenant-scoped: `channel`/`type`/`payload`/`status`/`sent_at`/`read_at`); `NotificationChannelSetting` (per-tenant, encrypted `config` — holds each academy's own WE SMS credentials). Services: `NotificationService`, `SmsSender` contract with `LogSmsSender` (dev) and `ConnekioSmsSender` (WE Business SMS, per-tenant self-service) drivers.
+- **Endpoints:** list the current user's notifications; mark one read; teacher get/put own SMS settings.
 
 → [`api/notifications.md`](api/notifications.md)
 

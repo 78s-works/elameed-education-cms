@@ -55,12 +55,19 @@ use App\Modules\Media\Http\Controllers\PlaybackController;
 use App\Modules\Media\Http\Controllers\RemotePlaybackController;
 use App\Modules\Media\Http\Controllers\Teacher\RemoteVideoController;
 use App\Modules\Media\Http\Controllers\TeacherMediaController;
+use App\Modules\Notifications\Http\Controllers\Admin\EventController as AdminNotificationEventController;
+use App\Modules\Notifications\Http\Controllers\Admin\TemplateController as AdminNotificationTemplateController;
+use App\Modules\Notifications\Http\Controllers\Admin\TranslationController as AdminNotificationTranslationController;
+use App\Modules\Notifications\Http\Controllers\Admin\TypeController as AdminNotificationTypeController;
+use App\Modules\Notifications\Http\Controllers\InboxController;
 use App\Modules\Notifications\Http\Controllers\NotificationController;
+use App\Modules\Notifications\Http\Controllers\Teacher\TeacherNotificationController;
 use App\Modules\PlatformAdmin\Http\Controllers\AdminReportController;
 use App\Modules\PlatformAdmin\Http\Controllers\AdminTenantController;
 use App\Modules\Reporting\Http\Controllers\AuditLogController;
 use App\Modules\Reporting\Http\Controllers\StudentCoursesController;
 use App\Modules\Reporting\Http\Controllers\TeacherReportsController;
+use App\Modules\Notifications\Http\Controllers\Teacher\SmsSettingsController;
 use App\Modules\Tenancy\Http\Controllers\Teacher\DomainController;
 use App\Modules\Tenancy\Http\Controllers\TeacherCustomLandingController;
 use App\Modules\Tenancy\Http\Controllers\TeacherLandingController;
@@ -136,6 +143,24 @@ Route::prefix('v1')->middleware(['central', 'auth:sanctum', 'admin'])->group(fun
 
     Route::get('/admin/tenants/{tenant:uuid}/subscription', [TenantSubscriptionController::class, 'show']);
     Route::post('/admin/tenants/{tenant:uuid}/subscription', [TenantSubscriptionController::class, 'store']);
+
+    // Notification engine (doc 10 §9.1) — system scope: author the type catalog,
+    // system templates, and translations; audit dispatched events. Types bind by
+    // `key` (dotted module.entity.event); templates addressed by {type}/{channel}.
+    Route::get('/admin/notifications/types', [AdminNotificationTypeController::class, 'index']);
+    Route::post('/admin/notifications/types', [AdminNotificationTypeController::class, 'store']);
+    Route::get('/admin/notifications/types/{type:key}', [AdminNotificationTypeController::class, 'show']);
+    Route::put('/admin/notifications/types/{type:key}', [AdminNotificationTypeController::class, 'update']);
+    Route::delete('/admin/notifications/types/{type:key}', [AdminNotificationTypeController::class, 'destroy']);
+
+    Route::get('/admin/notifications/types/{type:key}/templates', [AdminNotificationTemplateController::class, 'index']);
+    Route::post('/admin/notifications/types/{type:key}/templates', [AdminNotificationTemplateController::class, 'store']);
+
+    Route::put('/admin/notifications/types/{type:key}/templates/{channel}/translations', [AdminNotificationTranslationController::class, 'upsert']);
+    Route::delete('/admin/notifications/types/{type:key}/templates/{channel}/translations/{language}', [AdminNotificationTranslationController::class, 'destroy']);
+
+    Route::get('/admin/notifications/events', [AdminNotificationEventController::class, 'index']);
+    Route::get('/admin/notifications/events/{event}', [AdminNotificationEventController::class, 'show']);
 });
 
 /*
@@ -243,6 +268,14 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::get('/me/notifications', [NotificationController::class, 'index']);
         Route::post('/me/notifications/{notification}/read', [NotificationController::class, 'read']);
 
+        // Engine inbox (doc 10 §7) — in-app `database` notifications from the
+        // notification engine (new_notifications). Separate from the legacy
+        // /me/notifications above; both are read-only student surfaces.
+        Route::get('/me/inbox', [InboxController::class, 'index']);
+        Route::get('/me/inbox/unread-count', [InboxController::class, 'unreadCount']);
+        Route::post('/me/inbox/read-all', [InboxController::class, 'readAll']);
+        Route::post('/me/inbox/{message}/read', [InboxController::class, 'read']);
+
         // Exams & assignments — student side (M08)
         Route::get('/exams', [AttemptController::class, 'index']);
         Route::post('/exams/{exam:uuid}/attempts', [AttemptController::class, 'start']);
@@ -273,6 +306,12 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             // Mirrored in GET /tenant/context → data.landing.custom_enabled.
             Route::get('/teacher/custom-landing', [TeacherCustomLandingController::class, 'show']);
             Route::put('/teacher/custom-landing', [TeacherCustomLandingController::class, 'update']);
+
+            // SMS settings (M10) — teacher stores his own WE Business SMS
+            // (Connekio) credentials; SMS only works for the tenant once set +
+            // enabled. Password is write-only; stored encrypted per tenant.
+            Route::get('/teacher/sms-settings', [SmsSettingsController::class, 'show']);
+            Route::put('/teacher/sms-settings', [SmsSettingsController::class, 'update']);
 
             // Custom domains (M02) — attach the academy's own domain. The host
             // resolves to this tenant once the DNS record is set; the auto
@@ -431,6 +470,15 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::get('/teacher/assistants/{assistant:uuid}', [AssistantController::class, 'show']);
             Route::patch('/teacher/assistants/{assistant:uuid}', [AssistantController::class, 'update']);
             Route::delete('/teacher/assistants/{assistant:uuid}', [AssistantController::class, 'destroy']);
+
+            // Notification engine (doc 10 §9.2) — tenant override surface for
+            // `ready` system notifications. First edit materializes a copy-on-write
+            // tenant template; teachers can't author types/templates from scratch.
+            Route::get('/teacher/notifications', [TeacherNotificationController::class, 'index']);
+            Route::get('/teacher/notifications/{type:key}', [TeacherNotificationController::class, 'show']);
+            Route::put('/teacher/notifications/{type:key}/channels', [TeacherNotificationController::class, 'overrideChannel']);
+            Route::put('/teacher/notifications/{type:key}/channels/{channel}/translations', [TeacherNotificationController::class, 'upsertTranslation']);
+            Route::delete('/teacher/notifications/{type:key}/channels/{channel}', [TeacherNotificationController::class, 'reset']);
         });
 
         // Shared teacher + assistant surface (M18): an assistant reaches these

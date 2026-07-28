@@ -3,6 +3,7 @@
 namespace App\Modules\Notifications\Providers;
 
 use App\Modules\Notifications\Contracts\SmsSender;
+use App\Modules\Notifications\Sms\ConnekioSmsSender;
 use App\Modules\Notifications\Sms\LogSmsSender;
 use Illuminate\Support\ServiceProvider;
 
@@ -12,6 +13,7 @@ class NotificationsServiceProvider extends ServiceProvider
     {
         $this->app->bind(SmsSender::class, function (): SmsSender {
             return match (config('sms.driver')) {
+                'connekio' => new ConnekioSmsSender,
                 'log' => new LogSmsSender,
                 default => new LogSmsSender,
             };

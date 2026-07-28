@@ -92,7 +92,7 @@ Confirmed **absent from the route surface** (no controller/route exists) and tra
 | ~~Course **bundles** (packages)~~ | ✅ Done (2026-07-21) | `/teacher/bundles` CRUD + public `/bundles` + `bundle` checkout item; see [catalog.md](api/catalog.md#public--packages) & [commerce.md](api/commerce.md#packages-bundles) |
 | **Fawry** payments; **real Paymob** go-live | P1.5 | only `PaymobGateway` stub + `/webhooks/paymob`; no `/webhooks/fawry` |
 | Q&A / comments + teacher **forum** | P2 | no `/comments`, `/questions` (non-exam), `/forum` routes |
-| **WhatsApp + email** channels, templates, bulk broadcast | P1.5/P2 | `LogSmsSender` only; no `/broadcast` route |
+| **WhatsApp + email** channels, templates, bulk broadcast | P1.5/P2 | SMS live via `ConnekioSmsSender` (per-tenant, send-only) + `/teacher/sms-settings`; WhatsApp/email/DLR/broadcast not built |
 | Teacher subscription **billing automation** (self-serve pay) | P1.5 | Billing (M03) is read-only + admin-assign; no teacher checkout for plans |
 | **Excel / PDF** report export; import tooling | P2 | only `/teacher/students/{uuid}/export`; no `/reports/*/export` |
 | **Support tickets** + help center | P2 | no `/tickets`, `/support` routes |
@@ -115,7 +115,7 @@ Confirmed **absent from the route surface** (no controller/route exists) and tra
 |---|---|---|
 | Payments | `PaymobGateway` stub | real Paymob merchant go-live + reconciliation, then Fawry |
 | Media transcode | **lazy synchronous FFmpeg** in-request, local disk, single rendition | queued/pre-generated workers, **object storage (S3/MinIO)**, **nginx edge**, multi-bitrate (also fixes B2's blast radius) |
-| Messaging | `LogSmsSender` (log only) | real SMS/WhatsApp/email providers + templates |
+| Messaging | `LogSmsSender` (dev) + `ConnekioSmsSender` (per-tenant WE SMS, send-only) | delivery reports (DLR), WhatsApp/email providers + templates |
 | Infra | local MySQL, `CORS *`, `queue=database/sync` | managed cloud, tight CORS, real queue workers |
 
 ## 7. Recommended deeper reviews (not covered by a smoke test)
