@@ -8,6 +8,7 @@ use App\Modules\Notifications\Enums\TemplateScope;
 use App\Modules\Notifications\Models\NotificationTemplate;
 use App\Modules\Notifications\Models\NotificationTemplateTranslation;
 use App\Modules\Notifications\Models\NotificationType;
+use App\Modules\Notifications\Services\Resolvers\NotificationTemplateResolver;
 use App\Support\Exceptions\DomainException;
 
 /**
