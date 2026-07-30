@@ -14,6 +14,7 @@ class MediaAssetResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
+            'id' => $this->id,
             'uuid' => $this->uuid,
             'type' => $this->type->value,
             'status' => $this->status->value,
