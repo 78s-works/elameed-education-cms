@@ -820,6 +820,74 @@ When the caller supplied `password`, the response is just `{ "data": { "uuid": "
 
 ---
 
+#### `POST /v1/teacher/students/import`
+**Purpose:** Bulk-update matched students' history/profile fields from an `.xlsx`/`.csv` upload. Rows are matched by `phone` or `email` against existing users who are students of **this** tenant; each matched student's `StudentProfile` fields are updated. Returns a per-row `applied` | `duplicate` | `failed` result plus a summary (mirrors the Centers offline-sync contract). Audit-logged as `student.history_imported`.
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
+
+**Request headers:** Host, Accept, `Authorization: Bearer <token>`, `Content-Type: multipart/form-data`.
+
+**Request body** (`StudentImportRequest`) — one file part:
+| Field | Rules |
+|---|---|
+| `file` | required, file, extension `xlsx`/`csv`/`txt`, ≤ `identity.import_max_kb` (10 MB) |
+
+The **first row is the header**. Recognised columns (case-insensitive): a match key (`phone` or `email`) plus the canonical `StudentProfile` history fields — `gender`, `governorate`, `region`, `academic_year`, `education_type`, `guardian_phone`. Unknown columns are ignored; blank cells are skipped (never blank out existing data). Each row is validated with `StudentProfile::rules()`.
+
+Per-row outcomes:
+- **applied** — the student was matched and their history updated.
+- **duplicate** — a row references a student already applied earlier in the same file.
+- **failed** — no matching student, no history fields present, or a field failed validation (message included).
+
+**Response** `200`
+```json
+{
+  "data": {
+    "summary": { "total": 3, "applied": 2, "duplicate": 0, "failed": 1 },
+    "results": [
+      { "row": 2, "status": "applied", "student_uuid": "3f7a..." },
+      { "row": 3, "status": "applied", "student_uuid": "9c2b..." },
+      { "row": 4, "status": "failed", "message": "No matching student for the given phone/email." }
+    ]
+  }
+}
+```
+**Errors:** `422` missing/oversize file or wrong extension; `401`/`403`.
+
+---
+
+#### Manual content-access overrides
+
+Grant a specific student **direct access to a locked lesson/section/unit**, bypassing unmet Content
+Dependencies / progression gates (and revoke it). An active override short-circuits both
+`ContentUnlockService` and `LessonProgressionService` to unlocked; a `unit` override covers every
+section/lesson under it, a `lesson` override covers that lesson + its sections, a `section` override
+covers just that section. Grant/revoke are audit-logged (`content_access.override_granted` /
+`content_access.override_revoked`).
+
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`) · **Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
+
+##### `GET /v1/teacher/students/{student:uuid}/content-overrides`
+List the student's **active** overrides (newest first). **Response** `200` — collection of `ContentAccessOverrideResource` (`id`, `target_type`, `target_id`, `note`, `granted_at`, `active`).
+
+##### `POST /v1/teacher/students/{student:uuid}/content-overrides`
+**Request body** (`GrantContentOverrideRequest`):
+```json
+{ "target_type": "lesson", "target_id": 101, "note": "catch-up" }
+```
+| Field | Rules |
+|---|---|
+| `target_type` | required, enum `lesson\|section\|unit` |
+| `target_id` | required, integer; must be a lesson/section/unit **in this tenant** |
+| `note` | nullable, string, max 500 |
+
+Idempotent: re-granting the same target re-activates/refreshes the existing row. **Response** `201 Created` — `ContentAccessOverrideResource`. **Errors:** `404` not a student here; `422` target not in tenant.
+
+##### `DELETE /v1/teacher/students/{student:uuid}/content-overrides/{override}`
+Revoke an override (soft — retained for the audit trail). **Response** `204 No Content`. **Errors:** `404` not a student here / override not found for this student.
+
+---
+
 ### Teacher · Enrollments
 
 A teacher granting/revoking a student's course access directly (no payment) — e.g. offline/center students. Manual grants are marked `source=manual`.

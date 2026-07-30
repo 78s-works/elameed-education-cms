@@ -23,11 +23,13 @@ class ExamAttempt extends Model
     protected $fillable = [
         'exam_id', 'user_id', 'attempt_number', 'started_at', 'submitted_at',
         'score', 'max_score', 'status', 'answers', 'needs_manual_grade',
+        'feedback', 'corrected_file',
     ];
 
     protected $casts = [
         'status' => AttemptStatus::class,
         'answers' => 'array',
+        'corrected_file' => 'array',
         'needs_manual_grade' => 'boolean',
         'started_at' => 'datetime',
         'submitted_at' => 'datetime',

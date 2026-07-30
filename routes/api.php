@@ -24,6 +24,7 @@ use App\Modules\Catalog\Http\Controllers\Teacher\LessonAvailabilityController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonSectionController;
 use App\Modules\Catalog\Http\Controllers\Teacher\UnitController;
+use App\Modules\Catalog\Http\Controllers\Teacher\UnitDependencyController;
 use App\Modules\Centers\Http\Controllers\RedeemCodeController;
 use App\Modules\Centers\Http\Controllers\Teacher\ActivationCodeController;
 use App\Modules\Centers\Http\Controllers\Teacher\AttendanceController;
@@ -47,7 +48,9 @@ use App\Modules\Identity\Http\Controllers\MeController;
 use App\Modules\Identity\Http\Controllers\ParentController;
 use App\Modules\Identity\Http\Controllers\Teacher\AssistantController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentActivityController;
+use App\Modules\Identity\Http\Controllers\Teacher\StudentContentOverrideController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentController;
+use App\Modules\Identity\Http\Controllers\Teacher\StudentImportController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentEnrollmentController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentFinanceController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentParentController;
@@ -284,6 +287,8 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::post('/exams/{exam:uuid}/attempts/{attempt}/files', [AttemptController::class, 'uploadFile']);
         Route::post('/exams/{exam:uuid}/attempts/{attempt}/submit', [AttemptController::class, 'submit']);
         Route::get('/exams/{exam:uuid}/attempts/{attempt}', [AttemptController::class, 'result']);
+        // Download the teacher's corrected/annotated file for the student's attempt.
+        Route::get('/exams/{exam:uuid}/attempts/{attempt}/corrected-file', [AttemptController::class, 'downloadCorrectedFile']);
         // Student asks for extra time on an exam/quiz (doc 11 R6).
         Route::post('/exams/{exam:uuid}/extension-request', [AttemptController::class, 'requestExtension']);
 
@@ -370,6 +375,13 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::post('/teacher/courses/{course:uuid}/units', [UnitController::class, 'store']);
             Route::put('/teacher/courses/{course:uuid}/units/{unit}', [UnitController::class, 'update']);
             Route::delete('/teacher/courses/{course:uuid}/units/{unit}', [UnitController::class, 'destroy']);
+
+            // Configurable, non-sequential unit prerequisites (extends R5.3). A unit
+            // can depend on another unit's exam or a specific section (not just the
+            // immediately previous unit). Bind by id (own data).
+            Route::get('/teacher/units/{unit}/dependencies', [UnitDependencyController::class, 'index']);
+            Route::post('/teacher/units/{unit}/dependencies', [UnitDependencyController::class, 'store']);
+            Route::delete('/teacher/units/{unit}/dependencies/{dependency}', [UnitDependencyController::class, 'destroy']);
 
             Route::get('/teacher/units/{unit}/lessons', [LessonController::class, 'index']);
             Route::post('/teacher/units/{unit}/lessons', [LessonController::class, 'store']);
@@ -528,11 +540,19 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::middleware('permission:students')->group(function (): void {
                 Route::get('/teacher/students', [StudentController::class, 'index']);
                 Route::post('/teacher/students', [StudentController::class, 'store']);
+                // Bulk student-history import (.xlsx/.csv) — matched by phone/email.
+                Route::post('/teacher/students/import', StudentImportController::class);
                 Route::get('/teacher/students/{student:uuid}', [StudentController::class, 'show']);
                 Route::patch('/teacher/students/{student:uuid}', [StudentController::class, 'update']);
                 Route::delete('/teacher/students/{student:uuid}', [StudentController::class, 'destroy']);
                 Route::post('/teacher/students/{student:uuid}/reset-password', [StudentController::class, 'resetPassword']);
                 Route::get('/teacher/students/{student:uuid}/export', [StudentController::class, 'export']);
+
+                // Manual content-access overrides — grant/revoke a student direct
+                // access to a locked lesson/section/unit, bypassing dependencies.
+                Route::get('/teacher/students/{student:uuid}/content-overrides', [StudentContentOverrideController::class, 'index']);
+                Route::post('/teacher/students/{student:uuid}/content-overrides', [StudentContentOverrideController::class, 'store']);
+                Route::delete('/teacher/students/{student:uuid}/content-overrides/{override}', [StudentContentOverrideController::class, 'destroy']);
 
                 // Access (enrollments)
                 Route::get('/teacher/students/{student:uuid}/enrollments', [StudentEnrollmentController::class, 'index']);

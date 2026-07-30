@@ -44,7 +44,9 @@ content regardless of visibility.
 | `Lesson` | `lessons` | A leaf under a unit (`unit_id` + inherited `course_id`). Has a video source — an uploaded `video_asset_id` and/or a `youtube_url`, selected by `active_video_source` — plus many attachments and typed **sections**. Carries `duration_sec`, `max_views`, `is_free_preview`, `gating_rule`, and the time-box config `availability_days` / `max_extensions` / `extension_hours`. |
 | `LessonAttachment` | *(stored as `media_assets`)* | Not a dedicated model — attachments are `MediaAsset` rows of type `pdf` / `file` / `link` linked by `lesson_id`. The lesson's single `hls_video` asset is **not** an attachment. |
 | `LessonSection` | `lesson_sections` | A typed content section of a lesson (ordered): `lecture_video` / `assignment_video` / `pdf` / `assignment` / `quiz`. Points at one `MediaAsset` (`media_asset_id`) or one `Exam` (`exam_id`); `pdf` sections carry a `pdf_kind`. |
-| `ContentDependency` | `content_dependencies` | An unlock rule: section stays locked until a `trigger` (`submitted`/`passed`/`completed`) is met on `depends_on_section_id`. `enforcement` = `mandatory` (blocks) or `optional` (advisory). |
+| `ContentDependency` | `content_dependencies` | An unlock rule: section stays locked until a `trigger` (`submitted`/`passed`/`completed`/`graded`) is met on `depends_on_section_id`. `enforcement` = `mandatory` (blocks) or `optional` (advisory). |
+| `UnitDependency` | `unit_dependencies` | A configurable unit prerequisite (extends R5.3): `unit_id` stays gated until a `trigger` is met on `depends_on_unit_id` (that unit's exam) **or** `depends_on_section_id`. `enforcement` = `mandatory`/`optional`. No rows = previous-unit-exam default. |
+| `ContentAccessOverride` | `content_access_overrides` | A staff manual grant letting one `user_id` open a locked target (one of `lesson_id`/`section_id`/`unit_id`), bypassing dependencies. Active while `revoked_at` is null. |
 | `LessonAccessWindow` | `lesson_access_windows` | A student's time-boxed access window for one lesson (`started_at`, `expires_at`, `locked_at`, `extensions_used`). Opens on first start/play; auto-locks at expiry. |
 | `LessonExtensionRequest` | `lesson_extension_requests` | A student's post-expiry request for more time; staff grant/deny. A grant extends the window by the lesson's `extension_hours`. |
 | `Bundle` | `bundles` | A **package**: a priced group of courses/units/lessons sold as one product. Binds by `uuid` (teacher) / `slug` (public). Soft-deletes. Holds pricing, visibility, and `access_days` (the window granted on purchase). |
@@ -75,11 +77,11 @@ A `Bundle` **hasMany** `BundleItem`, each pointing at a `Course`, a `Unit`, or a
 
 ## Endpoints
 
-46 endpoints total: 2 public catalogue + 2 public packages + 21 teacher authoring (4 categories,
+49 endpoints total: 2 public catalogue + 2 public packages + 21 teacher authoring (4 categories,
 5 courses, 4 units, 4 lessons, 3 attachments; the 21st is the 5th course route `show`) + 5 teacher
 packages + **12 teacher lesson-content** (4 sections, 3 dependencies, 2 availability, 3
-extension-requests) + **4 student lesson content & access** (sections listing, start, access,
-extension-request).
+extension-requests) + **3 teacher unit-dependencies** (list, create, delete) + **4 student lesson
+content & access** (sections listing, start, access, extension-request).
 
 > **Lesson content model (built 2026-07-28).** A lesson is now composed of ordered **typed sections**
 > (`lesson_sections`), gated by **content dependencies** (unlock rules), and optionally **time-boxed**
@@ -931,6 +933,49 @@ PDFs have no completion signal and never gate.
 
 #### `DELETE /v1/teacher/lessons/{lesson}/sections/{section}/dependencies/{dependency}`
 Remove a rule. **Response** `204 No Content`. **Errors:** `404` not found / not on section.
+
+---
+
+### Teacher · Unit dependencies (configurable prerequisites)
+
+Configurable, **non-sequential** unit gating (generalises R5.3). By default the first lesson of a
+unit is gated on the *immediately previous* unit's published exam; a `unit_dependency` overrides that
+with explicit prerequisites — "Unit 5 depends on Unit 2" (another unit's exam) or "Unit 5 depends on a
+specific section inside Unit 2". Only **mandatory** rules block; a unit with **no** rules keeps the
+previous-unit-exam default (so existing data/tests are unchanged). Units bind by `id`.
+
+Each row targets exactly **one** of `depends_on_unit_id` (evaluated against that unit's published
+exam) or `depends_on_section_id` (evaluated against that section's completion — same trigger semantics
+as content dependencies). When the referenced unit has no published exam the rule is treated as
+satisfied. An unmet prerequisite locks the unit's first lesson with reason `unit_prerequisite_unmet`
+(`423`).
+
+#### `GET /v1/teacher/units/{unit}/dependencies`
+List the unit's prerequisite rules (ordered by `id`). **Response** `200 OK` — collection of `UnitDependencyResource`.
+
+#### `POST /v1/teacher/units/{unit}/dependencies`
+**Request body** (`UnitDependencyRequest`):
+```json
+{ "depends_on_unit_id": 12, "trigger": "passed", "enforcement": "mandatory" }
+```
+| Field | Rules |
+|---|---|
+| `depends_on_unit_id` | integer, `required_without` `depends_on_section_id`; a unit id in this tenant; not the unit itself |
+| `depends_on_section_id` | integer, `required_without` `depends_on_unit_id`; a section id in this tenant |
+| `trigger` | required, enum `submitted\|passed\|completed\|graded` |
+| `enforcement` | required, enum `mandatory\|optional` |
+
+Set **one** target, not both (`422` if both). **Response** `201 Created` — `UnitDependencyResource`.
+**Errors:** `422` both/neither target, self-dependency, target not in tenant, or duplicate rule.
+
+#### `DELETE /v1/teacher/units/{unit}/dependencies/{dependency}`
+Remove a rule. **Response** `204 No Content`. **Errors:** `404` not found / not on unit.
+
+> **Manual access overrides.** A teacher/assistant can also bypass all of the above gates for one
+> student on one target via the student-scoped override endpoints (`/teacher/students/{student}/content-overrides`,
+> documented in [Identity](identity.md)). An active override on a lesson/section/unit short-circuits
+> both `ContentUnlockService` (section gate) and `LessonProgressionService` (lesson/unit gate) to
+> unlocked; a unit override covers every section/lesson under it.
 
 ---
 

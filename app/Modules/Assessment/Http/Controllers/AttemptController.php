@@ -20,6 +20,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
@@ -211,6 +212,24 @@ class AttemptController
         return response()->json(['data' => $this->present($exam, $attempt)]);
     }
 
+    /** Download the teacher's corrected/annotated file for the student's own attempt. */
+    public function downloadCorrectedFile(Request $request, Exam $exam, ExamAttempt $attempt): StreamedResponse
+    {
+        $this->assertOwned($request, $exam, $attempt);
+
+        $file = $attempt->corrected_file;
+        abort_if($file === null || empty($file['path']), 404, 'No corrected file for this attempt.');
+
+        $disk = $this->uploadDisk();
+        $path = (string) $file['path'];
+
+        // Corrected files live only under assignments/; reject anything else.
+        abort_unless(str_starts_with($path, 'assignments/') && ! str_contains($path, '..'), 404);
+        abort_unless(Storage::disk($disk)->exists($path), 404);
+
+        return Storage::disk($disk)->download($path, $file['name'] ?? basename($path));
+    }
+
     // — guards —
 
     private function assertPlayable(Request $request, Exam $exam): void
@@ -267,6 +286,19 @@ class AttemptController
             'needs_manual_grade' => $attempt->needs_manual_grade,
             'submitted_at' => $attempt->submitted_at?->toIso8601String(),
         ];
+
+        // Teacher's written feedback + corrected/annotated file (upload homework),
+        // surfaced to the student alongside their grade once attached.
+        if ($attempt->feedback !== null) {
+            $data['feedback'] = $attempt->feedback;
+        }
+        $corrected = $attempt->corrected_file;
+        if (is_array($corrected) && ! empty($corrected['path'])) {
+            $data['corrected_file'] = [
+                'name' => $corrected['name'] ?? null,
+                'size' => $corrected['size'] ?? null,
+            ];
+        }
 
         if ($scoreVisible) {
             $data['score'] = $attempt->score;

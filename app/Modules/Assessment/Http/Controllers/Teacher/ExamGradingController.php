@@ -49,7 +49,14 @@ class ExamGradingController
     {
         abort_unless($attempt->exam_id === $exam->id, 404);
 
-        $attempt = $this->grading->applyManualGrades($attempt, $request->validated('grades'));
+        $correctedFile = $this->storeCorrectedFile($request, $exam, $attempt);
+
+        $attempt = $this->grading->applyManualGrades(
+            $attempt,
+            $request->validated('grades'),
+            $request->validated('feedback'),
+            $correctedFile,
+        );
 
         // Award points once the attempt is fully graded and passing.
         if ($attempt->status->value === 'graded' && $attempt->max_score > 0
@@ -64,7 +71,50 @@ class ExamGradingController
             'score' => $attempt->score,
             'max_score' => $attempt->max_score,
             'needs_manual_grade' => $attempt->needs_manual_grade,
+            'feedback' => $attempt->feedback,
+            'corrected_file' => $this->correctedFileInfo($attempt),
         ]]);
+    }
+
+    /**
+     * Store an optional teacher-attached corrected/annotated file on the private
+     * assignments disk, replacing any previous one. Returns the pointer to persist.
+     *
+     * @return array{path: string, name: string, size: int, mime: string}|null
+     */
+    private function storeCorrectedFile(GradeAttemptRequest $request, Exam $exam, ExamAttempt $attempt): ?array
+    {
+        $file = $request->file('corrected_file');
+        if ($file === null) {
+            return null;
+        }
+
+        $disk = (string) config('assessment.upload_disk', 'local');
+
+        $previous = $attempt->corrected_file['path'] ?? null;
+        if ($previous !== null) {
+            Storage::disk($disk)->delete($previous);
+        }
+
+        $path = $file->store("assignments/{$exam->tenant_id}/{$attempt->id}/corrected", $disk);
+
+        return [
+            'path' => $path,
+            'name' => $file->getClientOriginalName(),
+            'size' => $file->getSize(),
+            'mime' => $file->getClientMimeType(),
+        ];
+    }
+
+    /** Public (name/size) view of the corrected file pointer, without the path. */
+    private function correctedFileInfo(ExamAttempt $attempt): ?array
+    {
+        $file = $attempt->corrected_file;
+        if ($file === null || empty($file['path'])) {
+            return null;
+        }
+
+        return ['name' => $file['name'] ?? null, 'size' => $file['size'] ?? null];
     }
 
     /** Download the file a student submitted for a `file`-type question. */

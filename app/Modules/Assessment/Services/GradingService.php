@@ -56,10 +56,13 @@ class GradingService
     /**
      * Apply teacher-assigned points to the pending (manual) answers, then
      * recompute the total and finalise the attempt if nothing is left pending.
+     * Optional written feedback + a corrected-file pointer (upload homework) are
+     * stored alongside, and surfaced to the student once graded.
      *
      * @param  array<int|string, int>  $grades  question_id => points
+     * @param  array{path: string, name: string, size: int, mime: string}|null  $correctedFile
      */
-    public function applyManualGrades(ExamAttempt $attempt, array $grades): ExamAttempt
+    public function applyManualGrades(ExamAttempt $attempt, array $grades, ?string $feedback = null, ?array $correctedFile = null): ExamAttempt
     {
         $answers = $attempt->answers ?? [];
         $pointsByQuestion = $attempt->exam->questions->pluck('points', 'id');
@@ -76,12 +79,23 @@ class GradingService
         $stillPending = collect($answers)->contains(fn ($a) => $a['awarded'] === null);
         $score = collect($answers)->sum(fn ($a) => (int) ($a['awarded'] ?? 0));
 
-        $attempt->update([
+        $payload = [
             'answers' => $answers,
             'score' => $score,
             'needs_manual_grade' => $stillPending,
             'status' => $stillPending ? 'submitted' : 'graded',
-        ]);
+        ];
+
+        // Only overwrite feedback/corrected-file when the caller supplied one, so a
+        // re-grade without them keeps what was attached before.
+        if ($feedback !== null) {
+            $payload['feedback'] = $feedback;
+        }
+        if ($correctedFile !== null) {
+            $payload['corrected_file'] = $correctedFile;
+        }
+
+        $attempt->update($payload);
 
         return $attempt;
     }

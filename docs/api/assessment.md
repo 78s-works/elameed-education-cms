@@ -6,7 +6,7 @@
 
 - **`Exam`** — An exam/assignment under a course (`course_id`, optional `lesson_id`). Tenant-scoped (`BelongsToTenant`), `HasUuids` (route key is `uuid`), soft-deletes (delete keeps attempt history). Config columns: `title`, `type`, `mode`, `pass_percent`, `duration_min`, `attempts_allowed` (0 = unlimited), `question_order` (`fixed`|`random`), `scoring` (`best`|`last`|`first`), `starts_at`, `ends_at`, `result_visibility`, `show_answers`, `depends_on_exam_id` (prerequisite exam), `is_published`. `isOpen()` = published AND within the optional `starts_at`/`ends_at` window.
 - **`Question`** — A question attached to an exam (`exam_id`) — or a reusable bank item when `exam_id` is null (bank is not exposed by these routes). Tenant-scoped. Casts `options`, `correct`, `book_ref` to arrays; `points` to int. **`correct` is in the model's `$hidden`** so it never serialises by default; the teacher `QuestionResource` re-adds it explicitly. `body` may be null for bubble-sheet MCQ. `book_ref` holds `{ book, page, qno }` for printed-book (bubble-sheet) questions.
-- **`ExamAttempt`** — One student attempt (`exam_id`, `user_id`, `attempt_number`). Tenant-scoped, bound in routes by `id`. Holds `started_at`, `submitted_at`, `score`, `max_score`, `status`, `answers` (JSON map `question_id => { answer, awarded, is_correct }`), `needs_manual_grade`. No UUID — attempt ids are only reachable through an exam the student/teacher already owns.
+- **`ExamAttempt`** — One student attempt (`exam_id`, `user_id`, `attempt_number`). Tenant-scoped, bound in routes by `id`. Holds `started_at`, `submitted_at`, `score`, `max_score`, `status`, `answers` (JSON map `question_id => { answer, awarded, is_correct }`), `needs_manual_grade`, and (for graded upload homework) `feedback` (text) + `corrected_file` (JSON `{ path, name, size, mime }` pointer into the private `assignments/` disk). No UUID — attempt ids are only reachable through an exam the student/teacher already owns.
 
 ## Question types & attempt states
 
@@ -208,7 +208,7 @@ All routes sit under the `/api/v1` prefix and the `tenant` middleware group (hos
 
 **Request body:** None
 
-**Response 200** — identical shape to the submit response (`attempt_id`, `status`, `needs_manual_grade`, `submitted_at`, and conditionally `score`/`max_score`/`passed`/`review`). While `in_progress`, only the base fields are returned. Example when hidden by `result_visibility: manual` before grading:
+**Response 200** — identical shape to the submit response (`attempt_id`, `status`, `needs_manual_grade`, `submitted_at`, and conditionally `score`/`max_score`/`passed`/`review`). While `in_progress`, only the base fields are returned. Once a teacher attaches them, `feedback` (string) and `corrected_file` (`{ name, size }`) are also included — these surface regardless of score visibility, since they are the teacher's message about the submission. Example when hidden by `result_visibility: manual` before grading:
 
 ```json
 {
@@ -222,6 +222,19 @@ All routes sit under the `/api/v1` prefix and the `tenant` middleware group (hos
 ```
 
 **Errors:** `404 not_found` (not owned / wrong exam).
+
+---
+
+#### `GET /v1/exams/{exam:uuid}/attempts/{attempt}/corrected-file`
+
+**Purpose:** Download the teacher's corrected/annotated file for the student's **own** attempt (upload homework). Streamed from the private `assignments/` disk; the storage path is never exposed.
+**Auth:** 👤 Authenticated (student, must own the attempt)
+**Middleware:** `tenant`, `auth:sanctum`, `active`
+
+**Path params:** `exam` (uuid), `attempt` (int id; must belong to `exam` and the caller).
+
+**Response 200** — the file as a binary download (`Content-Disposition: attachment`).
+**Errors:** `404 not_found` (not owned / wrong exam / no corrected file attached).
 
 ---
 
@@ -569,22 +582,23 @@ Type-specific shapes:
 
 #### `POST /v1/teacher/exams/{exam:uuid}/attempts/{attempt}/grade`
 
-**Purpose:** Assign points to the manually-graded (subjective) answers, recompute the total, and finalise the attempt. When nothing is left pending the attempt becomes `graded` (and points are awarded if passing); otherwise it stays `submitted`.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Purpose:** Assign points to the manually-graded (subjective) answers, recompute the total, and finalise the attempt. When nothing is left pending the attempt becomes `graded` (and points are awarded if passing); otherwise it stays `submitted`. For **`upload`-kind homework** the teacher/assistant may also attach optional written `feedback` and a corrected/annotated `corrected_file`, both surfaced to the student alongside their grade.
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `homework`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:homework`
 
-**Request headers:** Host, Accept, `Content-Type: application/json`, `Authorization: Bearer <token>`.
+**Request headers:** Host, Accept, `Authorization: Bearer <token>`. `Content-Type: application/json` for grades only; **`multipart/form-data`** when attaching a `corrected_file`.
 
 **Path params:** `exam` (uuid), `attempt` (int id; must belong to `exam`).
 
-**Request body** (`GradeAttemptRequest`) — `grades` maps **question id → awarded points**:
+**Request body** (`GradeAttemptRequest`) — `grades` maps **question id → awarded points**, plus optional feedback/corrected file:
 
 ```json
 {
   "grades": {
     "103": 4,
     "104": 0
-  }
+  },
+  "feedback": "Good work — see the corrected copy."
 }
 ```
 
@@ -592,10 +606,12 @@ Type-specific shapes:
 |---|---|---|---|
 | `grades` | object | yes | ≥ 1 entry; `question_id => points` |
 | `grades.*` | int | — | ≥ 0; clamped to the question's max `points`; `is_correct` set to `awarded === max` |
+| `feedback` | string | no | ≤ 5000 chars; written comment on the submission |
+| `corrected_file` | file | no | ≤ `assessment.upload_max_kb` (20 MB); `assessment.upload_mimes`; stored on the private `assignments/` disk |
 
-Only keys present in the attempt's stored `answers` are applied; unknown question ids are ignored.
+Only keys present in the attempt's stored `answers` are applied; unknown question ids are ignored. `feedback` / `corrected_file` are only overwritten when supplied — a re-grade without them keeps what was attached before.
 
-**Response 200** — minimal finalisation summary:
+**Response 200** — finalisation summary (with feedback + corrected-file presence):
 
 ```json
 {
@@ -604,9 +620,13 @@ Only keys present in the attempt's stored `answers` are applied; unknown questio
     "status": "graded",
     "score": 7,
     "max_score": 8,
-    "needs_manual_grade": false
+    "needs_manual_grade": false,
+    "feedback": "Good work — see the corrected copy.",
+    "corrected_file": { "name": "corrected.pdf", "size": 12345 }
   }
 }
 ```
 
-**Errors:** `404 not_found` (attempt not on this exam), `422 validation_error` (empty `grades`, negative points), `403 forbidden`.
+`corrected_file` is `null` when none is attached. The stored file path is never exposed; the student downloads it via `GET /v1/exams/{exam}/attempts/{attempt}/corrected-file`.
+
+**Errors:** `404 not_found` (attempt not on this exam), `422 validation_error` (empty `grades`, negative points, oversize/rejected file), `403 forbidden`.

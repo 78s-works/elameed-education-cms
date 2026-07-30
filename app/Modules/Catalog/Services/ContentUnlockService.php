@@ -22,6 +22,10 @@ use Illuminate\Support\Collection;
  */
 class ContentUnlockService
 {
+    public function __construct(
+        private readonly ContentAccessOverrideService $overrides,
+    ) {}
+
     /**
      * Locked-state for every section of a lesson.
      *
@@ -36,9 +40,19 @@ class ContentUnlockService
             ->get();
 
         $byId = $sections->keyBy('id');
+        $overrideSets = $this->overrides->activeTargetSets($tenantId, $userId);
+        $unitId = $lesson->unit_id !== null ? (int) $lesson->unit_id : null;
         $map = [];
 
         foreach ($sections as $section) {
+            // A staff-granted override on this section (or its lesson/unit) unlocks
+            // it outright, bypassing any unmet dependency.
+            if ($this->overrides->sectionCovered($overrideSets, $section, $unitId)) {
+                $map[(int) $section->id] = false;
+
+                continue;
+            }
+
             $locked = false;
 
             foreach ($section->dependencies as $dep) {
@@ -66,6 +80,15 @@ class ContentUnlockService
     /** Is this single section locked for the user? */
     public function isSectionLocked(int $tenantId, int $userId, LessonSection $section): bool
     {
+        // A staff-granted override on the section (or its lesson/unit) short-circuits.
+        $unitId = Lesson::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('id', $section->lesson_id)
+            ->value('unit_id');
+        if ($this->overrides->hasActiveForSection($tenantId, $userId, $section, $unitId !== null ? (int) $unitId : null)) {
+            return false;
+        }
+
         $section->loadMissing('dependencies');
 
         foreach ($section->dependencies as $dep) {
@@ -87,6 +110,12 @@ class ContentUnlockService
         }
 
         return false;
+    }
+
+    /** Public accessor: is `$trigger` satisfied on prerequisite section `$prereq`? */
+    public function sectionTriggerMet(int $tenantId, int $userId, LessonSection $prereq, DependencyTrigger $trigger): bool
+    {
+        return $this->triggerMet($tenantId, $userId, $prereq, $trigger);
     }
 
     private function triggerMet(int $tenantId, int $userId, LessonSection $prereq, DependencyTrigger $trigger): bool
