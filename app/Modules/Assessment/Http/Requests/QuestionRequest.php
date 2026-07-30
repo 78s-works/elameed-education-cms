@@ -28,9 +28,15 @@ class QuestionRequest extends FormRequest
             'options' => ['array', 'required_if:type,mcq', 'min:2'],
             'options.*' => ['string', 'max:500'],
 
-            // Correct answer key (hidden from students).
+            // Correct answer key (hidden from students). Shape is constrained per
+            // type so a malformed key (e.g. true_false with ["yes"]) can't be saved
+            // as a question no student can ever answer correctly.
             'correct' => ['array', 'required_if:type,mcq', 'required_if:type,true_false'],
-            'correct.*' => ['nullable'],
+            'correct.*' => [
+                'nullable',
+                Rule::when($this->input('type') === 'true_false', ['boolean']),
+                Rule::when($this->input('type') === 'mcq', ['integer', 'min:0']),
+            ],
 
             // Bubble-sheet reference (printed book).
             'book_ref' => ['nullable', 'array'],
@@ -38,5 +44,20 @@ class QuestionRequest extends FormRequest
             'book_ref.page' => ['nullable', 'integer', 'min:1'],
             'book_ref.qno' => ['nullable', 'integer', 'min:1'],
         ];
+    }
+
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($validator): void {
+            if ($this->input('type') !== 'mcq') {
+                return;
+            }
+            $optionCount = is_array($this->input('options')) ? count($this->input('options')) : 0;
+            foreach ((array) $this->input('correct', []) as $i => $index) {
+                if (is_numeric($index) && (int) $index >= $optionCount) {
+                    $validator->errors()->add("correct.$i", 'The correct answer index is out of range for the options.');
+                }
+            }
+        });
     }
 }
