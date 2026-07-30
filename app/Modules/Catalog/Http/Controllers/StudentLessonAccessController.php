@@ -51,6 +51,7 @@ class StudentLessonAccessController
     {
         $tenantId = (int) $this->context->tenantOrFail()->getKey();
         $user = $request->user();
+        $this->assertLessonAccess($tenantId, $user->getKey(), $lesson);
 
         $window = $this->availability->windowFor($tenantId, (int) $user->getKey(), $lesson);
 

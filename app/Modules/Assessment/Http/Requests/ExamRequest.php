@@ -18,7 +18,9 @@ class ExamRequest extends FormRequest
         $tenantId = app(TenantContext::class)->tenantId();
 
         return [
-            'title' => ['required', 'string', 'max:255'],
+            // On update (PUT/PATCH) a partial body is allowed — e.g. a publish
+            // toggle without re-sending the title. On create the title is required.
+            'title' => [$this->isMethod('POST') ? 'required' : 'sometimes', 'string', 'max:255'],
             'lesson_id' => ['nullable', Rule::exists('lessons', 'id')->where('tenant_id', $tenantId)],
             'type' => ['nullable', Rule::in(['exam', 'assignment'])],
             'pass_percent' => ['nullable', 'integer', 'min:0', 'max:100'],

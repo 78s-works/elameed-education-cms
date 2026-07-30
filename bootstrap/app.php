@@ -48,6 +48,15 @@ return Application::configure(basePath: dirname(__DIR__))
             ResolveTenant::class,
         ]);
 
+        // API is stateless/JSON-only and has no `login` route. Without this, an
+        // unauthenticated api/* request whose client omits `Accept: application/json`
+        // makes Authenticate::redirectTo() eagerly resolve route('login') and throw
+        // RouteNotFoundException (a 500) before the 401 can be rendered. Returning
+        // null keeps the AuthenticationException intact → clean 401 envelope.
+        $middleware->redirectGuestsTo(
+            fn (Request $request) => $request->is('api/*') ? null : '/',
+        );
+
         // Resolve the tenant (and bind the RLS session) BEFORE route-model
         // binding runs — otherwise a bound tenant-scoped model is fetched with
         // no tenant scope and could cross tenants. Isolation test guards this.

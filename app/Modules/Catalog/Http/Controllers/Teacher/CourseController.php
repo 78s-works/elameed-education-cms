@@ -6,10 +6,12 @@ use App\Modules\Billing\Services\PlanLimitGuard;
 use App\Modules\Catalog\Http\Requests\CourseRequest;
 use App\Modules\Catalog\Http\Resources\CourseResource;
 use App\Modules\Catalog\Models\Course;
+use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /**
  * /teacher/courses (M04, FR-M04-01..05). The teacher sees ALL their courses
@@ -60,6 +62,12 @@ class CourseController
 
     public function destroy(Course $course): Response
     {
+        // Don't strand paying students: a course with active enrollments can't be
+        // deleted (deletion left lesson-level access in an inconsistent state).
+        if (Enrollment::query()->where('course_id', $course->id)->grantsAccess()->exists()) {
+            throw new ConflictHttpException('This course has active enrollments and cannot be deleted.');
+        }
+
         $course->delete(); // soft delete
 
         return response()->noContent();

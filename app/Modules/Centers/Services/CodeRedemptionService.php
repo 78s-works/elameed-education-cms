@@ -43,7 +43,11 @@ class CodeRedemptionService
                 throw ValidationException::withMessages(['code' => __('Invalid code.')]);
             }
             if (! $ac->isRedeemable()) {
-                $msg = $ac->status === CodeStatus::Active ? __('This code has expired.') : __('This code has already been used.');
+                $msg = match ($ac->status) {
+                    CodeStatus::Active => __('This code has expired.'),
+                    CodeStatus::Disabled => __('This code has been disabled.'),
+                    default => __('This code has already been used.'),
+                };
                 throw ValidationException::withMessages(['code' => $msg]);
             }
 

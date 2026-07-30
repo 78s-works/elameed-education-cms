@@ -9,6 +9,7 @@ use App\Modules\Catalog\Models\Course;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /**
  * Teacher authoring of exams (M08). Exams are created under a course; both are
@@ -25,7 +26,13 @@ class ExamController
 
     public function store(ExamRequest $request, Course $course): JsonResponse
     {
-        $exam = new Exam($request->validated());
+        $data = $request->validated();
+        // A brand-new exam has no questions yet, so it can't be published on create.
+        if ($data['is_published'] ?? false) {
+            throw new ConflictHttpException('Add questions before publishing this exam.');
+        }
+
+        $exam = new Exam($data);
         $exam->course_id = $course->id;
         $exam->save(); // BelongsToTenant fills tenant_id
 
@@ -39,7 +46,14 @@ class ExamController
 
     public function update(ExamRequest $request, Exam $exam): ExamResource
     {
-        $exam->update($request->validated());
+        $data = $request->validated();
+        // Don't allow publishing an exam that has no questions.
+        $willPublish = array_key_exists('is_published', $data) ? (bool) $data['is_published'] : $exam->is_published;
+        if ($willPublish && $exam->questions()->count() === 0) {
+            throw new ConflictHttpException('Add questions before publishing this exam.');
+        }
+
+        $exam->update($data);
 
         return new ExamResource($exam->loadCount('questions'));
     }

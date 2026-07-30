@@ -48,6 +48,7 @@ class AttemptController
             ->grantsAccess()->pluck('course_id')->filter()->unique();
 
         $exams = Exam::query()
+            ->withCount('questions')
             ->whereIn('course_id', $courseIds)
             ->where('is_published', true)
             ->where(fn ($q) => $q->whereNull('starts_at')->orWhere('starts_at', '<=', now()))
@@ -123,7 +124,7 @@ class AttemptController
 
     public function submit(SubmitAttemptRequest $request, Exam $exam, ExamAttempt $attempt): JsonResponse
     {
-        $this->assertOwnedInProgress($request, $exam, $attempt);
+        $this->assertSubmittable($request, $exam, $attempt);
 
         $exam->load('questions');
         $graded = $this->grading->gradeSubmission(
@@ -272,6 +273,31 @@ class AttemptController
         $this->assertOwned($request, $exam, $attempt);
         if ($attempt->status !== AttemptStatus::InProgress) {
             throw new ConflictHttpException('This attempt has already been submitted.');
+        }
+    }
+
+    /**
+     * Guard the submit path: the attempt must be owned + in-progress, the exam's
+     * submission window (ends_at) must still be open, and — for a timed exam — the
+     * per-student duration (incl. any granted extension) must not have elapsed.
+     * Enforced server-side so the client-side countdown can't be bypassed (C1/H1).
+     */
+    private function assertSubmittable(Request $request, Exam $exam, ExamAttempt $attempt): void
+    {
+        $this->assertOwnedInProgress($request, $exam, $attempt);
+
+        // Homework/exam submission window (ends_at) must still be open.
+        if ($exam->ends_at !== null && now()->greaterThan($exam->ends_at)) {
+            throw new ConflictHttpException('The submission window for this exam has closed.');
+        }
+
+        // Timed exams: reject a submission made after the attempt's deadline.
+        $duration = $this->timeExtensions->effectiveDuration(
+            (int) $exam->tenant_id, (int) $request->user()->getKey(), $exam
+        );
+        if ($duration !== null && $attempt->started_at !== null
+            && now()->greaterThan($attempt->started_at->copy()->addMinutes($duration))) {
+            throw new ConflictHttpException('The time for this attempt has expired.');
         }
     }
 

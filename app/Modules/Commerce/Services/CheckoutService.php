@@ -6,6 +6,7 @@ use App\Modules\Catalog\Models\Bundle;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Models\Coupon;
+use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Commerce\Models\OrderItem;
 use App\Modules\Tenancy\Services\TenantContext;
@@ -72,6 +73,12 @@ class CheckoutService
     {
         $quote = $this->price($items, $couponCode);
 
+        // Don't let a student buy content they already own (M04). Checked at the
+        // order step so the wallet isn't charged for a duplicate enrollment.
+        foreach ($quote['lines'] as $line) {
+            $this->assertNotAlreadyOwned($userId, $line);
+        }
+
         $order = new Order([
             'user_id' => $userId,
             'total_minor' => $quote['total_minor'],
@@ -88,6 +95,32 @@ class CheckoutService
         }
 
         return $order;
+    }
+
+    /**
+     * Reject an order line for content the buyer already has access to. Bundles
+     * are skipped (they fan out to many enrollments; partial-overlap is allowed).
+     */
+    private function assertNotAlreadyOwned(int $userId, array $line): void
+    {
+        $column = match ($line['item_type']) {
+            OrderItem::TYPE_COURSE => 'course_id',
+            OrderItem::TYPE_LESSON => 'lesson_id',
+            default => null, // wallet top-up / bundle: nothing to dedupe
+        };
+        if ($column === null) {
+            return;
+        }
+
+        $owns = Enrollment::query()
+            ->where('user_id', $userId)
+            ->where($column, $line['item_id'])
+            ->grantsAccess()
+            ->exists();
+
+        if ($owns) {
+            throw ValidationException::withMessages(['items' => 'You already have access to one of these items.']);
+        }
     }
 
     private function priceCourse(array $item): array
