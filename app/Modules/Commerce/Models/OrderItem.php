@@ -14,6 +14,8 @@ class OrderItem extends Model
 
     public const TYPE_BUNDLE = 'bundle';
 
+    public const TYPE_LESSON = 'lesson';
+
     public const TYPE_WALLET_TOPUP = 'wallet_topup';
 
     public const TYPE_BOOK = 'book';

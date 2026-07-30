@@ -114,6 +114,7 @@ class ContentUnlockService
         return match ($trigger) {
             DependencyTrigger::Submitted, DependencyTrigger::Completed => true,
             DependencyTrigger::Passed => $this->anyPassed($tenantId, $examId, $attempts),
+            DependencyTrigger::Graded => $attempts->firstWhere('status', 'graded') !== null,
         };
     }
 

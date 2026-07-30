@@ -23,6 +23,7 @@ class ExamRequest extends FormRequest
             'type' => ['nullable', Rule::in(['exam', 'assignment'])],
             'pass_percent' => ['nullable', 'integer', 'min:0', 'max:100'],
             'duration_min' => ['nullable', 'integer', 'min:1'],
+            'max_time_extensions' => ['nullable', 'integer', 'min:0'],
             'attempts_allowed' => ['nullable', 'integer', 'min:0'], // 0 = unlimited
             'question_order' => ['nullable', Rule::in(['fixed', 'random'])],
             'scoring' => ['nullable', Rule::in(['best', 'last', 'first'])],

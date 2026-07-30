@@ -42,6 +42,9 @@ class Lesson extends Model
         'max_extensions',
         'extension_hours',
         'is_free_preview',
+        'price_minor',
+        'currency',
+        'is_purchasable',
         'gating_rule',
         'visibility',
         'publish_at',
@@ -52,10 +55,12 @@ class Lesson extends Model
         'active_video_source' => VideoSource::class,
         'publish_at' => 'datetime',
         'is_free_preview' => 'boolean',
+        'is_purchasable' => 'boolean',
         'gating_rule' => 'array',
         'availability_days' => 'integer',
         'max_extensions' => 'integer',
         'extension_hours' => 'integer',
+        'price_minor' => 'integer',
     ];
 
     /** Does this lesson enforce a time-boxed access window? */

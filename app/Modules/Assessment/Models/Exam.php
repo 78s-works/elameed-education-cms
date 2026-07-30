@@ -6,6 +6,7 @@ use App\Modules\Assessment\Enums\ExamMode;
 use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Unit;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -29,8 +30,8 @@ class Exam extends Model
     ];
 
     protected $fillable = [
-        'course_id', 'lesson_id', 'title', 'type', 'pass_percent', 'duration_min',
-        'attempts_allowed', 'question_order', 'scoring', 'starts_at', 'ends_at',
+        'course_id', 'lesson_id', 'unit_id', 'title', 'type', 'pass_percent', 'duration_min',
+        'max_time_extensions', 'attempts_allowed', 'question_order', 'scoring', 'starts_at', 'ends_at',
         'result_visibility', 'show_answers', 'depends_on_exam_id', 'mode', 'is_published',
     ];
 
@@ -43,6 +44,8 @@ class Exam extends Model
         'is_published' => 'boolean',
         'pass_percent' => 'integer',
         'attempts_allowed' => 'integer',
+        'duration_min' => 'integer',
+        'max_time_extensions' => 'integer',
     ];
 
     public function uniqueIds(): array
@@ -63,6 +66,11 @@ class Exam extends Model
     public function lesson(): BelongsTo
     {
         return $this->belongsTo(Lesson::class);
+    }
+
+    public function unit(): BelongsTo
+    {
+        return $this->belongsTo(Unit::class);
     }
 
     public function questions(): HasMany

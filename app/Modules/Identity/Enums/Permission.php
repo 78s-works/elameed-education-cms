@@ -15,6 +15,7 @@ enum Permission: string
 {
     case Students = 'students';
     case Centers = 'centers';
+    case Homework = 'homework';
 
     /** @return list<string> */
     public static function values(): array
@@ -39,6 +40,11 @@ enum Permission: string
                 'key' => self::Centers->value,
                 'label' => 'Centers & codes',
                 'description' => 'Manage centers, attendance, and activation/recharge codes.',
+            ],
+            [
+                'key' => self::Homework->value,
+                'label' => 'Homework grading',
+                'description' => 'Review and grade (correct) student homework submissions.',
             ],
         ];
     }

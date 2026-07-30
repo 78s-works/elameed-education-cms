@@ -3,6 +3,7 @@
 namespace App\Modules\Catalog\Models;
 
 use App\Modules\Assessment\Models\Exam;
+use App\Modules\Catalog\Enums\AssignmentKind;
 use App\Modules\Catalog\Enums\LessonSectionType;
 use App\Modules\Catalog\Enums\PdfKind;
 use App\Modules\Media\Models\MediaAsset;
@@ -33,12 +34,20 @@ class LessonSection extends Model
         'media_asset_id',
         'exam_id',
         'pdf_kind',
+        'assignment_kind',
+        'is_required',
+    ];
+
+    protected $attributes = [
+        'is_required' => true,
     ];
 
     protected $casts = [
         'type' => LessonSectionType::class,
         'pdf_kind' => PdfKind::class,
+        'assignment_kind' => AssignmentKind::class,
         'sort_order' => 'integer',
+        'is_required' => 'boolean',
     ];
 
     public function lesson(): BelongsTo

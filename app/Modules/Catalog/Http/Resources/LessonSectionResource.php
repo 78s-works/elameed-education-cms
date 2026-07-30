@@ -27,6 +27,8 @@ class LessonSectionResource extends JsonResource
             'media_asset_id' => $this->media_asset_id,
             'exam_id' => $this->exam_id,
             'pdf_kind' => $this->pdf_kind?->value,
+            'assignment_kind' => $this->assignment_kind?->value,
+            'is_required' => (bool) $this->is_required,
             'locked' => $this->whenNotNull($this->getAttribute('locked')),
             'media' => $this->whenLoaded('mediaAsset', fn () => $this->mediaAsset ? new MediaAssetResource($this->mediaAsset) : null),
             'dependencies' => ContentDependencyResource::collection($this->whenLoaded('dependencies')),

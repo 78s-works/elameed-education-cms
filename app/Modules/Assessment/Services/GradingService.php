@@ -14,9 +14,10 @@ class GradingService
 {
     /**
      * @param  array<int|string, mixed>  $submitted  question_id => answer
+     * @param  array<int|string, mixed>  $existing   prior attempt answers (holds files uploaded before submit)
      * @return array{answers: array, score: int, max_score: int, needs_manual: bool}
      */
-    public function gradeSubmission(Exam $exam, array $submitted): array
+    public function gradeSubmission(Exam $exam, array $submitted, array $existing = []): array
     {
         $answers = [];
         $score = 0;
@@ -34,7 +35,18 @@ class GradingService
                 $answers[$q->id] = ['answer' => $given, 'awarded' => $awarded, 'is_correct' => $isCorrect];
             } else {
                 $needsManual = true;
-                $answers[$q->id] = ['answer' => $given, 'awarded' => null, 'is_correct' => null];
+                $entry = ['answer' => $given, 'awarded' => null, 'is_correct' => null];
+
+                // Retain a file the student uploaded (via the file endpoint) before submitting.
+                $file = $existing[$q->id]['file'] ?? null;
+                if ($file !== null) {
+                    $entry['file'] = $file;
+                    if ($given === null || $given === '') {
+                        $entry['answer'] = $existing[$q->id]['answer'] ?? ($file['name'] ?? null);
+                    }
+                }
+
+                $answers[$q->id] = $entry;
             }
         }
 

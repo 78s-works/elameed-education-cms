@@ -6,10 +6,12 @@ use App\Modules\Catalog\Http\Resources\LessonExtensionRequestResource;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonAccessWindow;
 use App\Modules\Catalog\Services\LessonAvailabilityService;
+use App\Modules\Catalog\Services\LessonProgressionService;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 /**
  * Student lesson-access + countdown ("Lesson Availability & Extension Requests"
@@ -25,6 +27,7 @@ class StudentLessonAccessController
     public function __construct(
         private readonly LessonAvailabilityService $availability,
         private readonly EnrollmentService $enrollments,
+        private readonly LessonProgressionService $progression,
         private readonly TenantContext $context,
     ) {}
 
@@ -33,6 +36,11 @@ class StudentLessonAccessController
         $tenantId = (int) $this->context->tenantOrFail()->getKey();
         $user = $request->user();
         $this->assertLessonAccess($tenantId, $user->getKey(), $lesson);
+
+        $lock = $this->progression->progressionLock($tenantId, (int) $user->getKey(), $lesson);
+        if ($lock !== null) {
+            throw new HttpException(423, $lock);
+        }
 
         $window = $this->availability->start($tenantId, (int) $user->getKey(), $lesson);
 

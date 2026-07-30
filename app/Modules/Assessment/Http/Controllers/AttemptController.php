@@ -3,11 +3,14 @@
 namespace App\Modules\Assessment\Http\Controllers;
 
 use App\Modules\Assessment\Enums\AttemptStatus;
+use App\Modules\Assessment\Enums\QuestionType;
 use App\Modules\Assessment\Http\Requests\SubmitAttemptRequest;
+use App\Modules\Assessment\Http\Requests\UploadAttemptFileRequest;
 use App\Modules\Assessment\Http\Resources\ExamResource;
 use App\Modules\Assessment\Http\Resources\PublicQuestionResource;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
+use App\Modules\Assessment\Services\ExamTimeExtensionService;
 use App\Modules\Assessment\Services\GradingService;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Services\EnrollmentService;
@@ -16,6 +19,7 @@ use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
@@ -30,6 +34,7 @@ class AttemptController
         private readonly EnrollmentService $enrollments,
         private readonly GradingService $grading,
         private readonly PointsService $points,
+        private readonly ExamTimeExtensionService $timeExtensions,
     ) {}
 
     /** Published, in-window exams for courses the student is enrolled in. */
@@ -84,12 +89,35 @@ class AttemptController
             $questions = $questions->shuffle();
         }
 
+        // Effective duration includes any per-student granted time extension (R6).
+        $duration = $this->timeExtensions->effectiveDuration((int) $exam->tenant_id, (int) $userId, $exam);
+
         return response()->json(['data' => [
             'attempt_id' => $attempt->id,
             'attempt_number' => $attempt->attempt_number,
-            'duration_min' => $exam->duration_min,
+            'duration_min' => $duration,
             'questions' => PublicQuestionResource::collection($questions)->resolve($request),
         ]]);
+    }
+
+    /** Student requests extra time on this exam/quiz (doc 11 R6). */
+    public function requestExtension(Request $request, Exam $exam): JsonResponse
+    {
+        $this->assertPlayable($request, $exam);
+
+        $minutes = $request->integer('minutes') ?: null;
+        $row = $this->timeExtensions->request(
+            (int) $exam->tenant_id,
+            (int) $request->user()->getKey(),
+            $exam,
+            $minutes,
+        );
+
+        return response()->json(['data' => [
+            'id' => $row->id,
+            'status' => $row->status->value,
+            'requested_minutes' => $row->requested_minutes,
+        ]], 201);
     }
 
     public function submit(SubmitAttemptRequest $request, Exam $exam, ExamAttempt $attempt): JsonResponse
@@ -97,7 +125,11 @@ class AttemptController
         $this->assertOwnedInProgress($request, $exam, $attempt);
 
         $exam->load('questions');
-        $graded = $this->grading->gradeSubmission($exam, $request->validated('answers'));
+        $graded = $this->grading->gradeSubmission(
+            $exam,
+            $request->validated('answers'),
+            $attempt->answers ?? [], // keep files uploaded before submit
+        );
 
         $attempt->update([
             'answers' => $graded['answers'],
@@ -118,6 +150,60 @@ class AttemptController
         return response()->json(['data' => $this->present($exam, $attempt->fresh())]);
     }
 
+    /**
+     * Upload a file answer for a `file`-type question on an in-progress attempt.
+     * The file is stored privately and recorded on the attempt server-side; the
+     * student re-submits the attempt as usual and the file is preserved.
+     */
+    public function uploadFile(UploadAttemptFileRequest $request, Exam $exam, ExamAttempt $attempt): JsonResponse
+    {
+        $this->assertOwnedInProgress($request, $exam, $attempt);
+
+        $question = $exam->questions()->where('id', $request->integer('question_id'))->first();
+        abort_if($question === null, 404, 'Question not found on this exam.');
+
+        if ($question->type !== QuestionType::File) {
+            throw new ConflictHttpException('This question does not accept a file answer.');
+        }
+
+        $disk = $this->uploadDisk();
+        $file = $request->file('file');
+        $answers = $attempt->answers ?? [];
+
+        // Replace any file the student uploaded earlier for this question.
+        $previous = $answers[$question->id]['file']['path'] ?? null;
+        if ($previous !== null) {
+            Storage::disk($disk)->delete($previous);
+        }
+
+        $path = $file->store("assignments/{$exam->tenant_id}/{$attempt->id}", $disk);
+
+        $answers[$question->id] = [
+            'answer' => $file->getClientOriginalName(),
+            'file' => [
+                'path' => $path,
+                'name' => $file->getClientOriginalName(),
+                'size' => $file->getSize(),
+                'mime' => $file->getClientMimeType(),
+            ],
+            'awarded' => null,
+            'is_correct' => null,
+        ];
+
+        $attempt->update(['answers' => $answers, 'needs_manual_grade' => true]);
+
+        return response()->json(['data' => [
+            'question_id' => $question->id,
+            'name' => $file->getClientOriginalName(),
+            'size' => $file->getSize(),
+        ]]);
+    }
+
+    private function uploadDisk(): string
+    {
+        return (string) config('assessment.upload_disk', 'local');
+    }
+
     public function result(Request $request, Exam $exam, ExamAttempt $attempt): JsonResponse
     {
         $this->assertOwned($request, $exam, $attempt);
@@ -132,8 +218,9 @@ class AttemptController
         if (! $exam->isOpen()) {
             throw new ConflictHttpException('This exam is not open.');
         }
-        if ($exam->course === null
-            || ! $this->enrollments->hasAccess((int) $exam->tenant_id, $request->user()->getKey(), $exam->course)) {
+        // Access via any grant covering the exam — whole course, its unit/lesson,
+        // or a direct exam grant (doc 11 R7).
+        if (! $this->enrollments->hasExamAccess((int) $exam->tenant_id, $request->user()->getKey(), $exam)) {
             throw new AccessDeniedHttpException('You do not have access to this exam.');
         }
         $this->assertDependencyMet($request, $exam);

@@ -4,6 +4,7 @@ namespace App\Modules\Commerce\Services;
 
 use App\Modules\Catalog\Models\Bundle;
 use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\OrderStatus;
 use App\Modules\Commerce\Models\Order;
@@ -44,6 +45,7 @@ class FulfillOrderService
         $contentTotal = 0;
         $courseIds = [];
         $bundleIds = [];
+        $lessonIds = [];
 
         foreach ($order->items as $item) {
             if ($item->item_type === OrderItem::TYPE_COURSE) {
@@ -52,6 +54,9 @@ class FulfillOrderService
             } elseif ($item->item_type === OrderItem::TYPE_BUNDLE) {
                 $contentTotal += (int) $item->price_minor;
                 $bundleIds[] = (int) $item->item_id;
+            } elseif ($item->item_type === OrderItem::TYPE_LESSON) {
+                $contentTotal += (int) $item->price_minor;
+                $lessonIds[] = (int) $item->item_id;
             } elseif ($item->item_type === OrderItem::TYPE_WALLET_TOPUP) {
                 // Money lands in the student's wallet.
                 $legs[] = $this->leg(LedgerEntry::STUDENT_WALLET, LedgerEntry::CREDIT, (int) $item->price_minor, $wallet->id);
@@ -76,7 +81,7 @@ class FulfillOrderService
         $fundingWalletId = $funding === LedgerEntry::STUDENT_WALLET ? $wallet->id : null;
         $legs[] = $this->leg($funding, LedgerEntry::DEBIT, (int) $order->total_minor, $fundingWalletId);
 
-        DB::transaction(function () use ($order, $tenantId, $legs, $courseIds, $bundleIds, $funding): void {
+        DB::transaction(function () use ($order, $tenantId, $legs, $courseIds, $bundleIds, $lessonIds, $funding): void {
             $this->ledger->post($tenantId, "order:{$order->id}:fulfill", $legs, 'order', (int) $order->id);
 
             $source = $funding === LedgerEntry::STUDENT_WALLET ? EnrollmentSource::Wallet : EnrollmentSource::Purchase;
@@ -84,6 +89,15 @@ class FulfillOrderService
                 $course = Course::withoutGlobalScopes()->find($courseId);
                 if ($course !== null) {
                     $this->enrollments->grantCourse($tenantId, (int) $order->user_id, $course, $source);
+                }
+            }
+
+            // A single lesson purchase (doc 11 R4 "pay lesson") — grants lesson
+            // access and opens its time-boxed window (the "week" from payment).
+            foreach (array_unique($lessonIds) as $lessonId) {
+                $lesson = Lesson::withoutGlobalScopes()->find($lessonId);
+                if ($lesson !== null) {
+                    $this->enrollments->grantLesson($tenantId, (int) $order->user_id, $lesson, $source);
                 }
             }
 

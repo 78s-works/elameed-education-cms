@@ -2,10 +2,13 @@
 
 namespace App\Modules\Commerce\Services;
 
+use App\Modules\Assessment\Models\Exam;
 use App\Modules\Catalog\Models\Bundle;
 use App\Modules\Catalog\Models\BundleItem;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Unit;
+use App\Modules\Catalog\Services\LessonAvailabilityService;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Modules\Commerce\Models\Enrollment;
@@ -22,6 +25,10 @@ use App\Modules\Commerce\Models\Enrollment;
  */
 class EnrollmentService
 {
+    public function __construct(
+        private readonly LessonAvailabilityService $availability,
+    ) {}
+
     /**
      * Grant a whole-course enrollment. `$bundleId` records the package it came
      * from, when the grant originates from a bundle purchase.
@@ -30,7 +37,32 @@ class EnrollmentService
     {
         $expiresAt = $course->access_days ? now()->addDays($course->access_days) : null;
 
-        return $this->grant($tenantId, $userId, $source, $course->getKey(), null, null, $bundleId, $expiresAt);
+        return $this->grant($tenantId, $userId, $source, $course->getKey(), null, null, null, $bundleId, $expiresAt);
+    }
+
+    /** Grant access to a single unit (doc 11 R7 — teacher can grant a unit). */
+    public function grantUnit(int $tenantId, int $userId, Unit $unit, EnrollmentSource $source): Enrollment
+    {
+        return $this->grant($tenantId, $userId, $source, null, $unit->getKey(), null, null, null, null);
+    }
+
+    /**
+     * Grant access to a single lesson (doc 11 R4 "pay lesson" + R7). Opens the
+     * time-boxed availability window immediately so the "week" counts from the
+     * grant/payment (decision D3); no-op window when the lesson is unlimited.
+     */
+    public function grantLesson(int $tenantId, int $userId, Lesson $lesson, EnrollmentSource $source): Enrollment
+    {
+        $enrollment = $this->grant($tenantId, $userId, $source, null, null, $lesson->getKey(), null, null, null);
+        $this->availability->start($tenantId, $userId, $lesson);
+
+        return $enrollment;
+    }
+
+    /** Grant access to a single exam (doc 11 R7 / decision D7). */
+    public function grantExam(int $tenantId, int $userId, Exam $exam, EnrollmentSource $source): Enrollment
+    {
+        return $this->grant($tenantId, $userId, $source, null, null, null, $exam->getKey(), null, null);
     }
 
     /**
@@ -45,13 +77,13 @@ class EnrollmentService
         foreach ($bundle->items as $item) {
             match ($item->item_type) {
                 BundleItem::TYPE_COURSE => $item->course_id !== null
-                    ? $this->grant($tenantId, $userId, $source, (int) $item->course_id, null, null, $bundle->getKey(), $expiresAt)
+                    ? $this->grant($tenantId, $userId, $source, (int) $item->course_id, null, null, null, $bundle->getKey(), $expiresAt)
                     : null,
                 BundleItem::TYPE_UNIT => $item->unit_id !== null
-                    ? $this->grant($tenantId, $userId, $source, null, (int) $item->unit_id, null, $bundle->getKey(), $expiresAt)
+                    ? $this->grant($tenantId, $userId, $source, null, (int) $item->unit_id, null, null, $bundle->getKey(), $expiresAt)
                     : null,
                 BundleItem::TYPE_LESSON => $item->lesson_id !== null
-                    ? $this->grant($tenantId, $userId, $source, null, null, (int) $item->lesson_id, $bundle->getKey(), $expiresAt)
+                    ? $this->grant($tenantId, $userId, $source, null, null, (int) $item->lesson_id, null, $bundle->getKey(), $expiresAt)
                     : null,
                 default => null,
             };
@@ -105,9 +137,38 @@ class EnrollmentService
     }
 
     /**
-     * Upsert an active enrollment for a course, unit, OR lesson (exactly one id is
-     * non-null). Returns the existing active grant if one is already present (so
-     * replays / repeat purchases don't stack).
+     * Does the user have access to this exam? True when the exam's course is free,
+     * or the user holds any grant covering it: the whole course, the exam's unit,
+     * the exam's lesson, or a direct exam grant (doc 11 R7 / decision D7).
+     */
+    public function hasExamAccess(int $tenantId, int $userId, Exam $exam): bool
+    {
+        $course = $exam->course;
+        if ($course !== null && $course->is_free) {
+            return true;
+        }
+
+        return Enrollment::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('user_id', $userId)
+            ->grantsAccess()
+            ->where(function ($q) use ($exam): void {
+                $q->where('course_id', $exam->course_id)
+                    ->orWhere('exam_id', $exam->getKey());
+                if ($exam->unit_id !== null) {
+                    $q->orWhere('unit_id', $exam->unit_id);
+                }
+                if ($exam->lesson_id !== null) {
+                    $q->orWhere('lesson_id', $exam->lesson_id);
+                }
+            })
+            ->exists();
+    }
+
+    /**
+     * Upsert an active enrollment for a course, unit, lesson, OR exam (exactly one
+     * id is non-null). Returns the existing active grant if one is already present
+     * (so replays / repeat purchases don't stack).
      */
     private function grant(
         int $tenantId,
@@ -116,6 +177,7 @@ class EnrollmentService
         ?int $courseId,
         ?int $unitId,
         ?int $lessonId,
+        ?int $examId,
         ?int $bundleId,
         ?\DateTimeInterface $expiresAt,
     ): Enrollment {
@@ -126,6 +188,7 @@ class EnrollmentService
             ->when($courseId !== null, fn ($q) => $q->where('course_id', $courseId))
             ->when($unitId !== null, fn ($q) => $q->where('unit_id', $unitId))
             ->when($lessonId !== null, fn ($q) => $q->where('lesson_id', $lessonId))
+            ->when($examId !== null, fn ($q) => $q->where('exam_id', $examId))
             ->first();
 
         if ($existing !== null) {
@@ -137,6 +200,7 @@ class EnrollmentService
             'course_id' => $courseId,
             'unit_id' => $unitId,
             'lesson_id' => $lessonId,
+            'exam_id' => $examId,
             'bundle_id' => $bundleId,
             'source' => $source->value,
             'starts_at' => now(),

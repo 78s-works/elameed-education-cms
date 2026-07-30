@@ -4,6 +4,7 @@ namespace App\Modules\Commerce\Services;
 
 use App\Modules\Catalog\Models\Bundle;
 use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Models\Coupon;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Commerce\Models\OrderItem;
@@ -36,6 +37,7 @@ class CheckoutService
             $line = match ($item['type']) {
                 OrderItem::TYPE_COURSE => $this->priceCourse($item),
                 OrderItem::TYPE_BUNDLE => $this->priceBundle($item),
+                OrderItem::TYPE_LESSON => $this->priceLesson($item),
                 OrderItem::TYPE_WALLET_TOPUP => $this->priceTopup($item),
                 default => throw ValidationException::withMessages(['items' => 'Unsupported item type.']),
             };
@@ -117,6 +119,22 @@ class CheckoutService
             'item_id' => $bundle->id,
             'price_minor' => $bundle->is_free ? 0 : (int) $bundle->price_minor,
             'title' => $bundle->title,
+        ];
+    }
+
+    private function priceLesson(array $item): array
+    {
+        $lesson = Lesson::query()->find($item['lesson'] ?? null);
+
+        if ($lesson === null || ! $lesson->is_purchasable) {
+            throw ValidationException::withMessages(['items' => 'Lesson not available for purchase.']);
+        }
+
+        return [
+            'item_type' => OrderItem::TYPE_LESSON,
+            'item_id' => $lesson->id,
+            'price_minor' => (int) $lesson->price_minor,
+            'title' => $lesson->title,
         ];
     }
 

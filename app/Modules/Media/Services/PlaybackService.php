@@ -5,6 +5,7 @@ namespace App\Modules\Media\Services;
 use App\Models\User;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Services\LessonAvailabilityService;
+use App\Modules\Catalog\Services\LessonProgressionService;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
@@ -38,6 +39,7 @@ class PlaybackService
         private readonly MediaProvider $provider,
         private readonly HlsTranscoder $transcoder,
         private readonly LessonAvailabilityService $availability,
+        private readonly LessonProgressionService $progression,
     ) {}
 
     /**
@@ -175,6 +177,11 @@ class PlaybackService
         if ($user === null
             || ! $this->enrollments->hasLessonAccess($tenantId, $user->getKey(), $lesson)) {
             throw new AccessDeniedHttpException('You do not have access to this lesson.');
+        }
+
+        // Progression gate (doc 11 R5): previous lesson/unit must be cleared.
+        if ($this->progression->progressionLock($tenantId, (int) $user->getKey(), $lesson) !== null) {
+            throw new AccessDeniedHttpException('Finish the previous lesson before continuing.');
         }
 
         // Time-boxed availability window (M04): opens on first play, auto-locks at

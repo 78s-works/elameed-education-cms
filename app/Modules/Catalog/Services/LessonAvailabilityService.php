@@ -46,6 +46,34 @@ class LessonAvailabilityService
         return $window;
     }
 
+    /**
+     * Teacher/assistant opens a locked or expired lesson for a specific student
+     * for a custom number of hours from now (doc 11 R4 — "the teacher can open
+     * the lesson for the student for a specific time he limits"). Creates the
+     * window if absent, clears any lock, and does NOT consume the student's
+     * extension allowance (this is staff-initiated, not a student request).
+     */
+    public function reopen(int $tenantId, int $userId, Lesson $lesson, int $hours): LessonAccessWindow
+    {
+        $window = $this->windowFor($tenantId, $userId, $lesson);
+
+        if ($window === null) {
+            $window = new LessonAccessWindow([
+                'user_id' => $userId,
+                'lesson_id' => $lesson->getKey(),
+                'started_at' => now(),
+                'extensions_used' => 0,
+            ]);
+            $window->tenant_id = $tenantId;
+        }
+
+        $window->expires_at = now()->addHours($hours);
+        $window->locked_at = null;
+        $window->save();
+
+        return $window;
+    }
+
     public function windowFor(int $tenantId, int $userId, Lesson $lesson): ?LessonAccessWindow
     {
         return LessonAccessWindow::withoutGlobalScopes()

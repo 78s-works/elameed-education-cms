@@ -32,6 +32,7 @@ class Enrollment extends Model
         'course_id',
         'unit_id',
         'lesson_id',
+        'exam_id',
         'bundle_id',
         'source',
         'starts_at',
@@ -69,6 +70,11 @@ class Enrollment extends Model
     public function lesson(): BelongsTo
     {
         return $this->belongsTo(Lesson::class);
+    }
+
+    public function exam(): BelongsTo
+    {
+        return $this->belongsTo(\App\Modules\Assessment\Models\Exam::class);
     }
 
     public function bundle(): BelongsTo

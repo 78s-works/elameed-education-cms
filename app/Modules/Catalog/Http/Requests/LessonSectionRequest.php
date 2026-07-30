@@ -2,6 +2,7 @@
 
 namespace App\Modules\Catalog\Http\Requests;
 
+use App\Modules\Catalog\Enums\AssignmentKind;
 use App\Modules\Catalog\Enums\LessonSectionType;
 use App\Modules\Catalog\Enums\PdfKind;
 use Illuminate\Contracts\Validation\Validator;
@@ -29,6 +30,8 @@ class LessonSectionRequest extends FormRequest
             'media_asset_id' => ['nullable', 'integer', 'min:1'],
             'exam_id' => ['nullable', 'integer', 'min:1'],
             'pdf_kind' => ['nullable', new Enum(PdfKind::class)],
+            'assignment_kind' => ['nullable', new Enum(AssignmentKind::class)],
+            'is_required' => ['boolean'],
         ];
     }
 
@@ -50,6 +53,10 @@ class LessonSectionRequest extends FormRequest
 
             if ($this->input('pdf_kind') !== null && $type !== LessonSectionType::Pdf) {
                 $validator->errors()->add('pdf_kind', 'pdf_kind is only valid on a pdf section.');
+            }
+
+            if ($this->input('assignment_kind') !== null && $type !== LessonSectionType::Assignment) {
+                $validator->errors()->add('assignment_kind', 'assignment_kind is only valid on an assignment section.');
             }
         });
     }

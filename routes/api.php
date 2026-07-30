@@ -2,8 +2,10 @@
 
 use App\Modules\Assessment\Http\Controllers\AttemptController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamController;
+use App\Modules\Assessment\Http\Controllers\Teacher\ExamExtensionRequestController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamGradingController;
 use App\Modules\Assessment\Http\Controllers\Teacher\QuestionController;
+use App\Modules\Assessment\Http\Controllers\Teacher\UnitExamController;
 use App\Modules\Billing\Http\Controllers\Admin\PackageController;
 use App\Modules\Billing\Http\Controllers\Admin\TenantSubscriptionController;
 use App\Modules\Billing\Http\Controllers\Teacher\PackageController as TeacherPackageController;
@@ -279,8 +281,11 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         // Exams & assignments — student side (M08)
         Route::get('/exams', [AttemptController::class, 'index']);
         Route::post('/exams/{exam:uuid}/attempts', [AttemptController::class, 'start']);
+        Route::post('/exams/{exam:uuid}/attempts/{attempt}/files', [AttemptController::class, 'uploadFile']);
         Route::post('/exams/{exam:uuid}/attempts/{attempt}/submit', [AttemptController::class, 'submit']);
         Route::get('/exams/{exam:uuid}/attempts/{attempt}', [AttemptController::class, 'result']);
+        // Student asks for extra time on an exam/quiz (doc 11 R6).
+        Route::post('/exams/{exam:uuid}/extension-request', [AttemptController::class, 'requestExtension']);
 
         Route::get('/me/courses', [StudentCoursesController::class, 'index']);
 
@@ -371,6 +376,13 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::put('/teacher/units/{unit}/lessons/{lesson}', [LessonController::class, 'update']);
             Route::delete('/teacher/units/{unit}/lessons/{lesson}', [LessonController::class, 'destroy']);
 
+            // A unit's optional exam (doc 11 R2). Questions authored via the normal
+            // /teacher/exams/{exam}/questions endpoints. Drives progression gate R5.3.
+            Route::get('/teacher/units/{unit}/exam', [UnitExamController::class, 'show']);
+            Route::post('/teacher/units/{unit}/exam', [UnitExamController::class, 'store']);
+            Route::put('/teacher/units/{unit}/exam', [UnitExamController::class, 'update']);
+            Route::delete('/teacher/units/{unit}/exam', [UnitExamController::class, 'destroy']);
+
             Route::get('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'index']);
             Route::post('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'store']);
             Route::delete('/teacher/lessons/{lesson}/attachments/{attachment:uuid}', [LessonAttachmentController::class, 'destroy']);
@@ -389,6 +401,8 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             // Lesson time-box config (availability window + extension allowance).
             Route::get('/teacher/lessons/{lesson}/availability', [LessonAvailabilityController::class, 'show']);
             Route::put('/teacher/lessons/{lesson}/availability', [LessonAvailabilityController::class, 'update']);
+            // Open a lesson for one student for a custom number of hours (doc 11 R4).
+            Route::post('/teacher/lessons/{lesson}/reopen', [LessonAvailabilityController::class, 'reopen']);
 
             // Student extension requests — staff review + grant/deny.
             Route::get('/teacher/extension-requests', [ExtensionRequestController::class, 'index']);
@@ -446,8 +460,10 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::put('/teacher/exams/{exam:uuid}/questions/{question}', [QuestionController::class, 'update']);
             Route::delete('/teacher/exams/{exam:uuid}/questions/{question}', [QuestionController::class, 'destroy']);
 
-            Route::get('/teacher/exams/{exam:uuid}/submissions', [ExamGradingController::class, 'submissions']);
-            Route::post('/teacher/exams/{exam:uuid}/attempts/{attempt}/grade', [ExamGradingController::class, 'grade']);
+            // Exam/quiz time-extension requests — staff review (doc 11 R6).
+            Route::get('/teacher/exam-extension-requests', [ExamExtensionRequestController::class, 'index']);
+            Route::post('/teacher/exam-extension-requests/{examExtension}/grant', [ExamExtensionRequestController::class, 'grant']);
+            Route::post('/teacher/exam-extension-requests/{examExtension}/deny', [ExamExtensionRequestController::class, 'deny']);
 
             // Gamification (M19) — badges + ranking toggle
             Route::get('/teacher/badges', [BadgeController::class, 'index']);
@@ -499,6 +515,14 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
                 Route::post('/teacher/codes/batch', [ActivationCodeController::class, 'batch']);
                 Route::post('/teacher/codes/{code:uuid}/disable', [ActivationCodeController::class, 'disable']);
             }); // permission:centers
+
+            // Homework grading (doc 11 R3.4) — teacher, or an assistant granted the
+            // `homework` permission, reviews/corrects student assignment submissions.
+            Route::middleware('permission:homework')->group(function (): void {
+                Route::get('/teacher/exams/{exam:uuid}/submissions', [ExamGradingController::class, 'submissions']);
+                Route::get('/teacher/exams/{exam:uuid}/attempts/{attempt}/files/{question}', [ExamGradingController::class, 'downloadFile']);
+                Route::post('/teacher/exams/{exam:uuid}/attempts/{attempt}/grade', [ExamGradingController::class, 'grade']);
+            }); // permission:homework
 
             // Students (M17) — teacher, or an assistant granted the `students` permission.
             Route::middleware('permission:students')->group(function (): void {

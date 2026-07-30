@@ -9,6 +9,8 @@ use App\Modules\Assessment\Services\GradingService;
 use App\Modules\Engagement\Services\PointsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * Teacher grading of exam submissions (M08). Auto-graded objective questions are
@@ -63,5 +65,23 @@ class ExamGradingController
             'max_score' => $attempt->max_score,
             'needs_manual_grade' => $attempt->needs_manual_grade,
         ]]);
+    }
+
+    /** Download the file a student submitted for a `file`-type question. */
+    public function downloadFile(Request $request, Exam $exam, ExamAttempt $attempt, int $question): StreamedResponse
+    {
+        abort_unless($attempt->exam_id === $exam->id, 404);
+
+        $file = $attempt->answers[$question]['file'] ?? null;
+        abort_if($file === null || empty($file['path']), 404, 'No file submitted for this question.');
+
+        $disk = (string) config('assessment.upload_disk', 'local');
+        $path = (string) $file['path'];
+
+        // Submissions live only under assignments/; reject anything else.
+        abort_unless(str_starts_with($path, 'assignments/') && ! str_contains($path, '..'), 404);
+        abort_unless(Storage::disk($disk)->exists($path), 404);
+
+        return Storage::disk($disk)->download($path, $file['name'] ?? basename($path));
     }
 }
