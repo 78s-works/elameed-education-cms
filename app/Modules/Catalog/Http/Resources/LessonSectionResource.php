@@ -30,7 +30,11 @@ class LessonSectionResource extends JsonResource
             'title' => $this->title,
             'sort_order' => $this->sort_order,
             'media_asset_id' => $gated ? null : $this->media_asset_id,
+            'youtube_url' => $gated ? null : $this->youtube_url,
             'exam_id' => $gated ? null : $this->exam_id,
+            // uuid is what the take-exam route binds on (/exams/{exam:uuid}/...);
+            // the raw exam_id alone left the in-lesson quiz row unreachable (Bug 3).
+            'exam_uuid' => $gated ? null : ($this->relationLoaded('exam') ? $this->exam?->uuid : null),
             'pdf_kind' => $this->pdf_kind?->value,
             'assignment_kind' => $this->assignment_kind?->value,
             'is_required' => (bool) $this->is_required,

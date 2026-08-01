@@ -32,6 +32,7 @@ class LessonSection extends Model
         'title',
         'sort_order',
         'media_asset_id',
+        'youtube_url',
         'exam_id',
         'pdf_kind',
         'assignment_kind',

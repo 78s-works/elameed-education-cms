@@ -26,6 +26,12 @@ enum LessonSectionType: string
         return in_array($this, [self::LectureVideo, self::AssignmentVideo, self::Pdf], true);
     }
 
+    /** Is this a video section? Video accepts an uploaded asset OR a YouTube link. */
+    public function isVideo(): bool
+    {
+        return in_array($this, [self::LectureVideo, self::AssignmentVideo], true);
+    }
+
     /** Does this section point at an Exam/assignment? */
     public function usesExam(): bool
     {

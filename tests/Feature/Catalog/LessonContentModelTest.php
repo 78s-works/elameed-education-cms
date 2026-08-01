@@ -143,6 +143,63 @@ class LessonContentModelTest extends TestCase
             ->assertStatus(422);
     }
 
+    public function test_video_section_accepts_a_youtube_link_without_an_uploaded_asset(): void
+    {
+        $teacher = $this->member(TenantUserRole::Teacher);
+        $lesson = $this->lesson();
+        Sanctum::actingAs($teacher);
+
+        $this->withHeader('X-Tenant', 'demo')
+            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", [
+                'type' => 'lecture_video', 'title' => 'Explain', 'youtube_url' => 'https://youtu.be/dQw4w9WgXcQ', 'sort_order' => 1,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.type', 'lecture_video')
+            ->assertJsonPath('data.youtube_url', 'https://youtu.be/dQw4w9WgXcQ')
+            ->assertJsonPath('data.media_asset_id', null);
+
+        $this->assertDatabaseHas('lesson_sections', [
+            'lesson_id' => $lesson->id, 'type' => 'lecture_video', 'youtube_url' => 'https://youtu.be/dQw4w9WgXcQ',
+        ]);
+    }
+
+    public function test_video_section_rejects_missing_media_and_youtube_and_bad_links(): void
+    {
+        $teacher = $this->member(TenantUserRole::Teacher);
+        $lesson = $this->lesson();
+        Sanctum::actingAs($teacher);
+
+        // Neither an uploaded asset nor a YouTube link → 422.
+        $this->withHeader('X-Tenant', 'demo')
+            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'assignment_video'])
+            ->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['media_asset_id']]]);
+
+        // A string that is not a YouTube link → 422.
+        $this->withHeader('X-Tenant', 'demo')
+            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'lecture_video', 'youtube_url' => 'https://vimeo.com/123'])
+            ->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['youtube_url']]]);
+
+        // youtube_url on a non-video section → 422.
+        $this->withHeader('X-Tenant', 'demo')
+            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'quiz', 'exam_id' => 1, 'youtube_url' => 'https://youtu.be/dQw4w9WgXcQ'])
+            ->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['youtube_url']]]);
+    }
+
+    public function test_quiz_section_exposes_exam_uuid_for_the_take_link(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $lesson = $this->lesson();
+        $exam = $this->exam($lesson);
+        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+        $quiz = $this->section($lesson, ['type' => 'quiz', 'exam_id' => $exam->id, 'sort_order' => 1]);
+
+        Sanctum::actingAs($student);
+        $res = $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$lesson->id}/sections")->assertOk();
+
+        $row = collect($res->json('data'))->firstWhere('id', $quiz->id);
+        $this->assertSame($exam->uuid, $row['exam_uuid']);
+    }
+
     // ---- Task 2: Content Dependencies & Unlock Rules --------------------------
 
     public function test_mandatory_dependency_locks_pdf_until_quiz_submitted(): void
