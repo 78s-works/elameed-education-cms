@@ -43,7 +43,7 @@ class StudentLessonSectionsController
             throw new HttpException(423, $lock);
         }
 
-        $sections = $lesson->sections()->ordered()->with(['mediaAsset', 'exam', 'dependencies'])->get();
+        $sections = $lesson->sections()->ordered()->with(['mediaAsset'])->get();
         $lockMap = $this->unlock->lockMap($tenantId, $userId, $lesson);
 
         foreach ($sections as $section) {

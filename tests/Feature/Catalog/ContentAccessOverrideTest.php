@@ -4,9 +4,7 @@ namespace Tests\Feature\Catalog;
 
 use App\Models\User;
 use App\Modules\Assessment\Models\Exam;
-use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\ContentDependency;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonSection;
@@ -82,7 +80,11 @@ class ContentAccessOverrideTest extends TestCase
 
     private function exam(int $courseId, array $attrs): Exam
     {
-        $exam = new Exam(['course_id' => $courseId, 'title' => 'X', 'type' => 'assignment', 'pass_percent' => 50, 'is_published' => true] + $attrs);
+        // array_merge (not +) so $attrs['type'] overrides the default.
+        $exam = new Exam(array_merge(
+            ['course_id' => $courseId, 'title' => 'X', 'type' => 'lesson_quiz', 'pass_percent' => 50, 'is_published' => true],
+            $attrs,
+        ));
         $exam->tenant_id = $this->tenant->id;
         $exam->save();
 
@@ -115,9 +117,8 @@ class ContentAccessOverrideTest extends TestCase
         $l2 = $this->lesson($unit, 1);
         $this->enroll($student, $course);
 
-        // L1 carries a required upload homework → L2 is locked until it's graded.
-        $hw = $this->exam($course->id, ['type' => 'assignment']);
-        $this->section($l1, ['type' => 'assignment', 'assignment_kind' => 'upload', 'is_required' => true, 'exam_id' => $hw->id]);
+        // L1 carries a published quiz → L2 is locked until it's submitted.
+        $this->exam($course->id, ['type' => 'lesson_quiz', 'unit_id' => $unit->id, 'lesson_id' => $l1->id]);
 
         Sanctum::actingAs($student);
         $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2->id}/sections")->assertStatus(423);
@@ -153,9 +154,9 @@ class ContentAccessOverrideTest extends TestCase
         $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2->id}/sections")->assertStatus(423);
     }
 
-    // ---- section-level override unlocks one gated section -----------------------
+    // ---- section-level override unlocks one gated (solution) section ------------
 
-    public function test_section_override_unlocks_a_dependency_locked_section(): void
+    public function test_section_override_unlocks_a_solution_locked_section(): void
     {
         $teacher = $this->member(TenantUserRole::Teacher);
         $student = $this->member(TenantUserRole::Student);
@@ -164,34 +165,27 @@ class ContentAccessOverrideTest extends TestCase
         $lesson = $this->lesson($unit, 0);
         $this->enroll($student, $course);
 
-        $quiz = $this->exam($course->id, ['type' => 'exam']);
-        $entry = $this->section($lesson, ['type' => 'quiz', 'exam_id' => $quiz->id, 'sort_order' => 0]);
-        $body = $this->section($lesson, ['type' => 'pdf', 'pdf_kind' => 'lecture_notes', 'media_asset_id' => 1, 'sort_order' => 1]);
-        // Body depends on the entry quiz being submitted (mandatory).
-        $dep = new ContentDependency([
-            'section_id' => $body->id, 'depends_on_section_id' => $entry->id,
-            'trigger' => 'submitted', 'enforcement' => 'mandatory',
-        ]);
-        $dep->tenant_id = $this->tenant->id;
-        $dep->save();
+        // A quiz + its solution video — the solution is hidden until the quiz is submitted.
+        $this->exam($course->id, ['type' => 'lesson_quiz', 'unit_id' => $unit->id, 'lesson_id' => $lesson->id]);
+        $solution = $this->section($lesson, ['type' => 'quiz_solution', 'media_asset_id' => 1, 'sort_order' => 0]);
 
         Sanctum::actingAs($student);
         $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$lesson->id}/sections")
             ->assertOk()
-            ->assertJsonPath('data.1.locked', true);
+            ->assertJsonPath('data.0.locked', true);
 
-        // Grant a section override on the gated body section.
+        // Grant a section override on the gated solution section.
         Sanctum::actingAs($teacher);
         $this->withHeader('X-Tenant', 'demo')
             ->postJson("/api/v1/teacher/students/{$student->uuid}/content-overrides", [
-                'target_type' => 'section', 'target_id' => $body->id,
+                'target_type' => 'section', 'target_id' => $solution->id,
             ])
             ->assertCreated();
 
         Sanctum::actingAs($student);
         $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$lesson->id}/sections")
             ->assertOk()
-            ->assertJsonPath('data.1.locked', false);
+            ->assertJsonPath('data.0.locked', false);
     }
 
     // ---- unit-level override covers every lesson under it -----------------------
@@ -201,28 +195,27 @@ class ContentAccessOverrideTest extends TestCase
         $teacher = $this->member(TenantUserRole::Teacher);
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
-        $u1 = $this->unit($course, 0);
-        $u2 = $this->unit($course, 1);
-        $this->lesson($u1, 0);
-        $l2a = $this->lesson($u2, 0);
+        $unit = $this->unit($course, 0);
+        $l1 = $this->lesson($unit, 0);
+        $l2 = $this->lesson($unit, 1); // second lesson — gated by L1's quiz
         $this->enroll($student, $course);
 
-        // Previous unit has a published exam → first lesson of u2 is gated by default.
-        $this->exam($course->id, ['type' => 'exam', 'unit_id' => $u1->id]);
+        // L1 has an unsubmitted quiz → L2 is progression-locked.
+        $this->exam($course->id, ['type' => 'lesson_quiz', 'unit_id' => $unit->id, 'lesson_id' => $l1->id]);
 
         Sanctum::actingAs($student);
-        $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2a->id}/sections")->assertStatus(423);
+        $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2->id}/sections")->assertStatus(423);
 
-        // A unit override on u2 opens its lessons.
+        // A unit override on the unit opens its lessons.
         Sanctum::actingAs($teacher);
         $this->withHeader('X-Tenant', 'demo')
             ->postJson("/api/v1/teacher/students/{$student->uuid}/content-overrides", [
-                'target_type' => 'unit', 'target_id' => $u2->id,
+                'target_type' => 'unit', 'target_id' => $unit->id,
             ])
             ->assertCreated();
 
         Sanctum::actingAs($student);
-        $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2a->id}/sections")->assertOk();
+        $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2->id}/sections")->assertOk();
     }
 
     // ---- guards -----------------------------------------------------------------

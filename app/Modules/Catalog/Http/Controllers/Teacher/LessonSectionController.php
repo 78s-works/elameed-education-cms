@@ -20,7 +20,7 @@ class LessonSectionController
     public function index(Lesson $lesson): AnonymousResourceCollection
     {
         return LessonSectionResource::collection(
-            $lesson->sections()->ordered()->with(['mediaAsset', 'exam', 'dependencies'])->get()
+            $lesson->sections()->ordered()->with(['mediaAsset'])->get()
         );
     }
 
@@ -28,7 +28,7 @@ class LessonSectionController
     {
         $section = $lesson->sections()->create($request->validated());
 
-        return (new LessonSectionResource($section->load(['mediaAsset', 'exam', 'dependencies'])))
+        return (new LessonSectionResource($section->load(['mediaAsset'])))
             ->response()->setStatusCode(201);
     }
 
@@ -37,7 +37,7 @@ class LessonSectionController
         $this->assertOwnership($lesson, $section);
         $section->update($request->validated());
 
-        return new LessonSectionResource($section->load(['mediaAsset', 'exam', 'dependencies']));
+        return new LessonSectionResource($section->load(['mediaAsset']));
     }
 
     public function destroy(Lesson $lesson, LessonSection $section): Response

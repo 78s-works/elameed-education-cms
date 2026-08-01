@@ -3,10 +3,7 @@
 namespace Tests\Feature\Catalog;
 
 use App\Models\User;
-use App\Modules\Assessment\Models\Exam;
-use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\ContentDependency;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonAccessWindow;
@@ -96,15 +93,6 @@ class LessonContentModelTest extends TestCase
         return $section;
     }
 
-    private function exam(Lesson $lesson): Exam
-    {
-        $exam = new Exam(['course_id' => $lesson->course_id, 'lesson_id' => $lesson->id, 'title' => 'Quiz', 'type' => 'exam', 'pass_percent' => 50, 'is_published' => true]);
-        $exam->tenant_id = $this->tenant->id;
-        $exam->save();
-
-        return $exam;
-    }
-
     // ---- Task 1: Flexible Lesson Content Structure ----------------------------
 
     public function test_teacher_creates_typed_sections(): void
@@ -169,9 +157,9 @@ class LessonContentModelTest extends TestCase
         $lesson = $this->lesson();
         Sanctum::actingAs($teacher);
 
-        // Neither an uploaded asset nor a YouTube link → 422.
+        // Neither an uploaded asset nor a YouTube link → 422 (hw_solution is a video).
         $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'assignment_video'])
+            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'hw_solution'])
             ->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['media_asset_id']]]);
 
         // A string that is not a YouTube link → 422.
@@ -179,92 +167,14 @@ class LessonContentModelTest extends TestCase
             ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'lecture_video', 'youtube_url' => 'https://vimeo.com/123'])
             ->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['youtube_url']]]);
 
-        // youtube_url on a non-video section → 422.
+        // youtube_url on a non-video section (pdf) → 422.
         $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'quiz', 'exam_id' => 1, 'youtube_url' => 'https://youtu.be/dQw4w9WgXcQ'])
+            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'pdf', 'media_asset_id' => 1, 'youtube_url' => 'https://youtu.be/dQw4w9WgXcQ'])
             ->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['youtube_url']]]);
     }
 
-    public function test_quiz_section_exposes_exam_uuid_for_the_take_link(): void
-    {
-        $student = $this->member(TenantUserRole::Student);
-        $lesson = $this->lesson();
-        $exam = $this->exam($lesson);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
-        $quiz = $this->section($lesson, ['type' => 'quiz', 'exam_id' => $exam->id, 'sort_order' => 1]);
-
-        Sanctum::actingAs($student);
-        $res = $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$lesson->id}/sections")->assertOk();
-
-        $row = collect($res->json('data'))->firstWhere('id', $quiz->id);
-        $this->assertSame($exam->uuid, $row['exam_uuid']);
-    }
-
-    // ---- Task 2: Content Dependencies & Unlock Rules --------------------------
-
-    public function test_mandatory_dependency_locks_pdf_until_quiz_submitted(): void
-    {
-        $teacher = $this->member(TenantUserRole::Teacher);
-        $student = $this->member(TenantUserRole::Student);
-        $lesson = $this->lesson();
-        $exam = $this->exam($lesson);
-        $pdf = $this->pdfAsset();
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
-
-        $quizSection = $this->section($lesson, ['type' => 'quiz', 'exam_id' => $exam->id, 'sort_order' => 1]);
-        $answerSheet = $this->section($lesson, ['type' => 'pdf', 'media_asset_id' => $pdf->id, 'pdf_kind' => 'exam_answer_sheet', 'sort_order' => 2]);
-
-        // Teacher wires the mandatory "submitted" gate.
-        Sanctum::actingAs($teacher);
-        $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections/{$answerSheet->id}/dependencies", [
-                'depends_on_section_id' => $quizSection->id, 'trigger' => 'submitted', 'enforcement' => 'mandatory',
-            ])
-            ->assertCreated();
-
-        // Student sees the answer sheet LOCKED before submitting.
-        Sanctum::actingAs($student);
-        $locked = $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$lesson->id}/sections")->assertOk();
-        $this->assertTrue($this->sectionLocked($locked->json('data'), $answerSheet->id));
-
-        // Submit an attempt → the sheet unlocks.
-        $attempt = new ExamAttempt(['exam_id' => $exam->id, 'user_id' => $student->id, 'status' => 'submitted', 'submitted_at' => now(), 'score' => 8, 'max_score' => 10]);
-        $attempt->tenant_id = $this->tenant->id;
-        $attempt->save();
-
-        $unlocked = $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$lesson->id}/sections")->assertOk();
-        $this->assertFalse($this->sectionLocked($unlocked->json('data'), $answerSheet->id));
-    }
-
-    public function test_optional_dependency_never_locks(): void
-    {
-        $student = $this->member(TenantUserRole::Student);
-        $lesson = $this->lesson();
-        $exam = $this->exam($lesson);
-        $pdf = $this->pdfAsset();
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
-
-        $quiz = $this->section($lesson, ['type' => 'quiz', 'exam_id' => $exam->id]);
-        $sheet = $this->section($lesson, ['type' => 'pdf', 'media_asset_id' => $pdf->id]);
-        $dep = new ContentDependency(['section_id' => $sheet->id, 'depends_on_section_id' => $quiz->id, 'trigger' => 'submitted', 'enforcement' => 'optional']);
-        $dep->tenant_id = $this->tenant->id;
-        $dep->save();
-
-        Sanctum::actingAs($student);
-        $res = $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$lesson->id}/sections")->assertOk();
-        $this->assertFalse($this->sectionLocked($res->json('data'), $sheet->id));
-    }
-
-    /** @param array<int, array<string, mixed>> $sections */
-    private function sectionLocked(array $sections, int $id): bool
-    {
-        foreach ($sections as $section) {
-            if ((int) $section['id'] === $id) {
-                return (bool) ($section['locked'] ?? false);
-            }
-        }
-        $this->fail("Section {$id} not in response.");
-    }
+    // Solution-video gating (quiz_solution/hw_solution hidden until submit) is
+    // covered in LessonProgressionTest.
 
     // ---- Task 3 + 4: Availability, extensions, countdown, lock ----------------
 

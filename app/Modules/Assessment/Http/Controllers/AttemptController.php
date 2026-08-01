@@ -3,6 +3,7 @@
 namespace App\Modules\Assessment\Http\Controllers;
 
 use App\Modules\Assessment\Enums\AttemptStatus;
+use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Enums\QuestionType;
 use App\Modules\Assessment\Http\Requests\SubmitAttemptRequest;
 use App\Modules\Assessment\Http\Requests\UploadAttemptFileRequest;
@@ -12,7 +13,7 @@ use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Assessment\Services\ExamTimeExtensionService;
 use App\Modules\Assessment\Services\GradingService;
-use App\Modules\Catalog\Services\ContentUnlockService;
+use App\Modules\Catalog\Models\Course;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Engagement\Services\PointsService;
@@ -37,24 +38,41 @@ class AttemptController
         private readonly GradingService $grading,
         private readonly PointsService $points,
         private readonly ExamTimeExtensionService $timeExtensions,
-        private readonly ContentUnlockService $unlock,
     ) {}
 
-    /** Published, in-window exams for courses the student is enrolled in. */
+    /**
+     * Published, in-window exams the student can reach: every free_exam, plus any
+     * exam covered by a grant (whole course / free course / unit / lesson / direct
+     * exam). Optional ?lesson_id= narrows to one lesson (the course player's quiz +
+     * homework). Discovery only — start-time re-checks access via hasExamAccess.
+     */
     public function index(Request $request): AnonymousResourceCollection
     {
         $tenantId = $this->context->tenantOrFail()->getKey();
 
-        $courseIds = Enrollment::withoutGlobalScopes()
+        $grants = Enrollment::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)->where('user_id', $request->user()->getKey())
-            ->grantsAccess()->pluck('course_id')->filter()->unique();
+            ->grantsAccess()->get(['course_id', 'unit_id', 'lesson_id', 'exam_id']);
+
+        $courseIds = $grants->pluck('course_id')->filter()->unique()->values()->all();
+        $unitIds = $grants->pluck('unit_id')->filter()->unique()->values()->all();
+        $lessonIds = $grants->pluck('lesson_id')->filter()->unique()->values()->all();
+        $examIds = $grants->pluck('exam_id')->filter()->unique()->values()->all();
+        $freeCourseIds = Course::query()->where('is_free', true)->pluck('id')->all();
 
         $exams = Exam::query()
             ->withCount('questions')
-            ->whereIn('course_id', $courseIds)
             ->where('is_published', true)
             ->where(fn ($q) => $q->whereNull('starts_at')->orWhere('starts_at', '<=', now()))
             ->where(fn ($q) => $q->whereNull('ends_at')->orWhere('ends_at', '>=', now()))
+            ->when($request->filled('lesson_id'), fn ($q) => $q->where('lesson_id', $request->integer('lesson_id')))
+            ->where(function ($q) use ($courseIds, $unitIds, $lessonIds, $examIds, $freeCourseIds): void {
+                $q->where('type', ExamType::FreeExam->value)
+                    ->orWhereIn('course_id', array_merge($courseIds, $freeCourseIds))
+                    ->orWhereIn('unit_id', $unitIds)
+                    ->orWhereIn('lesson_id', $lessonIds)
+                    ->orWhereIn('id', $examIds);
+            })
             ->latest('id')
             ->get();
 
@@ -240,36 +258,11 @@ class AttemptController
         if (! $exam->isOpen()) {
             throw new ConflictHttpException('This exam is not open.');
         }
-        // Access via any grant covering the exam — whole course, its unit/lesson,
-        // or a direct exam grant (doc 11 R7).
+        // Exams are never gated by content/dependencies in the convention model —
+        // access only requires a grant covering the exam (a free_exam bypasses even
+        // that; see EnrollmentService::hasExamAccess).
         if (! $this->enrollments->hasExamAccess((int) $exam->tenant_id, $request->user()->getKey(), $exam)) {
             throw new AccessDeniedHttpException('You do not have access to this exam.');
-        }
-        $this->assertDependencyMet($request, $exam);
-
-        // A section-bound assignment/quiz exam must respect its section lock: if
-        // every lesson section that hosts this exam is still locked by an unmet
-        // content dependency, it can't be started yet (C2b). Course/unit exams have
-        // no hosting section, so isExamLocked returns false and they're unaffected.
-        if ($this->unlock->isExamLocked((int) $exam->tenant_id, (int) $request->user()->getKey(), (int) $exam->id)) {
-            throw new AccessDeniedHttpException('Complete the required lesson content before starting this.');
-        }
-    }
-
-    private function assertDependencyMet(Request $request, Exam $exam): void
-    {
-        if ($exam->depends_on_exam_id === null) {
-            return;
-        }
-
-        $dep = Exam::query()->find($exam->depends_on_exam_id);
-        $passed = $dep !== null && ExamAttempt::query()
-            ->where('exam_id', $dep->id)->where('user_id', $request->user()->getKey())
-            ->where('status', AttemptStatus::Graded->value)->get()
-            ->contains(fn ($a) => $a->max_score > 0 && ($a->score / $a->max_score * 100) >= $dep->pass_percent);
-
-        if (! $passed) {
-            throw new AccessDeniedHttpException('Complete the prerequisite exam first.');
         }
     }
 

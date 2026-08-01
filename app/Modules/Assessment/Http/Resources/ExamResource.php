@@ -17,6 +17,7 @@ class ExamResource extends JsonResource
             'id' => $this->id,
             'uuid' => $this->uuid,
             'course_id' => $this->course_id,
+            'unit_id' => $this->unit_id,
             'lesson_id' => $this->lesson_id,
             'title' => $this->title,
             'type' => $this->type->value,
@@ -30,7 +31,6 @@ class ExamResource extends JsonResource
             'ends_at' => $this->ends_at?->toIso8601String(),
             'result_visibility' => $this->result_visibility,
             'show_answers' => $this->show_answers,
-            'depends_on_exam_id' => $this->depends_on_exam_id,
             'is_published' => $this->is_published,
             'questions_count' => $this->whenCounted('questions'),
         ];

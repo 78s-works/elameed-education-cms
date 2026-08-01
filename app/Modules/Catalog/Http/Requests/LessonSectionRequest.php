@@ -2,7 +2,6 @@
 
 namespace App\Modules\Catalog\Http\Requests;
 
-use App\Modules\Catalog\Enums\AssignmentKind;
 use App\Modules\Catalog\Enums\LessonSectionType;
 use App\Modules\Catalog\Enums\PdfKind;
 use App\Support\Youtube;
@@ -11,10 +10,10 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rules\Enum;
 
 /**
- * Validates a typed lesson section. `type` decides which payload is required:
- * a `pdf` needs `media_asset_id`; a video (lecture_video/assignment_video) needs
- * `media_asset_id` OR a `youtube_url`; exam types (assignment/quiz) need
- * `exam_id`; only `pdf` accepts a `pdf_kind`.
+ * Validates a typed lesson section (media-only in the convention model). `type`
+ * decides the payload: a `pdf` needs `media_asset_id`; a video (lecture_video /
+ * quiz_solution / hw_solution) needs `media_asset_id` OR a `youtube_url`. Sections
+ * no longer host exams — quizzes/homework link to the lesson directly.
  */
 class LessonSectionRequest extends FormRequest
 {
@@ -31,9 +30,7 @@ class LessonSectionRequest extends FormRequest
             'sort_order' => ['nullable', 'integer', 'min:0'],
             'media_asset_id' => ['nullable', 'integer', 'min:1'],
             'youtube_url' => ['nullable', 'string', 'max:2048'],
-            'exam_id' => ['nullable', 'integer', 'min:1'],
             'pdf_kind' => ['nullable', new Enum(PdfKind::class)],
-            'assignment_kind' => ['nullable', new Enum(AssignmentKind::class)],
             'is_required' => ['boolean'],
         ];
     }
@@ -69,16 +66,8 @@ class LessonSectionRequest extends FormRequest
                 }
             }
 
-            if ($type->usesExam() && $this->input('exam_id') === null) {
-                $validator->errors()->add('exam_id', "A {$type->value} section requires an exam_id.");
-            }
-
             if ($this->input('pdf_kind') !== null && $type !== LessonSectionType::Pdf) {
                 $validator->errors()->add('pdf_kind', 'pdf_kind is only valid on a pdf section.');
-            }
-
-            if ($this->input('assignment_kind') !== null && $type !== LessonSectionType::Assignment) {
-                $validator->errors()->add('assignment_kind', 'assignment_kind is only valid on an assignment section.');
             }
         });
     }

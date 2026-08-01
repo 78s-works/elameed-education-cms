@@ -2,6 +2,7 @@
 
 namespace App\Modules\Commerce\Services;
 
+use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Catalog\Models\Bundle;
 use App\Modules\Catalog\Models\BundleItem;
@@ -145,12 +146,18 @@ class EnrollmentService
     }
 
     /**
-     * Does the user have access to this exam? True when the exam's course is free,
-     * or the user holds any grant covering it: the whole course, the exam's unit,
-     * the exam's lesson, or a direct exam grant (doc 11 R7 / decision D7).
+     * Does the user have access to this exam? A free_exam is open to any logged-in
+     * student (no enrollment). Otherwise true when the exam's course is free, or the
+     * user holds any grant covering it: the whole course, the exam's unit, the
+     * exam's lesson, or a direct exam grant.
      */
     public function hasExamAccess(int $tenantId, int $userId, Exam $exam): bool
     {
+        // Free exams bypass enrollment entirely (convention model).
+        if ($exam->type === ExamType::FreeExam) {
+            return true;
+        }
+
         $course = $exam->course;
         if ($course !== null && $course->is_free) {
             return true;

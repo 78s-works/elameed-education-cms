@@ -4,8 +4,8 @@ use App\Modules\Assessment\Http\Controllers\AttemptController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamExtensionRequestController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamGradingController;
+use App\Modules\Assessment\Http\Controllers\Teacher\ExamLinkController;
 use App\Modules\Assessment\Http\Controllers\Teacher\QuestionController;
-use App\Modules\Assessment\Http\Controllers\Teacher\UnitExamController;
 use App\Modules\Billing\Http\Controllers\Admin\PackageController;
 use App\Modules\Billing\Http\Controllers\Admin\TenantSubscriptionController;
 use App\Modules\Billing\Http\Controllers\Teacher\PackageController as TeacherPackageController;
@@ -16,7 +16,6 @@ use App\Modules\Catalog\Http\Controllers\StudentLessonAccessController;
 use App\Modules\Catalog\Http\Controllers\StudentLessonSectionsController;
 use App\Modules\Catalog\Http\Controllers\Teacher\BundleController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CategoryController;
-use App\Modules\Catalog\Http\Controllers\Teacher\ContentDependencyController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CourseController;
 use App\Modules\Catalog\Http\Controllers\Teacher\ExtensionRequestController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonAttachmentController;
@@ -24,7 +23,6 @@ use App\Modules\Catalog\Http\Controllers\Teacher\LessonAvailabilityController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonSectionController;
 use App\Modules\Catalog\Http\Controllers\Teacher\UnitController;
-use App\Modules\Catalog\Http\Controllers\Teacher\UnitDependencyController;
 use App\Modules\Centers\Http\Controllers\RedeemCodeController;
 use App\Modules\Centers\Http\Controllers\Teacher\ActivationCodeController;
 use App\Modules\Centers\Http\Controllers\Teacher\AttendanceController;
@@ -50,9 +48,9 @@ use App\Modules\Identity\Http\Controllers\Teacher\AssistantController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentActivityController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentContentOverrideController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentController;
-use App\Modules\Identity\Http\Controllers\Teacher\StudentImportController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentEnrollmentController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentFinanceController;
+use App\Modules\Identity\Http\Controllers\Teacher\StudentImportController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentParentController;
 use App\Modules\Media\Http\Controllers\InternalMediaController;
 use App\Modules\Media\Http\Controllers\MediaCallbackController;
@@ -66,13 +64,13 @@ use App\Modules\Notifications\Http\Controllers\Admin\TranslationController as Ad
 use App\Modules\Notifications\Http\Controllers\Admin\TypeController as AdminNotificationTypeController;
 use App\Modules\Notifications\Http\Controllers\InboxController;
 use App\Modules\Notifications\Http\Controllers\NotificationController;
+use App\Modules\Notifications\Http\Controllers\Teacher\SmsSettingsController;
 use App\Modules\Notifications\Http\Controllers\Teacher\TeacherNotificationController;
 use App\Modules\PlatformAdmin\Http\Controllers\AdminReportController;
 use App\Modules\PlatformAdmin\Http\Controllers\AdminTenantController;
 use App\Modules\Reporting\Http\Controllers\AuditLogController;
 use App\Modules\Reporting\Http\Controllers\StudentCoursesController;
 use App\Modules\Reporting\Http\Controllers\TeacherReportsController;
-use App\Modules\Notifications\Http\Controllers\Teacher\SmsSettingsController;
 use App\Modules\Tenancy\Http\Controllers\Teacher\DomainController;
 use App\Modules\Tenancy\Http\Controllers\TeacherCustomLandingController;
 use App\Modules\Tenancy\Http\Controllers\TeacherLandingController;
@@ -376,39 +374,21 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::put('/teacher/courses/{course:uuid}/units/{unit}', [UnitController::class, 'update']);
             Route::delete('/teacher/courses/{course:uuid}/units/{unit}', [UnitController::class, 'destroy']);
 
-            // Configurable, non-sequential unit prerequisites (extends R5.3). A unit
-            // can depend on another unit's exam or a specific section (not just the
-            // immediately previous unit). Bind by id (own data).
-            Route::get('/teacher/units/{unit}/dependencies', [UnitDependencyController::class, 'index']);
-            Route::post('/teacher/units/{unit}/dependencies', [UnitDependencyController::class, 'store']);
-            Route::delete('/teacher/units/{unit}/dependencies/{dependency}', [UnitDependencyController::class, 'destroy']);
-
             Route::get('/teacher/units/{unit}/lessons', [LessonController::class, 'index']);
             Route::post('/teacher/units/{unit}/lessons', [LessonController::class, 'store']);
             Route::put('/teacher/units/{unit}/lessons/{lesson}', [LessonController::class, 'update']);
             Route::delete('/teacher/units/{unit}/lessons/{lesson}', [LessonController::class, 'destroy']);
 
-            // A unit's optional exam (doc 11 R2). Questions authored via the normal
-            // /teacher/exams/{exam}/questions endpoints. Drives progression gate R5.3.
-            Route::get('/teacher/units/{unit}/exam', [UnitExamController::class, 'show']);
-            Route::post('/teacher/units/{unit}/exam', [UnitExamController::class, 'store']);
-            Route::put('/teacher/units/{unit}/exam', [UnitExamController::class, 'update']);
-            Route::delete('/teacher/units/{unit}/exam', [UnitExamController::class, 'destroy']);
-
             Route::get('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'index']);
             Route::post('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'store']);
             Route::delete('/teacher/lessons/{lesson}/attachments/{attachment:uuid}', [LessonAttachmentController::class, 'destroy']);
 
-            // Flexible lesson content: typed sections (FR-M04-01) + their unlock
-            // rules (Content Dependencies). Sections/dependencies bind by id (own data).
+            // Flexible lesson content: typed media sections (FR-M04-01). Sections are
+            // media-only now (video/pdf); exams link to the lesson directly. Bind by id.
             Route::get('/teacher/lessons/{lesson}/sections', [LessonSectionController::class, 'index']);
             Route::post('/teacher/lessons/{lesson}/sections', [LessonSectionController::class, 'store']);
             Route::put('/teacher/lessons/{lesson}/sections/{section}', [LessonSectionController::class, 'update']);
             Route::delete('/teacher/lessons/{lesson}/sections/{section}', [LessonSectionController::class, 'destroy']);
-
-            Route::get('/teacher/lessons/{lesson}/sections/{section}/dependencies', [ContentDependencyController::class, 'index']);
-            Route::post('/teacher/lessons/{lesson}/sections/{section}/dependencies', [ContentDependencyController::class, 'store']);
-            Route::delete('/teacher/lessons/{lesson}/sections/{section}/dependencies/{dependency}', [ContentDependencyController::class, 'destroy']);
 
             // Lesson time-box config (availability window + extension allowance).
             Route::get('/teacher/lessons/{lesson}/availability', [LessonAvailabilityController::class, 'show']);
@@ -460,9 +440,14 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::post('/teacher/remote-videos/versions/{version}/restore', [RemoteVideoController::class, 'restore']);
             Route::delete('/teacher/remote-videos/versions/{version}', [RemoteVideoController::class, 'purge']);
 
-            // Exams & assignments — teacher authoring + grading (M08)
-            Route::get('/teacher/courses/{course:uuid}/exams', [ExamController::class, 'index']);
-            Route::post('/teacher/courses/{course:uuid}/exams', [ExamController::class, 'store']);
+            // Exams — teacher authoring + grading (M08). Managed from the sidebar
+            // (top-level, NOT course-nested). `type` drives the link + auto-fill;
+            // filter the index by ?type=&course_id=&unit_id=&lesson_id=.
+            Route::get('/teacher/exams', [ExamController::class, 'index']);
+            Route::post('/teacher/exams', [ExamController::class, 'store']);
+            // Link-target dropdowns for the exam editor (lesson / unit pickers).
+            Route::get('/teacher/exam-link/lessons', [ExamLinkController::class, 'lessons']);
+            Route::get('/teacher/exam-link/units', [ExamLinkController::class, 'units']);
             Route::get('/teacher/exams/{exam:uuid}', [ExamController::class, 'show']);
             Route::put('/teacher/exams/{exam:uuid}', [ExamController::class, 'update']);
             Route::delete('/teacher/exams/{exam:uuid}', [ExamController::class, 'destroy']);

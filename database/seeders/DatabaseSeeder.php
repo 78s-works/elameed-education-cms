@@ -880,7 +880,6 @@ class DatabaseSeeder extends Seeder
             'duration_sec' => (int) $spec['duration'],
             'max_views' => $config['slug'] === 'farag-physics' ? 3 : 5,
             'is_free_preview' => (bool) $spec['preview'],
-            'gating_rule' => ['requires_exam_id' => null, 'min_progress_percent' => 0],
             'visibility' => 'visible',
             'publish_at' => now()->subMonths(2)->addDays($index),
         ]);
@@ -1003,12 +1002,17 @@ class DatabaseSeeder extends Seeder
 
         $exams = [];
 
+        // Link the demo quiz + homework to the first lesson when one exists so the
+        // seed data exercises the lesson-progression gate; otherwise stand alone.
+        $lessonLink = $lesson !== null
+            ? ['course_id' => $course->id, 'unit_id' => $lesson->unit_id, 'lesson_id' => $lesson->id]
+            : ['course_id' => $course->id, 'unit_id' => null, 'lesson_id' => null];
+
         if ($kind === 'full') {
             $quiz = Exam::create([
-                'course_id' => $course->id,
-                'lesson_id' => null,
-                'title' => 'امتحان الوحدة الأولى - '.$course->title,
-                'type' => 'exam',
+                ...$lessonLink,
+                'title' => 'كويز الدرس الأول - '.$course->title,
+                'type' => $lesson !== null ? 'lesson_quiz' : 'free_exam',
                 'pass_percent' => 60,
                 'duration_min' => 45,
                 'attempts_allowed' => 2,
@@ -1018,7 +1022,6 @@ class DatabaseSeeder extends Seeder
                 'ends_at' => now()->addMonth(),
                 'result_visibility' => 'immediate',
                 'show_answers' => true,
-                'depends_on_exam_id' => null,
                 'mode' => 'standard',
                 'is_published' => true,
             ]);
@@ -1026,10 +1029,9 @@ class DatabaseSeeder extends Seeder
             $exams[] = $quiz;
 
             $assignment = Exam::create([
-                'course_id' => $course->id,
-                'lesson_id' => $lesson?->id, // a per-lesson assignment
+                ...$lessonLink,
                 'title' => 'الواجب الأول - '.$course->title,
-                'type' => 'assignment',
+                'type' => $lesson !== null ? 'homework' : 'free_exam',
                 'pass_percent' => 50,
                 'duration_min' => null,
                 'attempts_allowed' => 0, // unlimited
@@ -1039,7 +1041,6 @@ class DatabaseSeeder extends Seeder
                 'ends_at' => now()->addWeeks(2),
                 'result_visibility' => 'after_close',
                 'show_answers' => false,
-                'depends_on_exam_id' => $quiz->id,
                 'mode' => 'standard',
                 'is_published' => true,
             ]);
@@ -1051,7 +1052,7 @@ class DatabaseSeeder extends Seeder
                 'course_id' => $course->id,
                 'lesson_id' => null,
                 'title' => 'امتحان قديم (مؤرشف) - '.$course->title,
-                'type' => 'exam',
+                'type' => 'free_exam',
                 'pass_percent' => 50,
                 'duration_min' => 30,
                 'attempts_allowed' => 1,
@@ -1061,7 +1062,6 @@ class DatabaseSeeder extends Seeder
                 'ends_at' => now()->subMonths(4),
                 'result_visibility' => 'manual',
                 'show_answers' => false,
-                'depends_on_exam_id' => null,
                 'mode' => 'standard',
                 'is_published' => false,
             ]);
@@ -1074,7 +1074,7 @@ class DatabaseSeeder extends Seeder
                 'course_id' => $course->id,
                 'lesson_id' => null,
                 'title' => 'امتحان البابل شيت - '.$course->title,
-                'type' => 'exam',
+                'type' => 'free_exam',
                 'pass_percent' => 55,
                 'duration_min' => 60,
                 'attempts_allowed' => 1,

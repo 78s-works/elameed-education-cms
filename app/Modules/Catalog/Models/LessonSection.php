@@ -26,6 +26,8 @@ class LessonSection extends Model
 {
     use BelongsToTenant;
 
+    // Sections are media-only now (video/pdf). `exam_id` + `assignment_kind` are
+    // retired (exams link to the lesson directly); columns kept dormant, not fillable.
     protected $fillable = [
         'lesson_id',
         'type',
@@ -33,9 +35,7 @@ class LessonSection extends Model
         'sort_order',
         'media_asset_id',
         'youtube_url',
-        'exam_id',
         'pdf_kind',
-        'assignment_kind',
         'is_required',
     ];
 

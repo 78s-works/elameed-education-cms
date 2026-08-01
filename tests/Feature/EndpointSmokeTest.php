@@ -353,8 +353,8 @@ class EndpointSmokeTest extends TestCase
         // ---------------------------------------------------------------
         // ASSESSMENT
         // ---------------------------------------------------------------
-        $this->hit('GET', "/api/v1/teacher/courses/{$this->course1->uuid}/exams", $t, [], $T, group: 'Assessment');
-        $exRes = $this->hit('POST', "/api/v1/teacher/courses/{$this->course1->uuid}/exams", $t, ['title' => 'Smoke Exam', 'is_published' => true, 'result_visibility' => 'immediate', 'type' => 'exam'], $T, ok: [200, 201], group: 'Assessment');
+        $this->hit('GET', '/api/v1/teacher/exams?type=free_exam', $t, [], $T, group: 'Assessment');
+        $exRes = $this->hit('POST', '/api/v1/teacher/exams', $t, ['title' => 'Smoke Exam', 'result_visibility' => 'immediate', 'type' => 'free_exam'], $T, ok: [200, 201], group: 'Assessment');
         $exUuid = $this->pick($exRes, 'data.uuid');
         $this->hit('GET', "/api/v1/teacher/exams/{$exUuid}", $t, [], $T, group: 'Assessment');
         $this->hit('PUT', "/api/v1/teacher/exams/{$exUuid}", $t, ['title' => 'Smoke Exam 2'], $T, group: 'Assessment');

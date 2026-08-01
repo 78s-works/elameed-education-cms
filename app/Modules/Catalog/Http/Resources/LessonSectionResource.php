@@ -11,16 +11,16 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * @mixin LessonSection
  *
  * `locked` is present only on the student-facing listing, where the controller
- * stamps each section with its computed unlock state (ContentUnlockService).
- * Teacher listings omit it.
+ * stamps each section with its computed unlock state (ContentUnlockService — only
+ * solution videos are ever locked). Teacher listings omit it.
  */
 class LessonSectionResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        // A locked section must NOT leak its protected content (video/exam asset).
-        // Enforcement lives here so a client can't reach the asset by ignoring the
-        // `locked` display flag. PDF sections are never gated (see isContentGated).
+        // A locked solution video must NOT leak its protected media. Enforcement
+        // lives here so a client can't reach the asset by ignoring the `locked`
+        // display flag. PDF sections carry no gated asset (never locked).
         $gated = $this->isContentGated();
 
         return [
@@ -31,25 +31,19 @@ class LessonSectionResource extends JsonResource
             'sort_order' => $this->sort_order,
             'media_asset_id' => $gated ? null : $this->media_asset_id,
             'youtube_url' => $gated ? null : $this->youtube_url,
-            'exam_id' => $gated ? null : $this->exam_id,
-            // uuid is what the take-exam route binds on (/exams/{exam:uuid}/...);
-            // the raw exam_id alone left the in-lesson quiz row unreachable (Bug 3).
-            'exam_uuid' => $gated ? null : ($this->relationLoaded('exam') ? $this->exam?->uuid : null),
             'pdf_kind' => $this->pdf_kind?->value,
-            'assignment_kind' => $this->assignment_kind?->value,
             'is_required' => (bool) $this->is_required,
             'locked' => $this->whenNotNull($this->getAttribute('locked')),
             'media' => $this->when(
                 ! $gated,
                 fn () => $this->whenLoaded('mediaAsset', fn () => $this->mediaAsset ? new MediaAssetResource($this->mediaAsset) : null),
             ),
-            'dependencies' => ContentDependencyResource::collection($this->whenLoaded('dependencies')),
         ];
     }
 
     /**
-     * True when this section is locked AND its content is the gated kind (video
-     * or exam). PDF sections carry no protected asset, so they are never gated.
+     * True when this section is locked AND carries a gated (video) asset. PDF
+     * sections have no protected asset, so they are never gated.
      */
     private function isContentGated(): bool
     {

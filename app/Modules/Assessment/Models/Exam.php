@@ -25,14 +25,16 @@ class Exam extends Model
     use SoftDeletes;
 
     protected $attributes = [
-        'type' => 'exam',
+        'type' => 'free_exam',
         'mode' => 'standard',
     ];
 
+    // `depends_on_exam_id` is retired (exam→exam gating removed). Column kept
+    // dormant in the DB; deliberately not fillable so nothing writes it.
     protected $fillable = [
         'course_id', 'lesson_id', 'unit_id', 'title', 'type', 'pass_percent', 'duration_min',
         'max_time_extensions', 'attempts_allowed', 'question_order', 'scoring', 'starts_at', 'ends_at',
-        'result_visibility', 'show_answers', 'depends_on_exam_id', 'mode', 'is_published',
+        'result_visibility', 'show_answers', 'mode', 'is_published',
     ];
 
     protected $casts = [

@@ -2,23 +2,27 @@
 
 namespace App\Modules\Catalog\Services;
 
+use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
-use App\Modules\Catalog\Enums\DependencyTrigger;
 use App\Modules\Catalog\Enums\LessonSectionType;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonSection;
-use App\Modules\Engagement\Models\LessonProgress;
-use Illuminate\Support\Collection;
 
 /**
- * Evaluates "Content Dependencies & Unlock Rules": whether a student may access
- * a lesson section given the completion state of its prerequisite sections.
+ * The ONLY within-lesson gate left in the convention model: solution/answer
+ * videos are hidden until the matching exam is submitted.
  *
- * Only MANDATORY dependencies gate; optional ones are advisory (surfaced by the
- * resource, never blocking). A section is locked if ANY mandatory prerequisite's
- * trigger is unmet. Access-critical, so tenant id is explicit and queries run
- * withoutGlobalScopes (mirrors EnrollmentService).
+ *   quiz_solution — locked until this lesson's lesson_quiz has a submitted attempt.
+ *   hw_solution   — locked until this lesson's homework  has a submitted attempt.
+ *
+ * Every other section type (lecture_video, pdf) is always open, and exams are
+ * never locked. A lesson with no (published) exam of the matching type doesn't
+ * gate its solution — an orphan solution simply shows. A staff-granted override
+ * on the section/lesson/unit unlocks outright.
+ *
+ * Access-critical, so tenant id is explicit and queries run withoutGlobalScopes
+ * (mirrors EnrollmentService).
  */
 class ContentUnlockService
 {
@@ -36,42 +40,24 @@ class ContentUnlockService
         $sections = LessonSection::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('lesson_id', $lesson->getKey())
-            ->with('dependencies')
             ->get();
 
-        $byId = $sections->keyBy('id');
         $overrideSets = $this->overrides->activeTargetSets($tenantId, $userId);
         $unitId = $lesson->unit_id !== null ? (int) $lesson->unit_id : null;
-        $map = [];
 
+        // Each solution kind depends on ONE lesson-level exam — resolve once.
+        $quizSubmitted = $this->examSubmitted($tenantId, $userId, (int) $lesson->getKey(), ExamType::LessonQuiz);
+        $hwSubmitted = $this->examSubmitted($tenantId, $userId, (int) $lesson->getKey(), ExamType::Homework);
+
+        $map = [];
         foreach ($sections as $section) {
-            // A staff-granted override on this section (or its lesson/unit) unlocks
-            // it outright, bypassing any unmet dependency.
             if ($this->overrides->sectionCovered($overrideSets, $section, $unitId)) {
                 $map[(int) $section->id] = false;
 
                 continue;
             }
 
-            $locked = false;
-
-            foreach ($section->dependencies as $dep) {
-                if (! $dep->isMandatory()) {
-                    continue;
-                }
-
-                $prereq = $byId->get($dep->depends_on_section_id);
-                if ($prereq === null) {
-                    continue; // dangling prerequisite — treat as satisfied
-                }
-
-                if (! $this->triggerMet($tenantId, $userId, $prereq, $dep->trigger)) {
-                    $locked = true;
-                    break;
-                }
-            }
-
-            $map[(int) $section->id] = $locked;
+            $map[(int) $section->id] = $this->lockedByType($section->type, $quizSubmitted, $hwSubmitted);
         }
 
         return $map;
@@ -80,71 +66,29 @@ class ContentUnlockService
     /** Is this single section locked for the user? */
     public function isSectionLocked(int $tenantId, int $userId, LessonSection $section): bool
     {
-        // A staff-granted override on the section (or its lesson/unit) short-circuits.
+        if (! $section->type->isSolution()) {
+            return false; // only solution videos are gated
+        }
+
         $unitId = Lesson::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('id', $section->lesson_id)
             ->value('unit_id');
+
         if ($this->overrides->hasActiveForSection($tenantId, $userId, $section, $unitId !== null ? (int) $unitId : null)) {
             return false;
         }
 
-        $section->loadMissing('dependencies');
+        $type = $section->type === LessonSectionType::QuizSolution ? ExamType::LessonQuiz : ExamType::Homework;
 
-        foreach ($section->dependencies as $dep) {
-            if (! $dep->isMandatory()) {
-                continue;
-            }
-
-            $prereq = LessonSection::withoutGlobalScopes()
-                ->where('tenant_id', $tenantId)
-                ->find($dep->depends_on_section_id);
-
-            if ($prereq === null) {
-                continue;
-            }
-
-            if (! $this->triggerMet($tenantId, $userId, $prereq, $dep->trigger)) {
-                return true;
-            }
-        }
-
-        return false;
+        return ! $this->examSubmitted($tenantId, $userId, (int) $section->lesson_id, $type);
     }
 
     /**
-     * Is starting `$examId` blocked by a section lock? An assignment/quiz exam is
-     * hosted by one (or more) lesson sections; it stays reachable as long as at
-     * least one hosting section is unlocked. Returns false for exams that no
-     * section hosts (course/unit exams) — those are gated elsewhere. This is the
-     * enforcement primitive the exam-start guard was missing (C2b).
-     */
-    public function isExamLocked(int $tenantId, int $userId, int $examId): bool
-    {
-        $sections = LessonSection::withoutGlobalScopes()
-            ->where('tenant_id', $tenantId)
-            ->where('exam_id', $examId)
-            ->get();
-
-        if ($sections->isEmpty()) {
-            return false;
-        }
-
-        foreach ($sections as $section) {
-            if (! $this->isSectionLocked($tenantId, $userId, $section)) {
-                return false; // reachable through this unlocked section
-            }
-        }
-
-        return true;
-    }
-
-    /**
-     * Is `$assetId`, as delivered inside lesson `$lessonId`, blocked by a section
-     * lock? Mirrors isExamLocked for media (video) sections: reachable while any
-     * hosting section is unlocked; not gated when no section hosts the asset (a
-     * plain lesson video with no section wrapper). Guards the playback endpoint so
-     * the section gate can't be skipped by requesting a token directly (C2b).
+     * Is `$assetId`, as delivered inside lesson `$lessonId`, blocked by a solution
+     * gate? Reachable while any hosting section is unlocked; not gated when no
+     * section hosts the asset (a plain lesson video). Guards the playback endpoint
+     * so the solution gate can't be skipped by requesting a token directly.
      */
     public function isAssetLockedInLesson(int $tenantId, int $userId, int $lessonId, int $assetId): bool
     {
@@ -167,74 +111,38 @@ class ContentUnlockService
         return true;
     }
 
-    /** Public accessor: is `$trigger` satisfied on prerequisite section `$prereq`? */
-    public function sectionTriggerMet(int $tenantId, int $userId, LessonSection $prereq, DependencyTrigger $trigger): bool
+    /** @return bool locked? */
+    private function lockedByType(LessonSectionType $type, bool $quizSubmitted, bool $hwSubmitted): bool
     {
-        return $this->triggerMet($tenantId, $userId, $prereq, $trigger);
-    }
-
-    private function triggerMet(int $tenantId, int $userId, LessonSection $prereq, DependencyTrigger $trigger): bool
-    {
-        if ($prereq->type->usesExam() && $prereq->exam_id !== null) {
-            return $this->examTriggerMet($tenantId, $userId, (int) $prereq->exam_id, $trigger);
-        }
-
-        return $this->mediaTriggerMet($tenantId, $userId, $prereq);
-    }
-
-    private function examTriggerMet(int $tenantId, int $userId, int $examId, DependencyTrigger $trigger): bool
-    {
-        $attempts = ExamAttempt::withoutGlobalScopes()
-            ->where('tenant_id', $tenantId)
-            ->where('exam_id', $examId)
-            ->where('user_id', $userId)
-            ->whereNotNull('submitted_at')
-            ->get();
-
-        if ($attempts->isEmpty()) {
-            return false;
-        }
-
-        return match ($trigger) {
-            DependencyTrigger::Submitted, DependencyTrigger::Completed => true,
-            DependencyTrigger::Passed => $this->anyPassed($tenantId, $examId, $attempts),
-            DependencyTrigger::Graded => $attempts->firstWhere('status', 'graded') !== null,
+        return match ($type) {
+            LessonSectionType::QuizSolution => ! $quizSubmitted,
+            LessonSectionType::HwSolution => ! $hwSubmitted,
+            default => false,
         };
     }
 
-    /** @param Collection<int, ExamAttempt> $attempts */
-    private function anyPassed(int $tenantId, int $examId, $attempts): bool
+    /**
+     * Has the user submitted the lesson's published exam of $type? True when the
+     * lesson has no such exam (nothing to gate → the solution shows).
+     */
+    private function examSubmitted(int $tenantId, int $userId, int $lessonId, ExamType $type): bool
     {
-        $exam = Exam::withoutGlobalScopes()->where('tenant_id', $tenantId)->find($examId);
-        $need = (int) ($exam?->pass_percent ?? 0);
+        $exam = Exam::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('lesson_id', $lessonId)
+            ->where('type', $type->value)
+            ->where('is_published', true)
+            ->first();
 
-        foreach ($attempts as $attempt) {
-            $max = (int) ($attempt->max_score ?? 0);
-            if ($max <= 0) {
-                continue;
-            }
-            $pct = ((int) ($attempt->score ?? 0)) / $max * 100;
-            if ($pct >= $need) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function mediaTriggerMet(int $tenantId, int $userId, LessonSection $prereq): bool
-    {
-        // A PDF has no completion signal — reading isn't tracked — so it can't gate.
-        if ($prereq->type === LessonSectionType::Pdf) {
+        if ($exam === null) {
             return true;
         }
 
-        // Video sections: completion is the lesson's watch-completion.
-        return LessonProgress::withoutGlobalScopes()
+        return ExamAttempt::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
+            ->where('exam_id', $exam->getKey())
             ->where('user_id', $userId)
-            ->where('lesson_id', $prereq->lesson_id)
-            ->whereNotNull('completed_at')
+            ->whereNotNull('submitted_at')
             ->exists();
     }
 }

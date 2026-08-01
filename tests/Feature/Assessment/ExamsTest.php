@@ -72,7 +72,9 @@ class ExamsTest extends TestCase
 
     private function makeExam(array $attrs = []): Exam
     {
-        $exam = new Exam(array_merge(['title' => 'Quiz', 'is_published' => true, 'pass_percent' => 50, 'attempts_allowed' => 1], $attrs));
+        // Default to a course-scoped lesson_quiz so enrollment still gates access
+        // (a free_exam would bypass enrollment and break the access tests).
+        $exam = new Exam(array_merge(['title' => 'Quiz', 'type' => 'lesson_quiz', 'is_published' => true, 'pass_percent' => 50, 'attempts_allowed' => 1], $attrs));
         $exam->tenant_id = $this->tenant->id;
         $exam->course_id = $this->course->id;
         $exam->save();
@@ -95,7 +97,7 @@ class ExamsTest extends TestCase
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
 
         $examUuid = $this->withHeaders($this->h)
-            ->postJson("/api/v1/teacher/courses/{$this->course->uuid}/exams", ['title' => 'Midterm', 'pass_percent' => 60])
+            ->postJson('/api/v1/teacher/exams', ['title' => 'Midterm', 'type' => 'free_exam', 'pass_percent' => 60])
             ->assertStatus(201)->json('data.uuid');
 
         $this->withHeaders($this->h)->postJson("/api/v1/teacher/exams/{$examUuid}/questions", [
@@ -208,7 +210,7 @@ class ExamsTest extends TestCase
     {
         Storage::fake('local');
 
-        $exam = $this->makeExam(['type' => 'assignment']);
+        $exam = $this->makeExam(['type' => 'homework']);
         $q = $this->makeQuestion($exam, ['type' => 'file', 'body' => 'Upload your homework.', 'points' => 10]);
         $student = $this->enrolledStudent();
 
@@ -252,7 +254,7 @@ class ExamsTest extends TestCase
 
     public function test_grading_without_feedback_keeps_plain_grade_response(): void
     {
-        $exam = $this->makeExam(['type' => 'assignment']);
+        $exam = $this->makeExam(['type' => 'homework']);
         $q = $this->makeQuestion($exam, ['type' => 'essay', 'body' => 'Discuss.', 'points' => 10]);
         $student = $this->enrolledStudent();
 

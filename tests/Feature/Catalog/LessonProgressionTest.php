@@ -3,9 +3,9 @@
 namespace Tests\Feature\Catalog;
 
 use App\Models\User;
+use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
-use App\Modules\Assessment\Models\ExamTimeExtension;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
@@ -20,14 +20,14 @@ use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 /**
- * doc 11 — lesson progression & gating: unit exams (R2), the cross-lesson /
- * cross-unit "cannot open the next lesson" gates (R5.2 homework, R5.3 unit exam),
- * the per-part compulsory flag (R9), per-lesson access grants (R7), and exam/quiz
- * time extensions (R6).
+ * Convention-gating model — the automatic prev-lesson quiz+homework gate, the
+ * always-open first lesson, exams that are never locked, free exams open to any
+ * student, and solution videos hidden until the matching submission.
  */
 class LessonProgressionTest extends TestCase
 {
@@ -81,9 +81,22 @@ class LessonProgressionTest extends TestCase
         return $lesson->fresh();
     }
 
-    private function exam(int $courseId, array $attrs): Exam
+    /** A published exam bound to a lesson (auto course/unit from the lesson). */
+    private function lessonExam(Lesson $lesson, ExamType $type): Exam
     {
-        $exam = new Exam(['course_id' => $courseId, 'title' => 'X', 'type' => 'assignment', 'pass_percent' => 50, 'is_published' => true] + $attrs);
+        return $this->exam([
+            'course_id' => $lesson->course_id, 'unit_id' => $lesson->unit_id,
+            'lesson_id' => $lesson->id, 'type' => $type->value,
+        ]);
+    }
+
+    private function exam(array $attrs): Exam
+    {
+        // array_merge (not +) so $attrs['type'] overrides the default.
+        $exam = new Exam(array_merge(
+            ['title' => 'X', 'type' => ExamType::FreeExam->value, 'pass_percent' => 50, 'is_published' => true],
+            $attrs,
+        ));
         $exam->tenant_id = $this->tenant->id;
         $exam->save();
 
@@ -99,10 +112,10 @@ class LessonProgressionTest extends TestCase
         return $section;
     }
 
-    private function attempt(Exam $exam, User $user, string $status): ExamAttempt
+    private function submit(Exam $exam, User $user): ExamAttempt
     {
         $attempt = new ExamAttempt([
-            'exam_id' => $exam->id, 'user_id' => $user->id, 'status' => $status,
+            'exam_id' => $exam->id, 'user_id' => $user->id, 'status' => 'submitted',
             'submitted_at' => now(), 'score' => 8, 'max_score' => 10,
         ]);
         $attempt->tenant_id = $this->tenant->id;
@@ -116,9 +129,30 @@ class LessonProgressionTest extends TestCase
         app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $course, EnrollmentSource::Purchase);
     }
 
-    // ---- R5.2 — previous lesson's required homework must be graded --------------
+    private function sections(User $student, Lesson $lesson): TestResponse
+    {
+        Sanctum::actingAs($student);
 
-    public function test_next_lesson_locked_until_previous_homework_graded(): void
+        return $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$lesson->id}/sections");
+    }
+
+    // ---- the automatic prev-lesson gate -----------------------------------------
+
+    public function test_first_lesson_of_unit_is_always_open(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $course = $this->course();
+        $unit = $this->unit($course, 0);
+        $l1 = $this->lesson($unit, 0);
+        $this->enroll($student, $course);
+
+        // A quiz on the first lesson, unsubmitted, must NOT block the first lesson.
+        $this->lessonExam($l1, ExamType::LessonQuiz);
+
+        $this->sections($student, $l1)->assertOk();
+    }
+
+    public function test_next_lesson_unlocks_only_after_prev_quiz_and_homework_submitted(): void
     {
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
@@ -127,70 +161,110 @@ class LessonProgressionTest extends TestCase
         $l2 = $this->lesson($unit, 1);
         $this->enroll($student, $course);
 
-        $hw = $this->exam($course->id, ['type' => 'assignment']);
-        $this->section($l1, ['type' => 'assignment', 'assignment_kind' => 'upload', 'is_required' => true, 'exam_id' => $hw->id]);
+        $quiz = $this->lessonExam($l1, ExamType::LessonQuiz);
+        $hw = $this->lessonExam($l1, ExamType::Homework);
 
-        Sanctum::actingAs($student);
+        // Nothing submitted → locked on the quiz.
+        $this->sections($student, $l2)->assertStatus(423)->assertSee('prev_quiz_missing');
 
-        // No submission yet → L2 is locked (423).
-        $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2->id}/sections")
-            ->assertStatus(423);
+        // Quiz submitted, homework still missing → still locked.
+        $this->submit($quiz, $student);
+        $this->sections($student, $l2)->assertStatus(423)->assertSee('prev_homework_missing');
 
-        // Submitted but not graded → still locked.
-        $a = $this->attempt($hw, $student, 'submitted');
-        $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2->id}/sections")
-            ->assertStatus(423);
-
-        // Graded (corrected) → L2 opens.
-        $a->update(['status' => 'graded']);
-        $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2->id}/sections")
-            ->assertOk();
+        // Both submitted (grading NOT required) → opens.
+        $this->submit($hw, $student);
+        $this->sections($student, $l2)->assertOk();
     }
 
-    public function test_optional_homework_does_not_gate_next_lesson(): void
+    public function test_next_lesson_open_when_previous_lesson_has_no_quiz_or_homework(): void
     {
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
         $unit = $this->unit($course, 0);
-        $l1 = $this->lesson($unit, 0);
+        $this->lesson($unit, 0);
         $l2 = $this->lesson($unit, 1);
         $this->enroll($student, $course);
 
-        $hw = $this->exam($course->id, ['type' => 'assignment']);
-        // is_required = false → never blocks (R9).
-        $this->section($l1, ['type' => 'assignment', 'assignment_kind' => 'upload', 'is_required' => false, 'exam_id' => $hw->id]);
-
-        Sanctum::actingAs($student);
-        $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2->id}/sections")->assertOk();
+        $this->sections($student, $l2)->assertOk();
     }
 
-    // ---- R5.3 — first lesson of a unit waits on the previous unit's exam --------
-
-    public function test_first_lesson_of_unit_locked_until_previous_unit_exam_answered(): void
+    public function test_unit_exam_does_not_gate_the_next_unit(): void
     {
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
         $u1 = $this->unit($course, 0);
         $u2 = $this->unit($course, 1);
-        $this->lesson($u1, 0);              // u1 has a lesson
-        $l2a = $this->lesson($u2, 0);       // first lesson of u2
+        $this->lesson($u1, 0);
+        $l2a = $this->lesson($u2, 0); // first lesson of the next unit
         $this->enroll($student, $course);
 
-        $unitExam = $this->exam($course->id, ['type' => 'exam', 'unit_id' => $u1->id]);
+        // An unanswered unit exam on u1 must NOT lock u2's first lesson (no cross-unit gate).
+        $this->exam(['course_id' => $course->id, 'unit_id' => $u1->id, 'type' => ExamType::UnitExam->value]);
+
+        $this->sections($student, $l2a)->assertOk();
+    }
+
+    // ---- solution videos hidden until the matching submission -------------------
+
+    public function test_quiz_solution_video_hidden_until_quiz_submitted(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $course = $this->course();
+        $unit = $this->unit($course, 0);
+        $l1 = $this->lesson($unit, 0);
+        $this->enroll($student, $course);
+
+        $quiz = $this->lessonExam($l1, ExamType::LessonQuiz);
+        $this->section($l1, ['type' => 'quiz_solution', 'media_asset_id' => 999, 'is_required' => false]);
+
+        // Before submit: the solution section is locked and its media is withheld.
+        $res = $this->sections($student, $l1)->assertOk();
+        $sol = collect($res->json('data'))->firstWhere('type', 'quiz_solution');
+        $this->assertTrue($sol['locked']);
+        $this->assertNull($sol['media_asset_id']);
+
+        // After submitting the quiz: unlocked, media exposed.
+        $this->submit($quiz, $student);
+        $res = $this->sections($student, $l1)->assertOk();
+        $sol = collect($res->json('data'))->firstWhere('type', 'quiz_solution');
+        $this->assertFalse($sol['locked']);
+        $this->assertSame(999, $sol['media_asset_id']);
+    }
+
+    // ---- exams are never locked -------------------------------------------------
+
+    public function test_lesson_quiz_is_startable_any_time(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $course = $this->course();
+        $unit = $this->unit($course, 0);
+        $l1 = $this->lesson($unit, 0);
+        $l2 = $this->lesson($unit, 1);
+        $this->enroll($student, $course);
+
+        // L2's quiz is playable even though L2 (the lesson) is progression-locked.
+        $quiz = $this->lessonExam($l2, ExamType::LessonQuiz);
 
         Sanctum::actingAs($student);
-
-        $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2a->id}/sections")
-            ->assertStatus(423);
-
-        $this->attempt($unitExam, $student, 'submitted');
-        $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2a->id}/sections")
+        $this->withHeader('X-Tenant', 'demo')
+            ->postJson("/api/v1/exams/{$quiz->uuid}/attempts")
             ->assertOk();
     }
 
-    // ---- R2 — unit optional exam CRUD ------------------------------------------
+    public function test_free_exam_is_open_to_any_logged_in_student_without_enrollment(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $freeExam = $this->exam(['type' => ExamType::FreeExam->value]); // no course, no enrollment
 
-    public function test_teacher_creates_one_exam_per_unit(): void
+        Sanctum::actingAs($student);
+        $this->withHeader('X-Tenant', 'demo')
+            ->postJson("/api/v1/exams/{$freeExam->uuid}/attempts")
+            ->assertOk();
+    }
+
+    // ---- teacher exam authoring (top-level, type-driven) ------------------------
+
+    public function test_teacher_creates_one_unit_exam_per_unit(): void
     {
         $teacher = $this->member(TenantUserRole::Teacher);
         $course = $this->course();
@@ -199,15 +273,32 @@ class LessonProgressionTest extends TestCase
         Sanctum::actingAs($teacher);
 
         $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/units/{$unit->id}/exam", ['title' => 'Unit test', 'type' => 'exam'])
+            ->postJson('/api/v1/teacher/exams', ['title' => 'Unit test', 'type' => 'unit_exam', 'unit_id' => $unit->id])
             ->assertCreated();
 
-        $this->assertDatabaseHas('exams', ['unit_id' => $unit->id, 'title' => 'Unit test']);
+        // course_id auto-filled from the unit.
+        $this->assertDatabaseHas('exams', ['unit_id' => $unit->id, 'course_id' => $course->id, 'type' => 'unit_exam']);
 
-        // A unit has at most one exam.
+        // A unit has at most one unit_exam.
         $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/units/{$unit->id}/exam", ['title' => 'Second', 'type' => 'exam'])
+            ->postJson('/api/v1/teacher/exams', ['title' => 'Second', 'type' => 'unit_exam', 'unit_id' => $unit->id])
             ->assertStatus(409);
+    }
+
+    public function test_lesson_quiz_autofills_course_and_unit_from_lesson(): void
+    {
+        $teacher = $this->member(TenantUserRole::Teacher);
+        $course = $this->course();
+        $unit = $this->unit($course, 0);
+        $lesson = $this->lesson($unit, 0);
+
+        Sanctum::actingAs($teacher);
+
+        $this->withHeader('X-Tenant', 'demo')
+            ->postJson('/api/v1/teacher/exams', ['title' => 'Quiz', 'type' => 'lesson_quiz', 'lesson_id' => $lesson->id])
+            ->assertCreated()
+            ->assertJsonPath('data.unit_id', $unit->id)
+            ->assertJsonPath('data.course_id', $course->id);
     }
 
     // ---- R7 — teacher grants access to a single lesson --------------------------
@@ -230,7 +321,6 @@ class LessonProgressionTest extends TestCase
             ->assertJsonPath('data.target_type', 'lesson');
 
         $this->assertDatabaseHas('enrollments', ['user_id' => $student->id, 'lesson_id' => $lesson->id]);
-        // Window opened on grant (doc 11 R4/D3).
         $this->assertDatabaseHas('lesson_access_windows', ['lesson_id' => $lesson->id, 'user_id' => $student->id]);
     }
 
@@ -240,23 +330,18 @@ class LessonProgressionTest extends TestCase
     {
         $teacher = $this->member(TenantUserRole::Teacher);
         $student = $this->member(TenantUserRole::Student);
-        $course = $this->course();
-        $this->enroll($student, $course);
-        $exam = $this->exam($course->id, ['type' => 'exam', 'duration_min' => 30, 'max_time_extensions' => 1]);
+        $exam = $this->exam(['type' => ExamType::FreeExam->value, 'duration_min' => 30, 'max_time_extensions' => 1]);
 
-        // Student requests time.
         Sanctum::actingAs($student);
         $reqId = $this->withHeader('X-Tenant', 'demo')
             ->postJson("/api/v1/exams/{$exam->uuid}/extension-request", ['minutes' => 15])
             ->assertCreated()->json('data.id');
 
-        // Teacher grants 15 minutes.
         Sanctum::actingAs($teacher);
         $this->withHeader('X-Tenant', 'demo')
             ->postJson("/api/v1/teacher/exam-extension-requests/{$reqId}/grant", ['minutes' => 15])
             ->assertOk()->assertJsonPath('data.status', 'granted');
 
-        // Start now reports 45 minutes for this student.
         Sanctum::actingAs($student);
         $this->withHeader('X-Tenant', 'demo')
             ->postJson("/api/v1/exams/{$exam->uuid}/attempts")

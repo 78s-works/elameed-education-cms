@@ -3,38 +3,40 @@
 namespace App\Modules\Catalog\Enums;
 
 /**
- * Typed content section within a lesson (FR-M04-01, "Flexible Lesson Content
- * Structure"). A lesson is composed of ordered sections, each carrying exactly
- * one payload:
- *   lecture_video    — a lecture MediaAsset (media_asset_id)
- *   assignment_video — a solution/assignment MediaAsset (media_asset_id)
- *   pdf              — a PDF/file MediaAsset (media_asset_id) with a pdf_kind
- *   assignment       — an Exam of type=assignment (exam_id), student submits
- *   quiz             — an Exam of type=exam (exam_id)
+ * Typed content section within a lesson (FR-M04-01). A lesson is composed of
+ * ordered sections, each carrying exactly one MediaAsset payload:
+ *   lecture_video — a lecture MediaAsset (media_asset_id) or YouTube link
+ *   pdf           — a PDF/file MediaAsset (media_asset_id) with a pdf_kind
+ *   quiz_solution — the answer video for this lesson's lesson_quiz. Hidden until
+ *                   the student submits that quiz.
+ *   hw_solution   — the answer video for this lesson's homework. Hidden until the
+ *                   student submits that homework.
+ *
+ * Exams are NO LONGER hosted by sections — a lesson_quiz / homework Exam links to
+ * the lesson directly (Exam.lesson_id). Sections only carry media now.
  */
 enum LessonSectionType: string
 {
     case LectureVideo = 'lecture_video';
-    case AssignmentVideo = 'assignment_video';
     case Pdf = 'pdf';
-    case Assignment = 'assignment';
-    case Quiz = 'quiz';
+    case QuizSolution = 'quiz_solution';
+    case HwSolution = 'hw_solution';
 
-    /** Does this section point at a MediaAsset (vs an Exam)? */
+    /** Every section points at a MediaAsset (video or pdf); none point at an exam. */
     public function usesMedia(): bool
     {
-        return in_array($this, [self::LectureVideo, self::AssignmentVideo, self::Pdf], true);
+        return true;
     }
 
     /** Is this a video section? Video accepts an uploaded asset OR a YouTube link. */
     public function isVideo(): bool
     {
-        return in_array($this, [self::LectureVideo, self::AssignmentVideo], true);
+        return in_array($this, [self::LectureVideo, self::QuizSolution, self::HwSolution], true);
     }
 
-    /** Does this section point at an Exam/assignment? */
-    public function usesExam(): bool
+    /** Is this a solution/answer video gated behind a matching exam submission? */
+    public function isSolution(): bool
     {
-        return in_array($this, [self::Assignment, self::Quiz], true);
+        return in_array($this, [self::QuizSolution, self::HwSolution], true);
     }
 }
