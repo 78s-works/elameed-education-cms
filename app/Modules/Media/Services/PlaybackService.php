@@ -4,6 +4,7 @@ namespace App\Modules\Media\Services;
 
 use App\Models\User;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Services\ContentUnlockService;
 use App\Modules\Catalog\Services\LessonAvailabilityService;
 use App\Modules\Catalog\Services\LessonProgressionService;
 use App\Modules\Commerce\Services\EnrollmentService;
@@ -40,6 +41,7 @@ class PlaybackService
         private readonly HlsTranscoder $transcoder,
         private readonly LessonAvailabilityService $availability,
         private readonly LessonProgressionService $progression,
+        private readonly ContentUnlockService $unlock,
     ) {}
 
     /**
@@ -182,6 +184,16 @@ class PlaybackService
         // Progression gate (doc 11 R5): previous lesson/unit must be cleared.
         if ($this->progression->progressionLock($tenantId, (int) $user->getKey(), $lesson) !== null) {
             throw new AccessDeniedHttpException('Finish the previous lesson before continuing.');
+        }
+
+        // Within-lesson content lock (C2b): if this lesson's video is delivered
+        // through a section still locked by an unmet dependency, deny — otherwise
+        // the section gate is skippable by hitting playback directly. A plain
+        // lesson video with no hosting section has nothing to gate here.
+        $assetId = $lesson->video_asset_id;
+        if ($assetId !== null
+            && $this->unlock->isAssetLockedInLesson($tenantId, (int) $user->getKey(), (int) $lesson->getKey(), (int) $assetId)) {
+            throw new AccessDeniedHttpException('Finish the required lesson content before playing this video.');
         }
 
         // Time-boxed availability window (M04): opens on first play, auto-locks at

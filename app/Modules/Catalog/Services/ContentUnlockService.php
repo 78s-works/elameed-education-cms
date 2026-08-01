@@ -112,6 +112,61 @@ class ContentUnlockService
         return false;
     }
 
+    /**
+     * Is starting `$examId` blocked by a section lock? An assignment/quiz exam is
+     * hosted by one (or more) lesson sections; it stays reachable as long as at
+     * least one hosting section is unlocked. Returns false for exams that no
+     * section hosts (course/unit exams) — those are gated elsewhere. This is the
+     * enforcement primitive the exam-start guard was missing (C2b).
+     */
+    public function isExamLocked(int $tenantId, int $userId, int $examId): bool
+    {
+        $sections = LessonSection::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('exam_id', $examId)
+            ->get();
+
+        if ($sections->isEmpty()) {
+            return false;
+        }
+
+        foreach ($sections as $section) {
+            if (! $this->isSectionLocked($tenantId, $userId, $section)) {
+                return false; // reachable through this unlocked section
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Is `$assetId`, as delivered inside lesson `$lessonId`, blocked by a section
+     * lock? Mirrors isExamLocked for media (video) sections: reachable while any
+     * hosting section is unlocked; not gated when no section hosts the asset (a
+     * plain lesson video with no section wrapper). Guards the playback endpoint so
+     * the section gate can't be skipped by requesting a token directly (C2b).
+     */
+    public function isAssetLockedInLesson(int $tenantId, int $userId, int $lessonId, int $assetId): bool
+    {
+        $sections = LessonSection::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('lesson_id', $lessonId)
+            ->where('media_asset_id', $assetId)
+            ->get();
+
+        if ($sections->isEmpty()) {
+            return false;
+        }
+
+        foreach ($sections as $section) {
+            if (! $this->isSectionLocked($tenantId, $userId, $section)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /** Public accessor: is `$trigger` satisfied on prerequisite section `$prereq`? */
     public function sectionTriggerMet(int $tenantId, int $userId, LessonSection $prereq, DependencyTrigger $trigger): bool
     {

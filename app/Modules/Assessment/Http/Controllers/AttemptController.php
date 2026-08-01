@@ -12,6 +12,7 @@ use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Assessment\Services\ExamTimeExtensionService;
 use App\Modules\Assessment\Services\GradingService;
+use App\Modules\Catalog\Services\ContentUnlockService;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Engagement\Services\PointsService;
@@ -36,6 +37,7 @@ class AttemptController
         private readonly GradingService $grading,
         private readonly PointsService $points,
         private readonly ExamTimeExtensionService $timeExtensions,
+        private readonly ContentUnlockService $unlock,
     ) {}
 
     /** Published, in-window exams for courses the student is enrolled in. */
@@ -244,6 +246,14 @@ class AttemptController
             throw new AccessDeniedHttpException('You do not have access to this exam.');
         }
         $this->assertDependencyMet($request, $exam);
+
+        // A section-bound assignment/quiz exam must respect its section lock: if
+        // every lesson section that hosts this exam is still locked by an unmet
+        // content dependency, it can't be started yet (C2b). Course/unit exams have
+        // no hosting section, so isExamLocked returns false and they're unaffected.
+        if ($this->unlock->isExamLocked((int) $exam->tenant_id, (int) $request->user()->getKey(), (int) $exam->id)) {
+            throw new AccessDeniedHttpException('Complete the required lesson content before starting this.');
+        }
     }
 
     private function assertDependencyMet(Request $request, Exam $exam): void

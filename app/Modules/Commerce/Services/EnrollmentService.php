@@ -122,6 +122,14 @@ class EnrollmentService
             return true;
         }
 
+        // A soft-deleted (or missing) parent course takes all of its lessons
+        // offline, even for a student who still holds a grant (H3): the `course`
+        // relation is null once the course is trashed, so serving the lesson would
+        // leave access inconsistent with the now-hidden course.
+        if ($lesson->course_id !== null && $course === null) {
+            return false;
+        }
+
         return Enrollment::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('user_id', $userId)
