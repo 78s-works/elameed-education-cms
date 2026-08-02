@@ -10,6 +10,7 @@ use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Tenancy\Enums\TenantDomainType;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
@@ -49,7 +50,7 @@ class TenantInsights
                 'created_at' => $tenant->created_at?->toIso8601String(),
                 'domains' => $tenant->domains->map(fn ($domain) => [
                     'host' => $domain->host,
-                    'type' => $domain->type instanceof \BackedEnum ? $domain->type->value : $domain->type,
+                    'type' => TenantDomainType::present($domain->getRawOriginal('type')),
                     'is_primary' => (bool) $domain->is_primary,
                 ])->values(),
             ],
