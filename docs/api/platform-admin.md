@@ -424,3 +424,21 @@ Notes:
 **Errors:**
 - `403` — not a platform admin.
 - `401 unauthenticated`.
+
+---
+
+## ⚠️ RLS gotcha on cross-tenant reads (dev-note for maintainers)
+
+`GET /admin/tenants/{id}` and the reports overview aggregate across tenant-scoped tables (`courses`, `enrollments`, `ledger_entries`, `teacher_profiles`, `media_assets`) via `app/Modules/PlatformAdmin/Services/TenantInsights.php` and `PackageUsage`.
+
+**The trap:** the admin host resolves NO tenant, so `TenantSession::reset()` sets the Postgres GUC `app.tenant_id = ''`. Row-Level Security (`app/Support/Rls/TenantRls.php`) is:
+- a **no-op on MySQL** (`getDriverName() !== 'pgsql'` returns early) — so dev/test on MySQL behave differently from a Postgres prod;
+- **fail-closed on Postgres** — predicate `tenant_id = NULLIF('', '')::bigint` = `tenant_id = NULL` → matches **zero rows**, never errors.
+
+`withoutGlobalScopes()` in `TenantInsights` strips only the **Eloquent** `tenant` scope, NOT the database RLS policy (see `app/Support/Traits/BelongsToTenant.php:23` — admin reads are meant to run "on an explicitly privileged connection", which this path does not currently do).
+
+**Net effect on Postgres:** `stats.courses / enrollments / gross_earnings_minor` and all `usage.*` for RLS tables silently read **0** even when the tenant has data (student/assistant/parent counts stay correct — they come from the non-RLS `tenant_user` table). This is wrong-data, not a 500.
+
+**If you see a 500 here (not zeros):** it is NOT in `TenantInsights` (verified 200 for data-bearing tenants on MySQL). Suspect: middleware/host gate, a Postgres-only error, or a data shape such as a `tenant_user.role` value outside the `TenantUserRole` enum (cast `ValueError` on hydrate). Get the production stack trace + confirm the prod DB driver before changing this path.
+
+**Correct fix when addressing the zeros:** run platform-admin cross-tenant reads on a `BYPASSRLS`/privileged connection, or temporarily bind the target tenant's GUC via `TenantSession` for the duration of the read — not the default connection.

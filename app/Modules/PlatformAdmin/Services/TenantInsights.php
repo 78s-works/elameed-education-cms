@@ -10,6 +10,7 @@ use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Wallet\Models\LedgerEntry;
@@ -43,7 +44,7 @@ class TenantInsights
                 'uuid' => $tenant->uuid,
                 'slug' => $tenant->slug,
                 'name' => $tenant->name,
-                'status' => $tenant->status->value,
+                'status' => TenantStatus::present($tenant->getRawOriginal('status')),
                 'trial_ends_at' => $tenant->trial_ends_at?->toIso8601String(),
                 'created_at' => $tenant->created_at?->toIso8601String(),
                 'domains' => $tenant->domains->map(fn ($domain) => [

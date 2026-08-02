@@ -126,9 +126,17 @@ class AuthTest extends TestCase
         $this->assertNotNull($this->sms->lastCode());
     }
 
-    public function test_register_rejects_duplicate_phone(): void
+    public function test_register_rejects_duplicate_in_same_academy(): void
     {
-        User::factory()->create(['phone' => '01000000002']);
+        // Already a member of THIS academy → a genuine duplicate is rejected.
+        $user = User::factory()->create(['phone' => '01000000002']);
+        TenantUser::create([
+            'tenant_id' => $this->tenant->id,
+            'user_id' => $user->id,
+            'role' => TenantUserRole::Student->value,
+            'status' => MembershipStatus::Active->value,
+            'joined_at' => now(),
+        ]);
 
         $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
             'name' => 'Dup',
@@ -136,6 +144,32 @@ class AuthTest extends TestCase
             'password' => 'password123',
             'password_confirmation' => 'password123',
         ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+    }
+
+    public function test_register_joins_existing_identity_to_another_academy(): void
+    {
+        // A student who already exists (from another academy) but is NOT a member
+        // here can join THIS academy — a fresh membership is attached to the same
+        // global identity (a student may belong to several teachers). Default mode
+        // is 'auto', so the membership activates immediately.
+        $user = User::factory()->create(['phone' => '01000000002']);
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Returning',
+            'phone' => '01000000002',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'gender' => 'أنثى',
+            'governorate' => 'القاهرة',
+            'academic_year' => 'الثالث الثانوي',
+            'guardian_phone' => '01099999998',
+        ])->assertStatus(201);
+
+        $this->assertDatabaseHas('tenant_user', [
+            'tenant_id' => $this->tenant->id,
+            'user_id' => $user->id,
+            'role' => TenantUserRole::Student->value,
+        ]);
     }
 
     public function test_login_returns_token_for_active_member(): void

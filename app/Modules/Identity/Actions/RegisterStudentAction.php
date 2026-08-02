@@ -14,13 +14,16 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Phase-1 self-registration = a student joining the current academy (tenant).
- * Teacher self-signup is P1.5 (FR-M01-03); teachers/admins are provisioned by
- * the platform admin. Creates the global user + a PENDING student membership and
- * sends a registration OTP; the membership activates on OTP verification.
+ * Student self-registration = a student joining an academy (tenant).
  *
- * P1 keeps phone globally unique: if it already exists the caller is told to log
- * in (cross-tenant self-join of an existing identity is deferred).
+ * Identity is GLOBAL (one user per phone/email); membership is PER-TENANT
+ * (tenant_user). A student may therefore belong to several teachers at once. A
+ * phone that already exists means a returning student joining ANOTHER academy:
+ * the existing identity is reused and a fresh membership is attached
+ * (cross-tenant self-join). The existing name/email/password are never touched,
+ * and the join is verified by exactly the academy's own registration mode (OTP
+ * or auto) — no weaker than a first-time sign-up. Only a duplicate membership in
+ * the SAME academy (or an email owned by a different identity) is rejected.
  */
 class RegisterStudentAction
 {
@@ -32,17 +35,30 @@ class RegisterStudentAction
         $email = $data['email'] ?? null;
         $sendOtp = $verificationMode === 'otp';
 
-        if (
-            User::query()->where('phone', $phone)->exists()
-            || ($email !== null && User::query()->where('email', $email)->exists())
-        ) {
+        // Match the returning identity by phone (the primary identifier).
+        $existing = User::query()->where('phone', $phone)->first();
+
+        // An email supplied that belongs to a DIFFERENT identity is a real conflict.
+        if ($email !== null) {
+            $emailOwnerId = User::query()->where('email', $email)->value('id');
+            if ($emailOwnerId !== null && $emailOwnerId !== $existing?->getKey()) {
+                throw ValidationException::withMessages([
+                    'email' => __('An account with these details already exists. Please log in.'),
+                ]);
+            }
+        }
+
+        // Already a member of THIS academy → a genuine duplicate; send them to log in.
+        if ($existing !== null && $existing->membershipFor($tenant) !== null) {
             throw ValidationException::withMessages([
-                'phone' => __('An account with these details already exists. Please log in.'),
+                'phone' => __('You already have an account in this academy. Please log in.'),
             ]);
         }
 
-        $user = DB::transaction(function () use ($tenant, $data, $phone, $email, $sendOtp): User {
-            $user = User::create([
+        $user = DB::transaction(function () use ($existing, $tenant, $data, $phone, $email, $sendOtp): User {
+            // Reuse the returning identity, or mint a new global one. A returning
+            // student's name/email/password/verification are intentionally left as-is.
+            $user = $existing ?? User::create([
                 'name' => $data['name'],
                 'phone' => $phone,
                 'email' => $email,
@@ -50,7 +66,7 @@ class RegisterStudentAction
                 'locale' => $data['locale'] ?? 'ar',
             ]);
 
-            if (! $sendOtp) {
+            if ($existing === null && ! $sendOtp) {
                 $user->forceFill(['phone_verified_at' => now()])->save();
             }
 

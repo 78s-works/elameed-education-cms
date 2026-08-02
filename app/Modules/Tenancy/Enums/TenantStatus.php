@@ -20,4 +20,19 @@ enum TenantStatus: string
     {
         return $this === self::Active;
     }
+
+    /**
+     * Enum value for a stored status, tolerant of legacy/out-of-enum strings.
+     * A row carrying a value no longer in the enum (data drift, renamed case)
+     * must not crash read-only surfaces like the admin console — degrade to the
+     * raw string instead of throwing a ValueError on the enum cast.
+     */
+    public static function present(?string $raw): ?string
+    {
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+
+        return self::tryFrom($raw)?->value ?? $raw;
+    }
 }
