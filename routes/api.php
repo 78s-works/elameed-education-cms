@@ -472,6 +472,7 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             // Teacher reports (M17, basic)
             Route::get('/teacher/reports/sales', [TeacherReportsController::class, 'sales']);
             Route::get('/teacher/reports/students', [TeacherReportsController::class, 'students']);
+            Route::get('/teacher/reports/overview', [TeacherReportsController::class, 'overview']);
 
             // Audit log (M18)
             Route::get('/teacher/audit-logs', [AuditLogController::class, 'teacher']);
