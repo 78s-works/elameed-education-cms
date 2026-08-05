@@ -53,6 +53,7 @@ class Lesson extends Model
         'availability_days',
         'max_extensions',
         'extension_hours',
+        'self_reopen_limit',
         'is_free_preview',
         'price_minor',
         'currency',
@@ -71,6 +72,7 @@ class Lesson extends Model
         'availability_days' => 'integer',
         'max_extensions' => 'integer',
         'extension_hours' => 'integer',
+        'self_reopen_limit' => 'integer',
         'price_minor' => 'integer',
     ];
 

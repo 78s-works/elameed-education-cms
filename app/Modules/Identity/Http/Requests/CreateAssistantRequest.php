@@ -27,7 +27,7 @@ class CreateAssistantRequest extends FormRequest
             'email' => ['nullable', 'email', 'max:255'],
             'password' => ['nullable', 'string', Password::min(8)],
             'permissions' => ['sometimes', 'array'],
-            'permissions.*' => [Rule::in(Permission::values())],
+            'permissions.*' => [Rule::enum(Permission::class)],
         ];
     }
 }

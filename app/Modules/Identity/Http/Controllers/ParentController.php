@@ -4,6 +4,7 @@ namespace App\Modules\Identity\Http\Controllers;
 
 use App\Models\User;
 use App\Modules\Assessment\Models\ExamAttempt;
+use App\Modules\Centers\Models\CenterExamGrade;
 use App\Modules\Engagement\Models\LessonProgress;
 use App\Modules\Identity\Models\ParentLink;
 use App\Modules\Tenancy\Services\TenantContext;
@@ -63,14 +64,17 @@ class ParentController
     {
         $this->assertMyChild($request, $student);
 
-        $rows = ExamAttempt::withoutGlobalScopes()
-            ->where('tenant_id', $this->context->tenantOrFail()->getKey())
+        $tenantId = $this->context->tenantOrFail()->getKey();
+
+        $online = ExamAttempt::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
             ->where('user_id', $student->getKey())
             ->whereIn('status', ['submitted', 'graded'])
             ->with('exam:id,title')
             ->latest('submitted_at')
             ->get()
             ->map(fn (ExamAttempt $a) => [
+                'source' => 'online_exam',
                 'exam' => $a->exam?->title,
                 'status' => $a->status->value,
                 'score' => $a->score,
@@ -78,7 +82,23 @@ class ParentController
                 'submitted_at' => $a->submitted_at?->toIso8601String(),
             ]);
 
-        return response()->json(['data' => $rows]);
+        // Paper (in-center) exam grades (VD R12) — read across every academic year
+        // (BelongsToAcademicYear no-ops without a year context on this route).
+        $center = CenterExamGrade::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('student_user_id', $student->getKey())
+            ->latest('sat_on')
+            ->get()
+            ->map(fn (CenterExamGrade $g) => [
+                'source' => 'center_exam',
+                'exam' => $g->title,
+                'status' => 'graded',
+                'score' => (float) $g->score,
+                'max_score' => (float) $g->total_marks,
+                'submitted_at' => $g->sat_on?->toIso8601String(),
+            ]);
+
+        return response()->json(['data' => $online->concat($center)->values()]);
     }
 
     /** The target must be a child linked to the authenticated parent in this tenant. */

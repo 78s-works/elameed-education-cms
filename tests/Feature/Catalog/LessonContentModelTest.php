@@ -151,6 +151,112 @@ class LessonContentModelTest extends TestCase
         $this->withHeader('X-Tenant', 'demo')->postJson("/api/v1/lessons/{$lesson->id}/extension-request")->assertStatus(409);
     }
 
+    // ---- VD R3/R4: automated per-lesson self-reopen ---------------------------
+
+    public function test_self_reopen_within_limit_extends_24h_and_increments_counter(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $lesson = $this->lesson();
+        $lesson->update(['availability_days' => 7, 'self_reopen_limit' => 2, 'extension_hours' => 24]);
+        $window = $this->expiredWindow($student, $lesson);
+
+        Sanctum::actingAs($student);
+        $this->withHeader('X-Tenant', 'demo')->postJson("/api/v1/lessons/{$lesson->id}/reopen")
+            ->assertOk()
+            ->assertJsonPath('data.locked', false)
+            ->assertJsonPath('data.extensions_used', 1)
+            ->assertJsonPath('data.self_reopens_remaining', 1);
+
+        // Extended ~24h from now and one auto-budget consumed (server counter).
+        $window->refresh();
+        $this->assertSame(1, (int) $window->extensions_used);
+        $this->assertNull($window->locked_at);
+        $this->assertGreaterThan(23 * 3600, $window->expires_at->getTimestamp() - now()->getTimestamp());
+        $this->assertLessThanOrEqual(24 * 3600, $window->expires_at->getTimestamp() - now()->getTimestamp());
+    }
+
+    public function test_self_reopen_returns_409_at_limit(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $lesson = $this->lesson();
+        $lesson->update(['availability_days' => 7, 'self_reopen_limit' => 1, 'extension_hours' => 24]);
+        $window = $this->expiredWindow($student, $lesson);
+
+        Sanctum::actingAs($student);
+        // First reopen spends the only auto-budget.
+        $this->withHeader('X-Tenant', 'demo')->postJson("/api/v1/lessons/{$lesson->id}/reopen")->assertOk();
+
+        // Expire again → now over the cap.
+        $this->expire($window);
+        $this->withHeader('X-Tenant', 'demo')->postJson("/api/v1/lessons/{$lesson->id}/reopen")
+            ->assertStatus(409)
+            ->assertSee('reopen_limit_reached');
+
+        $this->assertSame(1, (int) $window->refresh()->extensions_used);
+    }
+
+    public function test_self_reopen_rejected_while_window_still_open(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $lesson = $this->lesson();
+        $lesson->update(['availability_days' => 7, 'self_reopen_limit' => 2, 'extension_hours' => 24]);
+        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+
+        Sanctum::actingAs($student);
+        // Running (not expired/locked) window → reopen refused, counter untouched.
+        $this->withHeader('X-Tenant', 'demo')->postJson("/api/v1/lessons/{$lesson->id}/start")->assertOk();
+        $this->withHeader('X-Tenant', 'demo')->postJson("/api/v1/lessons/{$lesson->id}/reopen")->assertStatus(409);
+
+        $window = LessonAccessWindow::withoutGlobalScopes()->where('lesson_id', $lesson->id)->where('user_id', $student->id)->firstOrFail();
+        $this->assertSame(0, (int) $window->extensions_used);
+    }
+
+    public function test_self_reopen_counter_is_server_authoritative_client_count_ignored(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $lesson = $this->lesson();
+        $lesson->update(['availability_days' => 7, 'self_reopen_limit' => 1, 'extension_hours' => 24]);
+        $window = $this->expiredWindow($student, $lesson);
+
+        Sanctum::actingAs($student);
+        // Client attempts to inflate its budget/counter via the body — ignored.
+        $this->withHeader('X-Tenant', 'demo')
+            ->postJson("/api/v1/lessons/{$lesson->id}/reopen", ['extensions_used' => 99, 'self_reopen_limit' => 99])
+            ->assertOk();
+        $this->assertSame(1, (int) $window->refresh()->extensions_used);
+
+        // Still hard-capped at the lesson's server-side limit of 1.
+        $this->expire($window);
+        $this->withHeader('X-Tenant', 'demo')
+            ->postJson("/api/v1/lessons/{$lesson->id}/reopen", ['extensions_used' => 0, 'self_reopen_limit' => 99])
+            ->assertStatus(409);
+    }
+
+    /** Enroll, open the window via /start, then age it past expiry. */
+    private function expiredWindow(User $student, Lesson $lesson): LessonAccessWindow
+    {
+        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+
+        Sanctum::actingAs($student);
+        $this->withHeader('X-Tenant', 'demo')->postJson("/api/v1/lessons/{$lesson->id}/start")->assertOk();
+
+        $window = LessonAccessWindow::withoutGlobalScopes()->where('lesson_id', $lesson->id)->where('user_id', $student->id)->firstOrFail();
+        $this->expire($window);
+
+        return $window;
+    }
+
+    /**
+     * Force a window past expiry via a query-builder update — always persists,
+     * unlike a stale model's ->update(), whose second-precision dirty check can
+     * treat two same-second `now()->subDay()` values as unchanged and no-op.
+     */
+    private function expire(LessonAccessWindow $window): void
+    {
+        LessonAccessWindow::withoutGlobalScopes()->whereKey($window->getKey())
+            ->update(['expires_at' => now()->subDay(), 'locked_at' => null]);
+    }
+
     // --- helpers borrowed from the playback test for the video-backed lesson ---
 
     private function lessonWithVideo(): Lesson

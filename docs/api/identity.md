@@ -24,7 +24,7 @@ Identity is deliberately built around the distinction between a **global user id
 - **`LoginAttempt`** — an audit row for every login attempt (`user_id`, `tenant_id`, `identifier`, `ip`, `user_agent`, `success`). Create-only (`UPDATED_AT = null`).
 - **`User`** (`app/Models/User`, shared) — the global identity Identity authenticates and edits (`name`, `phone`, `email`, `password`, `locale`, verification timestamps, `isPlatformAdmin()`, `membershipFor()`).
 
-**Enums:** `TenantUserRole` (`teacher`, `assistant`, `student`, `parent` — platform admin is a *global* flag, not a membership role) · `MembershipStatus` (`active`, `pending`, `suspended`) · `OtpPurpose` (`register`, `login`, `reset`) · `Permission` (M18 catalog: `students`, `centers`; `Permission::catalog()` returns each with a `label` + `description`, `Permission::values()`/`sanitize()`).
+**Enums:** `TenantUserRole` (`teacher`, `assistant`, `student`, `parent` — platform admin is a *global* flag, not a membership role) · `MembershipStatus` (`active`, `pending`, `suspended`) · `OtpPurpose` (`register`, `login`, `reset`) · `Permission` (M18 catalog: `students`, `centers`, `homework`, `finance`; `Permission::catalog()` returns each with a `label` + `description`, `Permission::values()`/`sanitize()`).
 
 **Actions / services / support:** `RegisterStudentAction`, `LoginAction`, `VerifyOtpAction`, `ResetPasswordAction`; `OtpService` (issue/verify); `UserLookup` (resolve phone-or-email → user); `SendOtpJob`. Middleware `EnsureTenantRole` (`role:…`, accepts a comma list e.g. `role:teacher,assistant`), `EnsureActiveMembership` (`active`), and `EnsurePermission` (`permission:<key>`, M18 — teachers pass implicitly; assistants need the granted key).
 

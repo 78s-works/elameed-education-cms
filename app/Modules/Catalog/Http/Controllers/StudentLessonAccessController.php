@@ -18,7 +18,8 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
  * + "Lesson Countdown Timer"):
  *   POST /lessons/{lesson}/start              → confirm + open the window
  *   GET  /lessons/{lesson}/access             → remaining time for the timer
- *   POST /lessons/{lesson}/extension-request  → ask for more time after expiry
+ *   POST /lessons/{lesson}/reopen             → auto self-reopen (VD R3/R4)
+ *   POST /lessons/{lesson}/extension-request  → ask staff for more time after cap
  *
  * {lesson} binds by id and is tenant-scoped.
  */
@@ -58,6 +59,23 @@ class StudentLessonAccessController
         return response()->json(['data' => $this->windowPayload($lesson, $window)]);
     }
 
+    /**
+     * Auto self-reopen (VD R3/R4): extend an expired/locked window by 24h with no
+     * staff approval, up to the lesson's `self_reopen_limit`. 409
+     * `reopen_limit_reached` once the auto budget is spent — the student then uses
+     * `extension-request` (staff approval) below.
+     */
+    public function reopen(Request $request, Lesson $lesson): JsonResponse
+    {
+        $tenantId = (int) $this->context->tenantOrFail()->getKey();
+        $user = $request->user();
+        $this->assertLessonAccess($tenantId, $user->getKey(), $lesson);
+
+        $window = $this->availability->selfReopen($tenantId, (int) $user->getKey(), $lesson);
+
+        return response()->json(['data' => $this->windowPayload($lesson, $window)]);
+    }
+
     public function requestExtension(Request $request, Lesson $lesson): JsonResponse
     {
         $tenantId = (int) $this->context->tenantOrFail()->getKey();
@@ -91,6 +109,13 @@ class StudentLessonAccessController
             'remaining_sec' => $window?->remainingSeconds(),
             'locked' => $window?->isLocked() ?? false,
             'extensions_used' => (int) ($window?->extensions_used ?? 0),
+            // Auto self-reopen budget (VD R3/R4). `can_self_reopen` drives the
+            // student "Reopen (24h)" button: shown only on a locked window with
+            // auto-budget left; past it the student falls back to a staff request.
+            'self_reopen_limit' => (int) $lesson->self_reopen_limit,
+            'self_reopens_remaining' => max(0, (int) $lesson->self_reopen_limit - (int) ($window?->extensions_used ?? 0)),
+            'can_self_reopen' => ($window?->isLocked() ?? false)
+                && (int) ($window?->extensions_used ?? 0) < (int) $lesson->self_reopen_limit,
         ];
     }
 }

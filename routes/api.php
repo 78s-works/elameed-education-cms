@@ -15,7 +15,6 @@ use App\Modules\Catalog\Http\Controllers\PublicCatalogController;
 use App\Modules\Catalog\Http\Controllers\StudentLessonAccessController;
 use App\Modules\Catalog\Http\Controllers\StudentLessonSectionsController;
 use App\Modules\Catalog\Http\Controllers\Teacher\AcademicYearController;
-use App\Modules\Catalog\Http\Controllers\Teacher\BundleController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CategoryController;
 use App\Modules\Catalog\Http\Controllers\Teacher\ContentPackageController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CourseListController;
@@ -25,9 +24,11 @@ use App\Modules\Catalog\Http\Controllers\Teacher\LessonAvailabilityController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonSectionController;
 use App\Modules\Centers\Http\Controllers\RedeemCodeController;
+use App\Modules\Centers\Http\Controllers\StudentCenterExamGradeController;
 use App\Modules\Centers\Http\Controllers\Teacher\ActivationCodeController;
 use App\Modules\Centers\Http\Controllers\Teacher\AttendanceController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterController;
+use App\Modules\Centers\Http\Controllers\Teacher\CenterExamGradeController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterSyncController;
 use App\Modules\Commerce\Http\Controllers\CheckoutController;
 use App\Modules\Commerce\Http\Controllers\InvoiceController;
@@ -81,6 +82,7 @@ use App\Modules\Tenancy\Http\Controllers\TenantAccessController;
 use App\Modules\Tenancy\Http\Controllers\TenantContextController;
 use App\Modules\Tenancy\Http\Controllers\TenantLandingController;
 use App\Modules\Tenancy\Http\Controllers\TenantLandingMetaController;
+use App\Modules\Wallet\Http\Controllers\Teacher\PaymentReceiptController;
 use App\Modules\Wallet\Http\Controllers\WalletController;
 use Illuminate\Support\Facades\Route;
 
@@ -214,6 +216,8 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         // Wallet, checkout & payments (M05, M06)
         Route::get('/wallet', [WalletController::class, 'show']);
         Route::get('/wallet/ledger', [WalletController::class, 'ledger']);
+        // Manual top-up (VD R9) — submit a Vodafone Cash / InstaPay receipt → pending.
+        Route::post('/wallet/topup/manual', [WalletController::class, 'topupManual'])->middleware('throttle:60,1');
         Route::post('/checkout/quote', [CheckoutController::class, 'quote']);
         Route::post('/checkout/order', [CheckoutController::class, 'order']);
         Route::post('/checkout/pay', [CheckoutController::class, 'pay'])->middleware('throttle:auth');
@@ -245,6 +249,9 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         // request an extension after expiry.
         Route::post('/lessons/{lesson}/start', [StudentLessonAccessController::class, 'start']);
         Route::get('/lessons/{lesson}/access', [StudentLessonAccessController::class, 'access']);
+        // Auto self-reopen (VD R3/R4) — instant 24h extend up to self_reopen_limit;
+        // 409 reopen_limit_reached past it, then the extension-request path below.
+        Route::post('/lessons/{lesson}/reopen', [StudentLessonAccessController::class, 'reopen']);
         Route::post('/lessons/{lesson}/extension-request', [StudentLessonAccessController::class, 'requestExtension']);
 
         // Q&A comments + polymorphic attachments (M09). Shared by students (need
@@ -288,6 +295,10 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::post('/exams/{exam:uuid}/extension-request', [AttemptController::class, 'requestExtension']);
 
         Route::get('/me/courses', [StudentCoursesController::class, 'index']);
+
+        // Own paper (in-center) exam scores (VD R12). Spans academic years — no
+        // X-Academic-Year required; still tenant-scoped.
+        Route::get('/me/center-exam-grades', StudentCenterExamGradeController::class);
 
         // Parent portal (M13) — parent role in the current tenant
         Route::middleware('role:parent')->group(function (): void {
@@ -536,6 +547,16 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
                 Route::get('/teacher/codes', [ActivationCodeController::class, 'index']);
                 Route::post('/teacher/codes/batch', [ActivationCodeController::class, 'batch']);
                 Route::post('/teacher/codes/{code:uuid}/disable', [ActivationCodeController::class, 'disable']);
+
+                // Center paper-exam grade entry (VD R12, doc 13 Phase 15). A grade
+                // belongs to an academic year, so these are year-scoped
+                // (X-Academic-Year); {grade} binds by uuid within the active year.
+                Route::middleware('academic-year')->group(function (): void {
+                    Route::get('/teacher/center-exam-grades', [CenterExamGradeController::class, 'index']);
+                    Route::post('/teacher/center-exam-grades', [CenterExamGradeController::class, 'store']);
+                    Route::put('/teacher/center-exam-grades/{grade:uuid}', [CenterExamGradeController::class, 'update']);
+                    Route::delete('/teacher/center-exam-grades/{grade:uuid}', [CenterExamGradeController::class, 'destroy']);
+                });
             }); // permission:centers
 
             // Homework grading (doc 11 R3.4) — teacher, or an assistant granted the
@@ -602,6 +623,16 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
                 Route::delete('/teacher/students/{student:uuid}/parents/{parent:uuid}', [StudentParentController::class, 'destroy'])
                     ->withoutScopedBindings();
             }); // permission:students
+
+            // Manual payment-receipt verification (VD R9/R10) — teacher, or an
+            // assistant granted `finance`, reviews manual wallet top-ups. Tenant-level,
+            // NOT year-scoped (no X-Academic-Year).
+            Route::middleware('permission:finance')->group(function (): void {
+                Route::get('/teacher/payment-receipts', [PaymentReceiptController::class, 'index']);
+                Route::get('/teacher/payment-receipts/{receipt:uuid}', [PaymentReceiptController::class, 'show']);
+                Route::post('/teacher/payment-receipts/{receipt:uuid}/approve', [PaymentReceiptController::class, 'approve']);
+                Route::post('/teacher/payment-receipts/{receipt:uuid}/reject', [PaymentReceiptController::class, 'reject']);
+            }); // permission:finance
         }); // role:teacher,assistant
     });
 });

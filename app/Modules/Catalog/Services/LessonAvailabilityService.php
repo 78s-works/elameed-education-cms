@@ -74,6 +74,40 @@ class LessonAvailabilityService
         return $window;
     }
 
+    /**
+     * Student self-reopen (VD R3/R4, doc 13 Phase 13). Instant, no staff: if the
+     * student's window is expired/locked and they have auto-budget left
+     * (`extensions_used < self_reopen_limit`), extend it by `extension_hours`
+     * (24h) from now, clear the lock, and consume one from the SHARED
+     * `extensions_used` counter (server-authoritative — the client count/clock is
+     * never trusted). At the cap it throws 409 `reopen_limit_reached`; the student
+     * then falls back to the staff-approval request flow (requestExtension).
+     */
+    public function selfReopen(int $tenantId, int $userId, Lesson $lesson): LessonAccessWindow
+    {
+        $window = $this->windowFor($tenantId, $userId, $lesson);
+        if ($window === null) {
+            throw new ConflictHttpException('Start the lesson before reopening it.');
+        }
+
+        // Only an expired or locked window can be reopened — never a running one.
+        if (! $window->isLocked()) {
+            throw new ConflictHttpException('The lesson window is still open.');
+        }
+
+        if ($window->extensions_used >= (int) $lesson->self_reopen_limit) {
+            throw new ConflictHttpException('reopen_limit_reached');
+        }
+
+        $hours = (int) ($lesson->extension_hours ?? 24);
+        $window->expires_at = now()->addHours($hours);
+        $window->locked_at = null;
+        $window->extensions_used = $window->extensions_used + 1;
+        $window->save();
+
+        return $window;
+    }
+
     public function windowFor(int $tenantId, int $userId, Lesson $lesson): ?LessonAccessWindow
     {
         return LessonAccessWindow::withoutGlobalScopes()

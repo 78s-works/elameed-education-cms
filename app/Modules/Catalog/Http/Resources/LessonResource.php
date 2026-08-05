@@ -43,6 +43,9 @@ class LessonResource extends JsonResource
             'availability_days' => $this->availability_days,
             'max_extensions' => $this->max_extensions,
             'extension_hours' => $this->extension_hours,
+            // Auto self-reopen budget (VD R3/R4) — the instant, no-staff slice of
+            // the extension budget; staff approval handles the rest past it.
+            'self_reopen_limit' => (int) $this->self_reopen_limit,
             // One (uploaded) video when loaded + the many attachments (pdf/file/link).
             'video' => $this->whenLoaded('videoAsset', fn () => $this->videoAsset ? new MediaAssetResource($this->videoAsset) : null),
             'attachments' => MediaAssetResource::collection($this->whenLoaded('attachments')),

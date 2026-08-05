@@ -12,6 +12,7 @@ use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Route;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -30,6 +31,14 @@ class AssistantManagementTest extends TestCase
         parent::setUp();
         Cache::flush();
         $this->tenant = Tenant::create(['slug' => 'demo', 'name' => 'Demo', 'status' => TenantStatus::Active]);
+
+        // A stand-in route on the shared teacher/assistant surface gated by the
+        // new `finance` permission — mirrors the real stack (tenant → auth →
+        // active → role → permission) so we prove the middleware treats `finance`
+        // like every other permission before a real finance feature lands.
+        Route::prefix('api/v1')
+            ->middleware(['tenant', 'auth:sanctum', 'active', 'role:teacher,assistant', 'permission:finance'])
+            ->get('__test_finance', fn () => response()->json(['ok' => true]));
     }
 
     private function member(TenantUserRole $role, array $permissions = [], ?Tenant $tenant = null): User
@@ -160,5 +169,61 @@ class AssistantManagementTest extends TestCase
         Sanctum::actingAs($this->member(TenantUserRole::Student));
 
         $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/teacher/assistants')->assertStatus(403);
+    }
+
+    public function test_assistant_with_finance_permission_reaches_a_finance_gated_route(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Assistant, ['finance']));
+
+        $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/__test_finance')
+            ->assertOk()
+            ->assertJsonPath('ok', true);
+    }
+
+    public function test_assistant_without_finance_permission_is_forbidden_on_a_finance_gated_route(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Assistant, ['students']));
+
+        $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/__test_finance')->assertStatus(403);
+    }
+
+    public function test_teacher_owner_passes_the_finance_gate_implicitly(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/__test_finance')->assertOk();
+    }
+
+    public function test_finance_is_a_grantable_permission_in_the_catalog(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $keys = $this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson('/api/v1/teacher/permissions')
+            ->assertOk()
+            ->json('data.*.key');
+
+        $this->assertContains('finance', $keys);
+    }
+
+    public function test_create_and_update_persist_the_finance_permission(): void
+    {
+        $teacher = $this->member(TenantUserRole::Teacher);
+        Sanctum::actingAs($teacher);
+        $h = ['X-Tenant' => 'demo'];
+
+        // Create with finance.
+        $uuid = $this->withHeaders($h)->postJson('/api/v1/teacher/assistants', [
+            'name' => 'Finance Aide', 'phone' => '01055555555', 'permissions' => ['finance'],
+        ])->assertStatus(201)
+            ->assertJsonPath('data.permissions', ['finance'])
+            ->json('data.uuid');
+
+        // Update to re-scope onto finance + students. sanitize() normalises to
+        // enum-declaration order, so students precedes finance.
+        $this->withHeaders($h)->patchJson("/api/v1/teacher/assistants/{$uuid}", [
+            'permissions' => ['finance', 'students'],
+        ])->assertOk()
+            ->assertJsonPath('data.permissions', ['students', 'finance']);
     }
 }

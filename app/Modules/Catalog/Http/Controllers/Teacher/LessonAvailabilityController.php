@@ -42,6 +42,9 @@ class LessonAvailabilityController
         if (array_key_exists('extension_hours', $data)) {
             $attrs['extension_hours'] = $data['extension_hours'] ?? 24;
         }
+        if (array_key_exists('self_reopen_limit', $data)) {
+            $attrs['self_reopen_limit'] = $data['self_reopen_limit'] ?? 0;
+        }
 
         $lesson->update($attrs);
 
@@ -85,6 +88,7 @@ class LessonAvailabilityController
             'availability_days' => $lesson->availability_days,
             'max_extensions' => (int) $lesson->max_extensions,
             'extension_hours' => (int) $lesson->extension_hours,
+            'self_reopen_limit' => (int) $lesson->self_reopen_limit,
         ];
     }
 }

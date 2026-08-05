@@ -41,7 +41,7 @@ content regardless of visibility.
 | `CourseCategory` | `course_categories` | Teacher's taxonomy (name + grade/subject/level/section + sort_order). A course optionally belongs to one. |
 | `Course` | `courses` | The top-level product. Binds by `uuid` (teacher) / `slug` (public). Soft-deletes. Holds pricing, visibility, marketing copy (`learning_outcomes`, `requirements`, `audience`, `parts`). |
 | `Unit` | `units` | A section within a course (`course_id`), ordered by `sort_order`, with its own visibility. |
-| `Lesson` | `lessons` | A leaf under a unit (`unit_id` + inherited `course_id`). Has a video source — an uploaded `video_asset_id` and/or a `youtube_url`, selected by `active_video_source` — plus many attachments and typed **sections**. Carries `duration_sec`, `max_views`, `is_free_preview`, `gating_rule`, and the time-box config `availability_days` / `max_extensions` / `extension_hours`. |
+| `Lesson` | `lessons` | A leaf under a unit (`unit_id` + inherited `course_id`). Has a video source — an uploaded `video_asset_id` and/or a `youtube_url`, selected by `active_video_source` — plus many attachments and typed **sections**. Carries `duration_sec`, `max_views`, `is_free_preview`, `gating_rule`, and the time-box config `availability_days` / `max_extensions` / `extension_hours` / `self_reopen_limit` (auto self-reopen budget, VD R3/R4). |
 | `LessonAttachment` | *(stored as `media_assets`)* | Not a dedicated model — attachments are `MediaAsset` rows of type `pdf` / `file` / `link` linked by `lesson_id`. The lesson's single `hls_video` asset is **not** an attachment. |
 | `LessonSection` | `lesson_sections` | A typed content section of a lesson (ordered): `lecture_video` / `assignment_video` / `pdf` / `assignment` / `quiz`. Points at one `MediaAsset` (`media_asset_id`) or one `Exam` (`exam_id`); `pdf` sections carry a `pdf_kind`. |
 | `ContentDependency` | `content_dependencies` | An unlock rule: section stays locked until a `trigger` (`submitted`/`passed`/`completed`/`graded`) is met on `depends_on_section_id`. `enforcement` = `mandatory` (blocks) or `optional` (advisory). |
@@ -77,11 +77,11 @@ A `Bundle` **hasMany** `BundleItem`, each pointing at a `Course`, a `Unit`, or a
 
 ## Endpoints
 
-49 endpoints total: 2 public catalogue + 2 public packages + 21 teacher authoring (4 categories,
+50 endpoints total: 2 public catalogue + 2 public packages + 21 teacher authoring (4 categories,
 5 courses, 4 units, 4 lessons, 3 attachments; the 21st is the 5th course route `show`) + 5 teacher
 packages + **12 teacher lesson-content** (4 sections, 3 dependencies, 2 availability, 3
-extension-requests) + **3 teacher unit-dependencies** (list, create, delete) + **4 student lesson
-content & access** (sections listing, start, access, extension-request).
+extension-requests) + **3 teacher unit-dependencies** (list, create, delete) + **5 student lesson
+content & access** (sections listing, start, access, **auto reopen**, extension-request).
 
 > **Lesson content model (built 2026-07-28).** A lesson is now composed of ordered **typed sections**
 > (`lesson_sections`), gated by **content dependencies** (unlock rules), and optionally **time-boxed**
@@ -986,7 +986,7 @@ Configure the per-lesson access window. `availability_days: null` = unlimited (n
 #### `GET /v1/teacher/lessons/{lesson}/availability`
 **Response** `200 OK`:
 ```json
-{ "data": { "lesson_id": 101, "availability_days": 7, "max_extensions": 1, "extension_hours": 24 } }
+{ "data": { "lesson_id": 101, "availability_days": 7, "max_extensions": 1, "extension_hours": 24, "self_reopen_limit": 2 } }
 ```
 
 #### `PUT /v1/teacher/lessons/{lesson}/availability`
@@ -994,8 +994,9 @@ Configure the per-lesson access window. `availability_days: null` = unlimited (n
 | Field | Rules |
 |---|---|
 | `availability_days` | present, nullable, integer 1–3650 (null = unlimited) |
-| `max_extensions` | nullable, integer 0–100 |
+| `max_extensions` | nullable, integer 0–100 (staff-approval budget) |
 | `extension_hours` | nullable, integer 1–8760 |
+| `self_reopen_limit` | nullable, integer 0–100 — auto self-reopen budget (VD R3/R4). 0 = disabled. Shares `extensions_used` with `max_extensions`; set `max_extensions > self_reopen_limit` to keep a staff-approval fallback past the auto cap. |
 
 **Response** `200 OK` — same payload as `GET`.
 
@@ -1041,7 +1042,8 @@ window if already started. No-op window for unlimited lessons.
     "lesson_id": 101, "has_window": true, "availability_days": 7,
     "max_extensions": 1, "extension_hours": 24, "started": true,
     "started_at": "2026-07-28T09:00:00+00:00", "expires_at": "2026-08-04T09:00:00+00:00",
-    "remaining_sec": 604800, "locked": false, "extensions_used": 0
+    "remaining_sec": 604800, "locked": false, "extensions_used": 0,
+    "self_reopen_limit": 2, "self_reopens_remaining": 2, "can_self_reopen": false
   }
 }
 ```
@@ -1052,9 +1054,19 @@ window if already started. No-op window for unlimited lessons.
 fields when not yet started). `remaining_sec` is server-computed — the client must not trust its own clock.
 **Auth:** 👤 student · **Response** `200 OK`.
 
+#### `POST /v1/lessons/{lesson}/reopen`
+**Purpose:** **Auto self-reopen (VD R3/R4).** Instantly, with no staff approval, extend the student's own
+**expired/locked** window by `extension_hours` (24h) from now, clear the lock, and consume one from the
+shared `extensions_used` counter — while `extensions_used < self_reopen_limit`. The counter is
+**server-authoritative** (any client-sent count/limit is ignored). No request body.
+**Auth:** 👤 student · **Response** `200 OK` — same payload as `/access` (with the refreshed
+`expires_at`, `extensions_used`, `self_reopens_remaining`, `can_self_reopen`).
+**Errors:** `403` no lesson access; `409` window not started, still open (not expired/locked), or
+**`reopen_limit_reached`** (auto budget spent — fall back to `extension-request` below).
+
 #### `POST /v1/lessons/{lesson}/extension-request`
-**Purpose:** Request more time. Requires a started window, `max_extensions > 0`, remaining allowance, and
-no already-pending request.
+**Purpose:** Request more time from staff — the **after-limit fallback** once auto self-reopen is spent.
+Requires a started window, `max_extensions > 0`, remaining allowance, and no already-pending request.
 **Auth:** 👤 student · **Response** `201 Created` — `LessonExtensionRequestResource`.
 **Errors:** `403` no lesson access; `409` not started / extensions disabled / none remaining / already pending.
 

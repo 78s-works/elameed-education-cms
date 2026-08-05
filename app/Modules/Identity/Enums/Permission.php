@@ -16,6 +16,7 @@ enum Permission: string
     case Students = 'students';
     case Centers = 'centers';
     case Homework = 'homework';
+    case Finance = 'finance';
 
     /** @return list<string> */
     public static function values(): array
@@ -45,6 +46,11 @@ enum Permission: string
                 'key' => self::Homework->value,
                 'label' => 'Homework grading',
                 'description' => 'Review and grade (correct) student homework submissions.',
+            ],
+            [
+                'key' => self::Finance->value,
+                'label' => 'Finance',
+                'description' => 'View and manage billing, invoices, wallet top-ups and financial reports.',
             ],
         ];
     }

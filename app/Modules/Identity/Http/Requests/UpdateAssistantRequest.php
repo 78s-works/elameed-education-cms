@@ -26,7 +26,7 @@ class UpdateAssistantRequest extends FormRequest
             'email' => ['sometimes', 'nullable', 'email', 'max:255'],
             'status' => ['sometimes', Rule::in([MembershipStatus::Active->value, MembershipStatus::Suspended->value])],
             'permissions' => ['sometimes', 'array'],
-            'permissions.*' => [Rule::in(Permission::values())],
+            'permissions.*' => [Rule::enum(Permission::class)],
         ];
     }
 }
