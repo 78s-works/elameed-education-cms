@@ -79,10 +79,8 @@ class Course extends Model
         return $this->belongsTo(CourseCategory::class, 'category_id');
     }
 
-    public function units(): HasMany
-    {
-        return $this->hasMany(Unit::class);
-    }
+    // `units()` retired (Unit removed, VD §7). Lessons are standalone now and,
+    // where still linked to a course, reached directly via `lessons()`.
 
     public function lessons(): HasMany
     {

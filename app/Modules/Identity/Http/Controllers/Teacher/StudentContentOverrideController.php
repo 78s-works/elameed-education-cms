@@ -8,7 +8,6 @@ use App\Modules\Catalog\Http\Resources\ContentAccessOverrideResource;
 use App\Modules\Catalog\Models\ContentAccessOverride;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonSection;
-use App\Modules\Catalog\Models\Unit;
 use App\Modules\Catalog\Services\ContentAccessOverrideService;
 use App\Modules\Identity\Http\Controllers\Teacher\Concerns\ManagesTenantStudents;
 use App\Modules\Identity\Http\Requests\GrantContentOverrideRequest;
@@ -110,8 +109,8 @@ class StudentContentOverrideController
                 ->where('tenant_id', $tenantId)->whereKey($targetId)->exists(),
             ContentAccessTarget::Section => LessonSection::withoutGlobalScopes()
                 ->where('tenant_id', $tenantId)->whereKey($targetId)->exists(),
-            ContentAccessTarget::Unit => Unit::withoutGlobalScopes()
-                ->where('tenant_id', $tenantId)->whereKey($targetId)->exists(),
+            // Unit target retired (Unit removed, VD §7): no such target exists.
+            ContentAccessTarget::Unit => false,
         };
 
         if (! $exists) {

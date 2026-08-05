@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\Assessment\Http\Controllers\AttemptController;
+use App\Modules\Assessment\Http\Controllers\Teacher\BubbleSheetController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamExtensionRequestController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamGradingController;
@@ -10,19 +11,18 @@ use App\Modules\Billing\Http\Controllers\Admin\PackageController;
 use App\Modules\Billing\Http\Controllers\Admin\TenantSubscriptionController;
 use App\Modules\Billing\Http\Controllers\Teacher\PackageController as TeacherPackageController;
 use App\Modules\Billing\Http\Controllers\Teacher\SubscriptionController;
-use App\Modules\Catalog\Http\Controllers\PublicBundleController;
 use App\Modules\Catalog\Http\Controllers\PublicCatalogController;
 use App\Modules\Catalog\Http\Controllers\StudentLessonAccessController;
 use App\Modules\Catalog\Http\Controllers\StudentLessonSectionsController;
+use App\Modules\Catalog\Http\Controllers\Teacher\AcademicYearController;
 use App\Modules\Catalog\Http\Controllers\Teacher\BundleController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CategoryController;
-use App\Modules\Catalog\Http\Controllers\Teacher\CourseController;
+use App\Modules\Catalog\Http\Controllers\Teacher\ContentPackageController;
 use App\Modules\Catalog\Http\Controllers\Teacher\ExtensionRequestController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonAttachmentController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonAvailabilityController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonSectionController;
-use App\Modules\Catalog\Http\Controllers\Teacher\UnitController;
 use App\Modules\Centers\Http\Controllers\RedeemCodeController;
 use App\Modules\Centers\Http\Controllers\Teacher\ActivationCodeController;
 use App\Modules\Centers\Http\Controllers\Teacher\AttendanceController;
@@ -191,10 +191,6 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
     Route::get('/courses/{course:slug}', [PublicCatalogController::class, 'show']);
     Route::get('/courses/{course:slug}/reviews', [ReviewController::class, 'index']);
 
-    // Public packages (M04) — published, purchasable bundles of the resolved tenant
-    Route::get('/bundles', [PublicBundleController::class, 'index']);
-    Route::get('/bundles/{bundle:slug}', [PublicBundleController::class, 'show']);
-
     // Identity, auth & OTP (M11) — public
     Route::post('/auth/register', [AuthController::class, 'register'])->middleware('throttle:otp');
     Route::post('/auth/otp/request', [AuthController::class, 'requestOtp'])->middleware('throttle:otp');
@@ -356,6 +352,15 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::put('/teacher/reviews/{review}', [TeacherReviewController::class, 'update']);
             Route::delete('/teacher/reviews/{review}', [TeacherReviewController::class, 'destroy']);
 
+            // Academic years (VD change set) — top-level content containers.
+            // Bind by uuid; NOT behind the `academic-year` middleware (this is
+            // where years are managed, so no year context is needed).
+            Route::get('/teacher/academic-years', [AcademicYearController::class, 'index']);
+            Route::post('/teacher/academic-years', [AcademicYearController::class, 'store']);
+            Route::get('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'show']);
+            Route::put('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'update']);
+            Route::delete('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'destroy']);
+
             // Catalog (M04) — course taxonomy + structure. Courses bind by uuid
             // (no id enumeration); nested units/lessons bind by id (own data).
             Route::get('/teacher/categories', [CategoryController::class, 'index']);
@@ -363,32 +368,44 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::put('/teacher/categories/{category}', [CategoryController::class, 'update']);
             Route::delete('/teacher/categories/{category}', [CategoryController::class, 'destroy']);
 
-            Route::get('/teacher/courses', [CourseController::class, 'index']);
-            Route::post('/teacher/courses', [CourseController::class, 'store']);
-            Route::get('/teacher/courses/{course:uuid}', [CourseController::class, 'show']);
-            Route::put('/teacher/courses/{course:uuid}', [CourseController::class, 'update']);
-            Route::delete('/teacher/courses/{course:uuid}', [CourseController::class, 'destroy']);
+            // Standalone lessons + their parts (VD change set §7/§8, doc 13 Phase
+            // 3). Year-scoped: every request carries X-Academic-Year (academic-year
+            // middleware); {lesson}/{section} bind by id within the active year, so
+            // a lesson from another year (or tenant) 404s.
+            Route::middleware('academic-year')->group(function (): void {
+                Route::get('/teacher/lessons', [LessonController::class, 'index']);
+                Route::post('/teacher/lessons', [LessonController::class, 'store']);
+                Route::get('/teacher/lessons/{lesson}', [LessonController::class, 'show']);
+                Route::put('/teacher/lessons/{lesson}', [LessonController::class, 'update']);
+                Route::delete('/teacher/lessons/{lesson}', [LessonController::class, 'destroy']);
 
-            Route::get('/teacher/courses/{course:uuid}/units', [UnitController::class, 'index']);
-            Route::post('/teacher/courses/{course:uuid}/units', [UnitController::class, 'store']);
-            Route::put('/teacher/courses/{course:uuid}/units/{unit}', [UnitController::class, 'update']);
-            Route::delete('/teacher/courses/{course:uuid}/units/{unit}', [UnitController::class, 'destroy']);
+                // Parts (reuse lesson_sections). `reorder` is registered before the
+                // `{section}` route so the literal path isn't captured as an id.
+                Route::get('/teacher/lessons/{lesson}/sections', [LessonSectionController::class, 'index']);
+                Route::post('/teacher/lessons/{lesson}/sections', [LessonSectionController::class, 'store']);
+                Route::put('/teacher/lessons/{lesson}/sections/reorder', [LessonSectionController::class, 'reorder']);
+                Route::put('/teacher/lessons/{lesson}/sections/{section}', [LessonSectionController::class, 'update']);
+                Route::delete('/teacher/lessons/{lesson}/sections/{section}', [LessonSectionController::class, 'destroy']);
 
-            Route::get('/teacher/units/{unit}/lessons', [LessonController::class, 'index']);
-            Route::post('/teacher/units/{unit}/lessons', [LessonController::class, 'store']);
-            Route::put('/teacher/units/{unit}/lessons/{lesson}', [LessonController::class, 'update']);
-            Route::delete('/teacher/units/{unit}/lessons/{lesson}', [LessonController::class, 'destroy']);
+                // Recursive content packages (VD change set §8.4, doc 13 Phase 5).
+                // Base path `content-packages` — `/teacher/packages` is Billing's
+                // subscription plans (D13-1). {package}/{item} bind by id within
+                // the active year. `items/reorder` is registered before the
+                // `{item}` route so the literal path isn't captured as an id.
+                Route::get('/teacher/content-packages', [ContentPackageController::class, 'index']);
+                Route::post('/teacher/content-packages', [ContentPackageController::class, 'store']);
+                Route::get('/teacher/content-packages/{package}', [ContentPackageController::class, 'show']);
+                Route::put('/teacher/content-packages/{package}', [ContentPackageController::class, 'update']);
+                Route::delete('/teacher/content-packages/{package}', [ContentPackageController::class, 'destroy']);
+
+                Route::post('/teacher/content-packages/{package}/items', [ContentPackageController::class, 'storeItem']);
+                Route::put('/teacher/content-packages/{package}/items/reorder', [ContentPackageController::class, 'reorderItems']);
+                Route::delete('/teacher/content-packages/{package}/items/{item}', [ContentPackageController::class, 'destroyItem']);
+            });
 
             Route::get('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'index']);
             Route::post('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'store']);
             Route::delete('/teacher/lessons/{lesson}/attachments/{attachment:uuid}', [LessonAttachmentController::class, 'destroy']);
-
-            // Flexible lesson content: typed media sections (FR-M04-01). Sections are
-            // media-only now (video/pdf); exams link to the lesson directly. Bind by id.
-            Route::get('/teacher/lessons/{lesson}/sections', [LessonSectionController::class, 'index']);
-            Route::post('/teacher/lessons/{lesson}/sections', [LessonSectionController::class, 'store']);
-            Route::put('/teacher/lessons/{lesson}/sections/{section}', [LessonSectionController::class, 'update']);
-            Route::delete('/teacher/lessons/{lesson}/sections/{section}', [LessonSectionController::class, 'destroy']);
 
             // Lesson time-box config (availability window + extension allowance).
             Route::get('/teacher/lessons/{lesson}/availability', [LessonAvailabilityController::class, 'show']);
@@ -400,14 +417,6 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::get('/teacher/extension-requests', [ExtensionRequestController::class, 'index']);
             Route::post('/teacher/extension-requests/{extensionRequest}/grant', [ExtensionRequestController::class, 'grant']);
             Route::post('/teacher/extension-requests/{extensionRequest}/deny', [ExtensionRequestController::class, 'deny']);
-
-            // Packages/bundles (M04) — group courses + units into a sellable package.
-            // Buying one enrolls the student in every item it contains.
-            Route::get('/teacher/bundles', [BundleController::class, 'index']);
-            Route::post('/teacher/bundles', [BundleController::class, 'store']);
-            Route::get('/teacher/bundles/{bundle:uuid}', [BundleController::class, 'show']);
-            Route::put('/teacher/bundles/{bundle:uuid}', [BundleController::class, 'update']);
-            Route::delete('/teacher/bundles/{bundle:uuid}', [BundleController::class, 'destroy']);
 
             // Coupons & promo codes (M21) — teacher-managed discounts at checkout.
             Route::get('/teacher/coupons', [CouponController::class, 'index']);
@@ -445,9 +454,8 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             // filter the index by ?type=&course_id=&unit_id=&lesson_id=.
             Route::get('/teacher/exams', [ExamController::class, 'index']);
             Route::post('/teacher/exams', [ExamController::class, 'store']);
-            // Link-target dropdowns for the exam editor (lesson / unit pickers).
+            // Link-target dropdown for the exam editor (lesson picker).
             Route::get('/teacher/exam-link/lessons', [ExamLinkController::class, 'lessons']);
-            Route::get('/teacher/exam-link/units', [ExamLinkController::class, 'units']);
             Route::get('/teacher/exams/{exam:uuid}', [ExamController::class, 'show']);
             Route::put('/teacher/exams/{exam:uuid}', [ExamController::class, 'update']);
             Route::delete('/teacher/exams/{exam:uuid}', [ExamController::class, 'destroy']);
@@ -456,6 +464,14 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::post('/teacher/exams/{exam:uuid}/questions', [QuestionController::class, 'store']);
             Route::put('/teacher/exams/{exam:uuid}/questions/{question}', [QuestionController::class, 'update']);
             Route::delete('/teacher/exams/{exam:uuid}/questions/{question}', [QuestionController::class, 'destroy']);
+
+            // On-site bubble-sheet MCQ builder (doc 13 Phase 7) — read/replace the
+            // whole answer sheet at once. Year-scoped (X-Academic-Year) like the rest
+            // of lesson/part authoring; the answer key is teacher-only.
+            Route::middleware('academic-year')->group(function (): void {
+                Route::get('/teacher/exams/{exam:uuid}/bubble-sheet', [BubbleSheetController::class, 'show']);
+                Route::put('/teacher/exams/{exam:uuid}/bubble-sheet', [BubbleSheetController::class, 'update']);
+            });
 
             // Exam/quiz time-extension requests — staff review (doc 11 R6).
             Route::get('/teacher/exam-extension-requests', [ExamExtensionRequestController::class, 'index']);
@@ -520,6 +536,17 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
                 Route::get('/teacher/exams/{exam:uuid}/submissions', [ExamGradingController::class, 'submissions']);
                 Route::get('/teacher/exams/{exam:uuid}/attempts/{attempt}/files/{question}', [ExamGradingController::class, 'downloadFile']);
                 Route::post('/teacher/exams/{exam:uuid}/attempts/{attempt}/grade', [ExamGradingController::class, 'grade']);
+
+                // Manual pass-override on a must_pass part (VD change set §7 LP-D3).
+                // Year-scoped like the rest of lesson authoring.
+                Route::middleware('academic-year')->group(function (): void {
+                    Route::post('/teacher/lessons/{lesson}/sections/{section}/pass-override', [LessonSectionController::class, 'storePassOverride']);
+                    // {user} is resolved independently of {section} — the controller
+                    // scopes the delete by (section, user). Without this, Laravel
+                    // auto-scopes the child and tries LessonSection::users() → 500.
+                    Route::delete('/teacher/lessons/{lesson}/sections/{section}/pass-override/{user:uuid}', [LessonSectionController::class, 'destroyPassOverride'])
+                        ->withoutScopedBindings();
+                });
             }); // permission:homework
 
             // Students (M17) — teacher, or an assistant granted the `students` permission.

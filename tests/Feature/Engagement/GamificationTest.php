@@ -6,7 +6,6 @@ use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
-use App\Modules\Catalog\Models\Unit;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Engagement\Models\Badge;
@@ -61,10 +60,7 @@ class GamificationTest extends TestCase
         $course->tenant_id = $this->tenant->id;
         $course->slug = 'c-'.uniqid();
         $course->save();
-        $unit = new Unit(['course_id' => $course->id, 'title' => 'U']);
-        $unit->tenant_id = $this->tenant->id;
-        $unit->save();
-        $lesson = new Lesson(['unit_id' => $unit->id, 'course_id' => $course->id, 'title' => 'L']);
+        $lesson = new Lesson(['course_id' => $course->id, 'title' => 'L']);
         $lesson->tenant_id = $this->tenant->id;
         $lesson->save();
 

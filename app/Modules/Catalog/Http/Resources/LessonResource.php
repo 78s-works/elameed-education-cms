@@ -16,6 +16,14 @@ class LessonResource extends JsonResource
     {
         return [
             'id' => $this->id,
+            // Standalone-lesson fields (VD change set §7). `name` is the public
+            // alias of the `title` column; access_mode is the part ceiling.
+            'name' => $this->title,
+            'access_mode' => $this->access_mode?->value,
+            'price_minor' => $this->price_minor,
+            'currency' => $this->currency,
+            'is_purchasable' => (bool) $this->is_purchasable,
+            'academic_year_id' => $this->whenLoaded('academicYear', fn () => $this->academicYear?->uuid),
             'unit_id' => $this->unit_id,
             'course_id' => $this->course_id,
             'title' => $this->title,

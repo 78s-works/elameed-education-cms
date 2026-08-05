@@ -4,11 +4,8 @@ namespace App\Modules\Commerce\Services;
 
 use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Models\Exam;
-use App\Modules\Catalog\Models\Bundle;
-use App\Modules\Catalog\Models\BundleItem;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
-use App\Modules\Catalog\Models\Unit;
 use App\Modules\Catalog\Services\LessonAvailabilityService;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
@@ -19,10 +16,9 @@ use App\Modules\Commerce\Models\Enrollment;
  * webhook contexts where no tenant is resolved from the host.
  *
  * Access lives in the `enrollments` table. A grant is whole-course (`course_id`),
- * a unit (`unit_id`), or a single lesson (`lesson_id`) — the last two come from a
- * package. Course grants open everything in the course (lessons + exams); unit
- * grants open that chapter's lessons; lesson grants open just that lesson. Exams
- * stay tied to a full-course enrollment.
+ * a single lesson (`lesson_id`), or a single exam (`exam_id`). Course grants open
+ * everything in the course (lessons + exams); lesson grants open just that lesson.
+ * (`unit_id` / `bundle_id` are dormant columns — Unit + Bundle retired, VD §7.)
  */
 class EnrollmentService
 {
@@ -39,12 +35,6 @@ class EnrollmentService
         $expiresAt = $course->access_days ? now()->addDays($course->access_days) : null;
 
         return $this->grant($tenantId, $userId, $source, $course->getKey(), null, null, null, $bundleId, $expiresAt);
-    }
-
-    /** Grant access to a single unit (doc 11 R7 — teacher can grant a unit). */
-    public function grantUnit(int $tenantId, int $userId, Unit $unit, EnrollmentSource $source): Enrollment
-    {
-        return $this->grant($tenantId, $userId, $source, null, $unit->getKey(), null, null, null, null);
     }
 
     /**
@@ -64,31 +54,6 @@ class EnrollmentService
     public function grantExam(int $tenantId, int $userId, Exam $exam, EnrollmentSource $source): Enrollment
     {
         return $this->grant($tenantId, $userId, $source, null, null, null, $exam->getKey(), null, null);
-    }
-
-    /**
-     * Grant access to every item in a package. The package's own `access_days`
-     * governs the window for all grants (null = lifetime). Idempotent per item.
-     */
-    public function grantBundle(int $tenantId, int $userId, Bundle $bundle, EnrollmentSource $source): void
-    {
-        $expiresAt = $bundle->access_days ? now()->addDays($bundle->access_days) : null;
-        $bundle->loadMissing('items');
-
-        foreach ($bundle->items as $item) {
-            match ($item->item_type) {
-                BundleItem::TYPE_COURSE => $item->course_id !== null
-                    ? $this->grant($tenantId, $userId, $source, (int) $item->course_id, null, null, null, $bundle->getKey(), $expiresAt)
-                    : null,
-                BundleItem::TYPE_UNIT => $item->unit_id !== null
-                    ? $this->grant($tenantId, $userId, $source, null, (int) $item->unit_id, null, null, $bundle->getKey(), $expiresAt)
-                    : null,
-                BundleItem::TYPE_LESSON => $item->lesson_id !== null
-                    ? $this->grant($tenantId, $userId, $source, null, null, (int) $item->lesson_id, null, $bundle->getKey(), $expiresAt)
-                    : null,
-                default => null,
-            };
-        }
     }
 
     /** Does the user currently have access to the whole course? Free courses are open. */

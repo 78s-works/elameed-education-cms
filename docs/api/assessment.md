@@ -540,6 +540,69 @@ Type-specific shapes:
 
 ---
 
+### Teacher · Bubble-sheet builder
+
+On-site MCQ authoring for a quiz/homework exam (doc 13 Phase 7). A **bubble sheet** is just a set of `mcq` questions on the exam persisted through the **existing `questions` table** — no new tables. Each question maps `text → body`, `options[] → options`, `correct_index → correct[0]`, `marks → points`; `exams.total_marks` mirrors Σ marks. The whole sheet is read/replaced at once (bulk upsert). The answer key (`correct_index`) is returned **only** on this teacher surface — a student attempt never sees it (`PublicQuestionResource` omits `correct`).
+
+Auto-grading is driven by the backing exam's `grading_mode`: when it is `auto`, a submitted attempt is scored as `score = Σ marks of questions whose chosen option is correct`, finalised straight to `graded` (never routed to a teacher), and pass/fail is evaluated via `Exam::passed()` — `pass_mode=marks` compares the absolute score to `pass_value`, `pass_mode=percent` compares the ratio, and a null `pass_value` falls back to the legacy `pass_percent`.
+
+#### `GET /v1/teacher/exams/{exam:uuid}/bubble-sheet`
+
+**Purpose:** Read the whole sheet, answer key included (teacher-only).
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`, `academic-year`
+
+**Request headers:** Host, Accept, `Authorization: Bearer <token>`, **`X-Academic-Year: <uuid>`** (required).
+
+**Response 200:**
+```json
+{
+  "data": {
+    "exam_uuid": "…",
+    "grading_mode": "auto",
+    "pass_mode": "marks",
+    "pass_value": "25.00",
+    "total_marks": 50,
+    "questions": [
+      { "id": 12, "text": "Q1", "options": ["A","B","C","D"], "correct_index": 2, "marks": 10, "sort_order": 0 },
+      { "id": 13, "text": "Q2", "options": ["True","False"], "correct_index": 0, "marks": 40, "sort_order": 1 }
+    ]
+  }
+}
+```
+
+#### `PUT /v1/teacher/exams/{exam:uuid}/bubble-sheet`
+
+**Purpose:** Bulk-upsert (replace) the whole sheet. Existing questions are dropped and rebuilt in payload order.
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`, `academic-year`
+
+**Request body:**
+```json
+{
+  "total_marks": 50,
+  "questions": [
+    { "text": "Q1", "options": ["A","B","C","D"], "correct_index": 2, "marks": 10 },
+    { "text": "Q2", "options": ["True","False"], "correct_index": 0, "marks": 40 }
+  ]
+}
+```
+
+| field | type | required | notes |
+|---|---|---|---|
+| `total_marks` | int | no | must equal Σ `marks`; **derived from the sum when omitted** |
+| `questions` | array | yes | at least one |
+| `questions.*.text` | string | no | the question prompt (nullable) |
+| `questions.*.options` | string[] | yes | at least two |
+| `questions.*.correct_index` | int | yes | in `[0, len(options)-1]` |
+| `questions.*.marks` | int | yes | ≥ 1 (integer marks — reuses the int `points`/`score` columns) |
+
+**Response 200** — the same sheet resource as GET (persisted question ids + answer key).
+
+**Errors:** `422 validation_error` (`error.details`: `total_marks` ≠ Σ marks, `questions` empty, `questions.*.options` < 2, `questions.*.correct_index` out of range, or missing `X-Academic-Year` → `academic_year`), `404 not_found` (cross-tenant exam), `403 forbidden`.
+
+---
+
 ### Teacher · Grading
 
 #### `GET /v1/teacher/exams/{exam:uuid}/submissions`

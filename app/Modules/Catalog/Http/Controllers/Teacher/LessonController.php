@@ -2,54 +2,82 @@
 
 namespace App\Modules\Catalog\Http\Controllers\Teacher;
 
+use App\Modules\Catalog\Enums\AccessMode;
 use App\Modules\Catalog\Http\Requests\LessonRequest;
 use App\Modules\Catalog\Http\Resources\LessonResource;
 use App\Modules\Catalog\Models\Lesson;
-use App\Modules\Catalog\Models\Unit;
+use App\Modules\Catalog\Services\LessonAccessModeGuard;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 
 /**
- * /teacher/units/{unit}/lessons (FR-M04-02). course_id is inherited from the
- * unit so a lesson always agrees with its unit's course.
+ * /teacher/lessons (VD change set §8.3) — standalone lesson authoring. Scoped to
+ * the active academic year by the `academic-year` middleware + the
+ * BelongsToAcademicYear global scope, so a lesson from another year (or tenant)
+ * simply isn't found → 404.
  */
 class LessonController
 {
-    public function index(Unit $unit): AnonymousResourceCollection
+    public function __construct(private readonly LessonAccessModeGuard $guard) {}
+
+    public function index(Request $request): AnonymousResourceCollection
     {
-        return LessonResource::collection(
-            $unit->lessons()->with(['videoAsset', 'attachments'])->orderBy('sort_order')->get()
+        $lessons = Lesson::query()
+            ->when(
+                $request->filled('access_mode'),
+                fn ($q) => $q->where('access_mode', $request->string('access_mode')),
+            )
+            ->when(
+                $request->filled('search'),
+                fn ($q) => $q->where('title', 'like', '%'.$request->string('search').'%'),
+            )
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+
+        return LessonResource::collection($lessons);
+    }
+
+    public function store(LessonRequest $request): JsonResponse
+    {
+        // tenant_id + academic_year_id are auto-filled by the model traits.
+        $lesson = Lesson::create($request->lessonAttributes());
+
+        return (new LessonResource($lesson->fresh()->load('sections')))
+            ->response()->setStatusCode(201);
+    }
+
+    public function show(Lesson $lesson): LessonResource
+    {
+        return new LessonResource($lesson->load([
+            'sections' => fn ($q) => $q->ordered()->with(['mediaAsset', 'exam']),
+            'academicYear', 'videoAsset', 'attachments',
+        ]));
+    }
+
+    public function update(LessonRequest $request, Lesson $lesson): LessonResource
+    {
+        $attributes = $request->lessonAttributes();
+
+        // Narrowing the lesson's channel must not orphan any wider existing part.
+        if (array_key_exists('access_mode', $attributes)) {
+            $this->guard->assertLessonNarrowingAllowed($lesson, AccessMode::from($attributes['access_mode']));
+        }
+
+        $lesson->update($attributes);
+
+        return new LessonResource(
+            $lesson->load(['sections' => fn ($q) => $q->ordered()->with(['mediaAsset', 'exam'])]),
         );
     }
 
-    public function store(LessonRequest $request, Unit $unit): JsonResponse
+    public function destroy(Lesson $lesson): Response
     {
-        $lesson = $unit->lessons()->create(
-            $request->validated() + ['course_id' => $unit->course_id]
-        );
-
-        return (new LessonResource($lesson->load(['videoAsset', 'attachments'])))->response()->setStatusCode(201);
-    }
-
-    public function update(LessonRequest $request, Unit $unit, Lesson $lesson): LessonResource
-    {
-        $this->assertOwnership($unit, $lesson);
-        $lesson->update($request->validated());
-
-        return new LessonResource($lesson->load(['videoAsset', 'attachments']));
-    }
-
-    public function destroy(Unit $unit, Lesson $lesson): Response
-    {
-        $this->assertOwnership($unit, $lesson);
+        // Sections cascade via the FK; package_items auto-detach in Phase 5 (VD-D1c).
         $lesson->delete();
 
         return response()->noContent();
-    }
-
-    private function assertOwnership(Unit $unit, Lesson $lesson): void
-    {
-        abort_unless($lesson->unit_id === $unit->id, 404);
     }
 }

@@ -58,21 +58,43 @@ class SubscriptionLimitsTest extends TestCase
         app(SubscriptionService::class)->assign($this->tenant, $package);
     }
 
+    /** Create a course directly (the /teacher/courses endpoint was retired, VD §7). */
+    private function makeCourse(string $title): void
+    {
+        $course = new Course(['title' => $title, 'visibility' => 'visible']);
+        $course->tenant_id = $this->tenant->id;
+        $course->slug = 'c-'.uniqid();
+        $course->save();
+    }
+
+    /**
+     * Course authoring moved off the API (units/courses teacher CRUD retired), so
+     * the max_courses limit is asserted against PlanLimitGuard directly — the same
+     * guard the (now-removed) CourseController used to call.
+     */
     public function test_course_creation_is_blocked_once_the_plan_limit_is_reached(): void
     {
         $this->assignPlan(['max_courses' => 1]);
-        Sanctum::actingAs($this->teacher());
-        $h = ['X-Tenant' => 'demo'];
+        $guard = app(PlanLimitGuard::class);
 
-        $this->withHeaders($h)->postJson('/api/v1/teacher/courses', ['title' => 'First'])
-            ->assertStatus(201);
+        // 0 used, limit 1 → one more is allowed.
+        $guard->ensure($this->tenant->id, 'max_courses', 1);
+        $this->makeCourse('First');
 
-        $this->withHeaders($h)->postJson('/api/v1/teacher/courses', ['title' => 'Second'])
-            ->assertStatus(403)
-            ->assertJsonPath('error.code', 'plan_limit_reached')
-            ->assertJsonPath('error.details.key', 'max_courses');
+        // 1 used, limit 1 → the next one is blocked.
+        $check = $guard->check($this->tenant->id, 'max_courses');
+        $this->assertSame(1, $check['used']);
+        $this->assertSame(0, $check['remaining']);
 
-        // Only the first course was actually persisted.
+        try {
+            $guard->ensure($this->tenant->id, 'max_courses', 1);
+            $this->fail('Expected a plan_limit_reached DomainException.');
+        } catch (DomainException $e) {
+            $this->assertSame('plan_limit_reached', $e->errorCode);
+            $this->assertSame(403, $e->status);
+            $this->assertSame('max_courses', $e->details['key']);
+        }
+
         $this->assertSame(1, Course::withoutGlobalScopes()->where('tenant_id', $this->tenant->id)->count());
     }
 
@@ -96,29 +118,31 @@ class SubscriptionLimitsTest extends TestCase
 
     public function test_no_plan_means_unlimited(): void
     {
-        // No subscription assigned at all.
-        Sanctum::actingAs($this->teacher());
-        $h = ['X-Tenant' => 'demo'];
+        // No subscription assigned at all → the guard never blocks.
+        $guard = app(PlanLimitGuard::class);
 
         foreach (['A', 'B', 'C'] as $title) {
-            $this->withHeaders($h)->postJson('/api/v1/teacher/courses', ['title' => $title])->assertStatus(201);
+            $this->makeCourse($title);
         }
 
-        $this->assertSame(3, Course::withoutGlobalScopes()->where('tenant_id', $this->tenant->id)->count());
+        $check = $guard->check($this->tenant->id, 'max_courses');
+        $this->assertNull($check['limit']);
+        $this->assertTrue($check['allowed']);
+        $guard->ensure($this->tenant->id, 'max_courses', 100); // no throw
     }
 
     public function test_null_limit_key_means_unlimited(): void
     {
         // A plan that constrains students but leaves courses null (unlimited).
         $this->assignPlan(['max_students' => 5]); // max_courses omitted → null
-        Sanctum::actingAs($this->teacher());
-        $h = ['X-Tenant' => 'demo'];
+        $guard = app(PlanLimitGuard::class);
 
         foreach (['A', 'B', 'C'] as $title) {
-            $this->withHeaders($h)->postJson('/api/v1/teacher/courses', ['title' => $title])->assertStatus(201);
+            $this->makeCourse($title);
         }
 
-        $this->assertSame(3, Course::withoutGlobalScopes()->where('tenant_id', $this->tenant->id)->count());
+        $this->assertNull($guard->check($this->tenant->id, 'max_courses')['limit']);
+        $guard->ensure($this->tenant->id, 'max_courses', 100); // no throw
     }
 
     public function test_storage_limit_is_enforced_from_recorded_media_bytes(): void

@@ -2,7 +2,6 @@
 
 namespace App\Modules\Commerce\Services;
 
-use App\Modules\Catalog\Models\Bundle;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentSource;
@@ -44,16 +43,12 @@ class FulfillOrderService
         $legs = [];
         $contentTotal = 0;
         $courseIds = [];
-        $bundleIds = [];
         $lessonIds = [];
 
         foreach ($order->items as $item) {
             if ($item->item_type === OrderItem::TYPE_COURSE) {
                 $contentTotal += (int) $item->price_minor;
                 $courseIds[] = (int) $item->item_id;
-            } elseif ($item->item_type === OrderItem::TYPE_BUNDLE) {
-                $contentTotal += (int) $item->price_minor;
-                $bundleIds[] = (int) $item->item_id;
             } elseif ($item->item_type === OrderItem::TYPE_LESSON) {
                 $contentTotal += (int) $item->price_minor;
                 $lessonIds[] = (int) $item->item_id;
@@ -67,7 +62,7 @@ class FulfillOrderService
         // the ledger balances against the discounted order total.
         $contentTotal = max(0, $contentTotal - (int) $order->discount_minor);
 
-        // Split content revenue (courses + packages) between teacher earnings and
+        // Split content revenue (courses + lessons) between teacher earnings and
         // platform commission.
         if ($contentTotal > 0) {
             $commission = (int) floor($contentTotal * (float) config('commerce.commission_percent', 0) / 100);
@@ -81,7 +76,7 @@ class FulfillOrderService
         $fundingWalletId = $funding === LedgerEntry::STUDENT_WALLET ? $wallet->id : null;
         $legs[] = $this->leg($funding, LedgerEntry::DEBIT, (int) $order->total_minor, $fundingWalletId);
 
-        DB::transaction(function () use ($order, $tenantId, $legs, $courseIds, $bundleIds, $lessonIds, $funding): void {
+        DB::transaction(function () use ($order, $tenantId, $legs, $courseIds, $lessonIds, $funding): void {
             $this->ledger->post($tenantId, "order:{$order->id}:fulfill", $legs, 'order', (int) $order->id);
 
             $source = $funding === LedgerEntry::STUDENT_WALLET ? EnrollmentSource::Wallet : EnrollmentSource::Purchase;
@@ -98,14 +93,6 @@ class FulfillOrderService
                 $lesson = Lesson::withoutGlobalScopes()->find($lessonId);
                 if ($lesson !== null) {
                     $this->enrollments->grantLesson($tenantId, (int) $order->user_id, $lesson, $source);
-                }
-            }
-
-            // A package grants an enrollment for each course/unit it contains.
-            foreach (array_unique($bundleIds) as $bundleId) {
-                $bundle = Bundle::withoutGlobalScopes()->with('items')->find($bundleId);
-                if ($bundle !== null) {
-                    $this->enrollments->grantBundle($tenantId, (int) $order->user_id, $bundle, $source);
                 }
             }
 

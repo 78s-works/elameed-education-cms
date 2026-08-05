@@ -8,12 +8,9 @@ use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Assessment\Models\Question;
 use App\Modules\Billing\Models\SubscriptionPackage;
 use App\Modules\Billing\Models\TenantSubscription;
-use App\Modules\Catalog\Models\Bundle;
-use App\Modules\Catalog\Models\BundleItem;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\CourseCategory;
 use App\Modules\Catalog\Models\Lesson;
-use App\Modules\Catalog\Models\Unit;
 use App\Modules\Centers\Models\ActivationCode;
 use App\Modules\Centers\Models\AttendanceRecord;
 use App\Modules\Centers\Models\Center;
@@ -94,8 +91,8 @@ class DatabaseSeeder extends Seeder
         'reviews', 'lesson_progress', 'playback_sessions', 'exam_attempts',
         'questions', 'exams', 'attendance_records', 'activation_codes', 'centers',
         'ledger_entries', 'wallets', 'invoices', 'payments', 'order_items', 'orders',
-        'enrollments', 'bundle_items', 'bundles', 'media_renditions',
-        'media_upload_sessions', 'media_versions', 'media_assets', 'lessons', 'units',
+        'enrollments', 'media_renditions',
+        'media_upload_sessions', 'media_versions', 'media_assets', 'lessons',
         'courses', 'course_categories', 'parent_links', 'student_profiles',
         'teacher_profiles', 'tenant_user', 'tenant_subscriptions', 'tenant_domains',
         'tenants', 'subscription_packages', 'personal_access_tokens', 'sessions',
@@ -607,8 +604,8 @@ class DatabaseSeeder extends Seeder
         // --- Media extras (variety states) + callback event ---------------
         $this->seedMediaExtras($tenant, $courses, $lessonsByCourse, $teacher, $students);
 
-        // --- Bundles ------------------------------------------------------
-        $bundles = $this->seedBundles($tenant, $courses, $unitsByCourse, $lessonsByCourse);
+        // --- Bundles retired (VD §7 — replaced by content packages) -------
+        $bundles = [];
 
         // --- Centres, activation codes, attendance ------------------------
         $centers = $this->seedCenters($tenant, $config);
@@ -818,22 +815,17 @@ class DatabaseSeeder extends Seeder
             ]);
             $course->save();
 
+            // Units retired (VD §7): the config still groups lessons under a
+            // "unit" label for the marketing `parts` summary, but no Unit row is
+            // created — lessons are standalone under the course.
             $units = [];
             $lessons = [];
             $parts = [];
+            $lessonIndex = 0;
             foreach ($spec['units'] as $ui => $unitSpec) {
-                $unit = Unit::create([
-                    'course_id' => $course->id,
-                    'title' => $unitSpec['title'],
-                    'sort_order' => $ui + 1,
-                    'visibility' => 'visible',
-                    'publish_at' => now()->subMonths(3)->addDays($ci + $ui),
-                ]);
-                $units[] = $unit;
-
                 $unitDuration = 0;
-                foreach ($unitSpec['lessons'] as $li => $lessonSpec) {
-                    $lesson = $this->createLesson($course, $unit, $lessonSpec, $li, $config, $teacher);
+                foreach ($unitSpec['lessons'] as $lessonSpec) {
+                    $lesson = $this->createLesson($course, $lessonSpec, $lessonIndex++, $config, $teacher);
                     $lessons[] = $lesson;
                     $unitDuration += (int) $lessonSpec['duration'];
                 }
@@ -865,12 +857,11 @@ class DatabaseSeeder extends Seeder
         return ['courses' => $courses, 'units' => $unitsByCourse, 'lessons' => $lessonsByCourse, 'exams' => $examsByCourse];
     }
 
-    private function createLesson(Course $course, Unit $unit, array $spec, int $index, array $config, User $teacher): Lesson
+    private function createLesson(Course $course, array $spec, int $index, array $config, User $teacher): Lesson
     {
         $isYoutube = $spec['source'] === 'youtube';
 
         $lesson = new Lesson([
-            'unit_id' => $unit->id,
             'course_id' => $course->id,
             'title' => $spec['title'],
             'description' => 'شرح تفصيلي لدرس «'.$spec['title'].'» مع أمثلة محلولة وتدريبات على نمط الامتحان.',
@@ -1232,70 +1223,6 @@ class DatabaseSeeder extends Seeder
     }
 
     // =====================================================================
-    // Bundles
-    // =====================================================================
-
-    /**
-     * @param  array<int, Course>  $courses
-     * @param  array<int, array<int, Unit>>  $unitsByCourse
-     * @param  array<int, array<int, Lesson>>  $lessonsByCourse
-     * @return array<int, Bundle>
-     */
-    private function seedBundles(Tenant $tenant, array $courses, array $unitsByCourse, array $lessonsByCourse): array
-    {
-        $paid = $this->paidCourses($courses);
-        if (count($paid) < 2) {
-            return [];
-        }
-
-        [$firstIdx, $secondIdx] = array_slice(array_keys($paid), 0, 2);
-
-        $bundle = new Bundle([
-            'title' => 'بكدج التفوق الشامل',
-            'subtitle' => 'كورس كامل + وحدة مختارة + درس مميّز بسعر موفّر',
-            'slug' => 'success-mega-bundle',
-            'description' => 'باقة موفّرة تجمع أقوى الكورسات مع وحدة ودرس إضافيين، وصلاحية وصول ممتدة لكل المحتوى.',
-            'price_minor' => 90000,
-            'currency' => 'EGP',
-            'access_days' => 365,
-            'visibility' => 'visible',
-            'publish_at' => now()->subMonth(),
-            'is_free' => false,
-            'purchase_enabled' => true,
-            'cover_url' => 'https://cdn.elameed.app/bundles/success-cover.jpg',
-            'thumbnail_url' => 'https://cdn.elameed.app/bundles/success-thumb.jpg',
-        ]);
-        $bundle->save();
-
-        BundleItem::create(['bundle_id' => $bundle->id, 'item_type' => 'course', 'course_id' => $courses[$firstIdx]->id, 'unit_id' => null, 'lesson_id' => null, 'sort_order' => 1]);
-        BundleItem::create(['bundle_id' => $bundle->id, 'item_type' => 'unit', 'course_id' => null, 'unit_id' => $unitsByCourse[$secondIdx][0]->id, 'lesson_id' => null, 'sort_order' => 2]);
-        BundleItem::create(['bundle_id' => $bundle->id, 'item_type' => 'lesson', 'course_id' => null, 'unit_id' => null, 'lesson_id' => $lessonsByCourse[$secondIdx][0]->id, 'sort_order' => 3]);
-
-        // A retired (soft-deleted) bundle → populates bundles.deleted_at.
-        $old = new Bundle([
-            'title' => 'باقة الترم الأول (منتهية)',
-            'subtitle' => 'عرض موسمي انتهى',
-            'slug' => 'term1-expired-bundle',
-            'description' => 'باقة موسمية لم تعد متاحة للشراء.',
-            'price_minor' => 70000,
-            'currency' => 'EGP',
-            'access_days' => 120,
-            'visibility' => 'hidden',
-            'publish_at' => now()->subMonths(8),
-            'is_free' => false,
-            'purchase_enabled' => false,
-            'cover_url' => 'https://cdn.elameed.app/bundles/term1-cover.jpg',
-            'thumbnail_url' => 'https://cdn.elameed.app/bundles/term1-thumb.jpg',
-        ]);
-        $old->save();
-        BundleItem::create(['bundle_id' => $old->id, 'item_type' => 'course', 'course_id' => $courses[$firstIdx]->id, 'unit_id' => null, 'lesson_id' => null, 'sort_order' => 1]);
-        $old->deleted_at = now()->subMonths(4);
-        $old->saveQuietly();
-
-        return [$bundle];
-    }
-
-    // =====================================================================
     // Centres, activation codes, attendance
     // =====================================================================
 
@@ -1460,25 +1387,12 @@ class DatabaseSeeder extends Seeder
             ['item_type' => 'course', 'item_id' => $courseA->id, 'price_minor' => $courseA->price_minor, 'title' => $courseA->title.' (مكرر - مُسترجع)'],
         ], 'paymob', 'paid', now()->subDays(19), null);
 
-        // --- Student 1: buys the bundle (card) → grants for each bundle item
-        if (! empty($bundles)) {
-            $bundle = $bundles[0];
-            $orderBundle = $this->createOrder($tenant, $students[1], 'paid', [
-                ['item_type' => 'bundle', 'item_id' => $bundle->id, 'price_minor' => $bundle->price_minor, 'title' => $bundle->title],
-            ], 'paymob', 'paid', now()->subDays(12), null);
-            $bundle->loadMissing('items');
-            $exp = $bundle->access_days ? now()->subDays(12)->addDays($bundle->access_days) : null;
-            foreach ($bundle->items as $item) {
-                $this->createEnrollment(
-                    $tenant, $students[1], 'purchase', 'active',
-                    $item->item_type === 'course' ? $courses[$this->courseIndexById($courses, (int) $item->course_id)] : null,
-                    $item->item_type === 'unit' ? (new Unit)->newQuery()->find($item->unit_id) : null,
-                    $item->item_type === 'lesson' ? (new Lesson)->newQuery()->find($item->lesson_id) : null,
-                    $bundle->id, now()->subDays(12), $exp,
-                );
-            }
-            $this->postSale($tenant, $orderBundle, $bundle->price_minor, null);
-        }
+        // --- Student 1: card purchase of course B (bundles retired, VD §7)
+        $orderB1 = $this->createOrder($tenant, $students[1], 'paid', [
+            ['item_type' => 'course', 'item_id' => $courseB->id, 'price_minor' => $courseB->price_minor, 'title' => $courseB->title],
+        ], 'paymob', 'paid', now()->subDays(12), null);
+        $this->createEnrollment($tenant, $students[1], 'purchase', 'active', $courseB, null, null, null, now()->subDays(12), $courseB->access_days ? now()->subDays(12)->addDays($courseB->access_days) : null);
+        $this->postSale($tenant, $orderB1, $courseB->price_minor, null);
 
         // --- Student 2: code redemption (centre course) + centre enrollment
         if ($centerCourse !== null) {
@@ -1601,12 +1515,12 @@ class DatabaseSeeder extends Seeder
         }
     }
 
-    private function createEnrollment(Tenant $tenant, User $user, string $source, string $status, ?Course $course, ?Unit $unit, ?Lesson $lesson, ?int $bundleId, ?Carbon $startsAt, ?Carbon $expiresAt): Enrollment
+    private function createEnrollment(Tenant $tenant, User $user, string $source, string $status, ?Course $course, ?int $unitId, ?Lesson $lesson, ?int $bundleId, ?Carbon $startsAt, ?Carbon $expiresAt): Enrollment
     {
         return Enrollment::create([
             'user_id' => $user->id,
             'course_id' => $course?->id,
-            'unit_id' => $unit?->id,
+            'unit_id' => $unitId,
             'lesson_id' => $lesson?->id,
             'bundle_id' => $bundleId,
             'source' => $source,

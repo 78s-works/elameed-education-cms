@@ -7,7 +7,6 @@ use App\Modules\Billing\Models\SubscriptionPackage;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\CourseCategory;
 use App\Modules\Catalog\Models\Lesson;
-use App\Modules\Catalog\Models\Unit;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
@@ -59,8 +58,6 @@ class EndpointSmokeTest extends TestCase
 
     private Course $payCourse;    // fresh, purchasable, payStudent funded
 
-    private Unit $unit1;
-
     private Lesson $lesson1;      // free preview + has video
 
     private CourseCategory $category1;
@@ -90,8 +87,8 @@ class EndpointSmokeTest extends TestCase
         $this->course1 = $courses[0];
         $this->reviewCourse = $courses[1]; // student1 (s=1) is enrolled in courses[1] & [2]
         $this->category1 = CourseCategory::where('tenant_id', $this->t1->id)->firstOrFail();
-        $this->unit1 = Unit::where('course_id', $this->course1->id)->orderBy('id')->firstOrFail();
-        $this->lesson1 = Lesson::where('unit_id', $this->unit1->id)->orderBy('id')->firstOrFail();
+        // Units retired (VD §7): the seeder's lessons are standalone under a course.
+        $this->lesson1 = Lesson::where('course_id', $this->course1->id)->orderBy('id')->firstOrFail();
 
         // Give the free-preview lesson a ready video so playback authorize resolves.
         $video = new MediaAsset(['lesson_id' => $this->lesson1->id, 'type' => MediaType::HlsVideo->value, 'status' => 'ready', 'title' => 'v']);
@@ -119,12 +116,12 @@ class EndpointSmokeTest extends TestCase
         $ctx->forget();
     }
 
-    private function hit(string $method, string $uri, ?User $actor, array $body = [], ?string $tenant = null, array $ok = [200, 201, 202, 204], bool $tolerant = false, string $group = ''): TestResponse
+    private function hit(string $method, string $uri, ?User $actor, array $body = [], ?string $tenant = null, array $ok = [200, 201, 202, 204], bool $tolerant = false, string $group = '', array $extraHeaders = []): TestResponse
     {
         if ($actor !== null) {
             Sanctum::actingAs($actor);
         }
-        $headers = $tenant !== null ? ['X-Tenant' => $tenant] : [];
+        $headers = ($tenant !== null ? ['X-Tenant' => $tenant] : []) + $extraHeaders;
         $res = $this->withHeaders($headers)->json($method, $uri, $body);
         $status = $res->getStatusCode();
 
@@ -217,46 +214,47 @@ class EndpointSmokeTest extends TestCase
         $this->hit('PUT', "/api/v1/teacher/categories/{$catId}", $t, ['name' => 'Smoke Cat 2'], $T, group: 'Catalog');
         $this->hit('DELETE', "/api/v1/teacher/categories/{$catId}", $t, [], $T, group: 'Catalog');
 
-        $this->hit('GET', '/api/v1/teacher/courses', $t, [], $T, group: 'Catalog');
-        $cRes = $this->hit('POST', '/api/v1/teacher/courses', $t, ['title' => 'Throwaway Course', 'visibility' => 'visible'], $T, group: 'Catalog');
-        $cUuid = $this->pick($cRes, 'data.uuid');
-        $this->hit('GET', "/api/v1/teacher/courses/{$this->course1->uuid}", $t, [], $T, group: 'Catalog');
-        $this->hit('PUT', "/api/v1/teacher/courses/{$cUuid}", $t, ['title' => 'Throwaway 2'], $T, group: 'Catalog');
+        // Course + unit teacher CRUD is retired (VD §7 / VD-D1b) — packages replace
+        // them; the public catalogue GET /courses stays (exercised below).
 
-        $this->hit('GET', "/api/v1/teacher/courses/{$this->course1->uuid}/units", $t, [], $T, group: 'Catalog');
-        $uRes = $this->hit('POST', "/api/v1/teacher/courses/{$cUuid}/units", $t, ['title' => 'Throwaway Unit'], $T, group: 'Catalog');
-        $uId = $this->pick($uRes, 'data.id');
-        $this->hit('PUT', "/api/v1/teacher/courses/{$cUuid}/units/{$uId}", $t, ['title' => 'U2'], $T, group: 'Catalog');
+        // Standalone lessons (VD change set §7/§8) are year-scoped: create a year,
+        // then carry X-Academic-Year on every lesson authoring call.
+        $yRes = $this->hit('POST', '/api/v1/teacher/academic-years', $t, ['name' => 'Smoke Year'], $T, group: 'Catalog');
+        $yHdr = ['X-Academic-Year' => (string) $this->pick($yRes, 'data.id')];
 
-        $this->hit('GET', "/api/v1/teacher/units/{$uId}/lessons", $t, [], $T, group: 'Catalog');
-        $lRes = $this->hit('POST', "/api/v1/teacher/units/{$uId}/lessons", $t, ['title' => 'Throwaway Lesson'], $T, group: 'Catalog');
+        $this->hit('GET', '/api/v1/teacher/lessons', $t, [], $T, group: 'Catalog', extraHeaders: $yHdr);
+        $lRes = $this->hit('POST', '/api/v1/teacher/lessons', $t, ['name' => 'Throwaway Lesson', 'access_mode' => 'both'], $T, group: 'Catalog', extraHeaders: $yHdr);
         $lId = $this->pick($lRes, 'data.id');
-        $this->hit('PUT', "/api/v1/teacher/units/{$uId}/lessons/{$lId}", $t, ['title' => 'L2'], $T, group: 'Catalog');
+        $this->hit('PUT', "/api/v1/teacher/lessons/{$lId}", $t, ['name' => 'L2'], $T, group: 'Catalog', extraHeaders: $yHdr);
 
         $this->hit('GET', "/api/v1/teacher/lessons/{$lId}/attachments", $t, [], $T, group: 'Catalog');
         $aRes = $this->hit('POST', "/api/v1/teacher/lessons/{$lId}/attachments", $t, ['type' => 'link', 'title' => 'Ref', 'url' => 'https://ex.com/a.pdf'], $T, group: 'Catalog');
         $aUuid = $this->pick($aRes, 'data.uuid');
         $this->hit('DELETE', "/api/v1/teacher/lessons/{$lId}/attachments/{$aUuid}", $t, [], $T, ok: [200, 204], group: 'Catalog');
 
-        // delete throwaway lesson/unit/course
-        $this->hit('DELETE', "/api/v1/teacher/units/{$uId}/lessons/{$lId}", $t, [], $T, ok: [200, 204], group: 'Catalog');
-        $this->hit('DELETE', "/api/v1/teacher/courses/{$cUuid}/units/{$uId}", $t, [], $T, ok: [200, 204], group: 'Catalog');
-        $this->hit('DELETE', "/api/v1/teacher/courses/{$cUuid}", $t, [], $T, ok: [200, 204], group: 'Catalog');
+        // Content packages (VD change set §7/§8) — year-scoped teacher CRUD. These
+        // replace the retired course/unit/bundle grouping. Attach coverage lives in
+        // ContentPackageTest; here we smoke the CRUD surface + one lesson attach.
+        $this->hit('GET', '/api/v1/teacher/content-packages', $t, [], $T, group: 'Catalog', extraHeaders: $yHdr);
+        $pRes = $this->hit('POST', '/api/v1/teacher/content-packages', $t, ['name' => 'Smoke Package', 'access_mode' => 'both'], $T, ok: [200, 201], group: 'Catalog', extraHeaders: $yHdr);
+        $pId = $this->pick($pRes, 'data.id');
+        if ($pId) {
+            $this->hit('GET', "/api/v1/teacher/content-packages/{$pId}", $t, [], $T, group: 'Catalog', extraHeaders: $yHdr);
+            $this->hit('PUT', "/api/v1/teacher/content-packages/{$pId}", $t, ['name' => 'Smoke Package 2'], $T, group: 'Catalog', extraHeaders: $yHdr);
+            $iRes = $this->hit('POST', "/api/v1/teacher/content-packages/{$pId}/items", $t, ['item_type' => 'lesson', 'item_id' => $lId], $T, ok: [200, 201], group: 'Catalog', extraHeaders: $yHdr);
+            $iId = $this->pick($iRes, 'data.id');
+            if ($iId) {
+                $this->hit('PUT', "/api/v1/teacher/content-packages/{$pId}/items/reorder", $t, ['order' => [$iId]], $T, group: 'Catalog', extraHeaders: $yHdr);
+                $this->hit('DELETE', "/api/v1/teacher/content-packages/{$pId}/items/{$iId}", $t, [], $T, ok: [200, 204], group: 'Catalog', extraHeaders: $yHdr);
+            }
+            $this->hit('DELETE', "/api/v1/teacher/content-packages/{$pId}", $t, [], $T, ok: [200, 204], group: 'Catalog', extraHeaders: $yHdr);
+        }
 
-        // packages/bundles: public browse + teacher CRUD (throwaway)
-        $this->hit('GET', '/api/v1/bundles', null, [], $T, group: 'Catalog');
-        $this->hit('GET', '/api/v1/teacher/bundles', $t, [], $T, group: 'Catalog');
-        $bRes = $this->hit('POST', '/api/v1/teacher/bundles', $t, ['title' => 'Smoke Package', 'price_minor' => 5000, 'visibility' => 'visible', 'purchase_enabled' => true, 'items' => [['type' => 'course', 'course' => $this->course1->uuid]]], $T, ok: [200, 201], group: 'Catalog');
-        $bUuid = $this->pick($bRes, 'data.uuid');
-        $bSlug = $this->pick($bRes, 'data.slug');
-        if ($bSlug) {
-            $this->hit('GET', "/api/v1/bundles/{$bSlug}", null, [], $T, group: 'Catalog');
-        }
-        if ($bUuid) {
-            $this->hit('GET', "/api/v1/teacher/bundles/{$bUuid}", $t, [], $T, group: 'Catalog');
-            $this->hit('PUT', "/api/v1/teacher/bundles/{$bUuid}", $t, ['title' => 'Smoke Package 2'], $T, group: 'Catalog');
-            $this->hit('DELETE', "/api/v1/teacher/bundles/{$bUuid}", $t, [], $T, ok: [200, 204], group: 'Catalog');
-        }
+        // Public catalogue (kept): browse the resolved tenant's published courses.
+        $this->hit('GET', '/api/v1/courses', null, [], $T, group: 'Catalog');
+
+        // delete throwaway lesson
+        $this->hit('DELETE', "/api/v1/teacher/lessons/{$lId}", $t, [], $T, ok: [200, 204], group: 'Catalog', extraHeaders: $yHdr);
 
         // ---------------------------------------------------------------
         // MEDIA

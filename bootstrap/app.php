@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\ResolveAcademicYear;
 use App\Modules\Identity\Http\Middleware\EnsureActiveMembership;
 use App\Modules\Identity\Http\Middleware\EnsurePermission;
 use App\Modules\Identity\Http\Middleware\EnsureTenantRole;
@@ -37,6 +38,9 @@ return Application::configure(basePath: dirname(__DIR__))
             // Pins the platform-admin console to a central/admin host — /admin/*
             // must never answer on a teacher academy's domain.
             'central' => EnsureCentralHost::class,
+            // Resolves the X-Academic-Year header into AcademicYearContext so
+            // content queries scope to a year. Mount on tenant-scoped routes only.
+            'academic-year' => ResolveAcademicYear::class,
         ]);
 
         // `tenant` is a GROUP, not an alias: the domain gate runs first (rejects
@@ -69,6 +73,15 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prependToPriorityList(
             ResolveTenant::class,
             EnsureRegisteredDomain::class,
+        );
+
+        // Same reasoning for the academic year: resolve X-Academic-Year (after the
+        // tenant, since the year lookup is tenant-scoped) BEFORE route-model
+        // binding, so a {lesson} from another year is filtered out → 404. The
+        // year-isolation test guards this.
+        $middleware->prependToPriorityList(
+            SubstituteBindings::class,
+            ResolveAcademicYear::class,
         );
     })
     ->withExceptions(function (Exceptions $exceptions): void {

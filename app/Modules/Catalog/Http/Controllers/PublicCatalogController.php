@@ -37,8 +37,9 @@ class PublicCatalogController
 
         $course->load([
             'category',
-            'units' => fn ($q) => $q->published()->orderBy('sort_order')
-                ->with(['lessons' => fn ($l) => $l->published()->orderBy('sort_order')]),
+            // Units retired (VD §7): the course's published lessons are loaded
+            // directly (those still linked by lesson.course_id).
+            'lessons' => fn ($q) => $q->published()->orderBy('sort_order'),
         ]);
 
         return new CourseDetailResource($course);

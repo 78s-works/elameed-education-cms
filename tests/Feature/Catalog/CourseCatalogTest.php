@@ -4,9 +4,9 @@ namespace Tests\Feature\Catalog;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
-use App\Modules\Catalog\Models\Unit;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
@@ -20,6 +20,11 @@ use Illuminate\Support\Facades\Cache;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
+/**
+ * Public course catalogue + lesson media relations. Teacher course/unit authoring
+ * is retired (VD §7 / VD-D1b — packages replace them), so courses are created
+ * directly here; only the public GET /courses surface remains an endpoint.
+ */
 class CourseCatalogTest extends TestCase
 {
     use RefreshDatabase;
@@ -63,6 +68,15 @@ class CourseCatalogTest extends TestCase
         return $course;
     }
 
+    private function makeLesson(Tenant $tenant, Course $course, array $attrs = []): Lesson
+    {
+        $lesson = new Lesson(array_merge(['course_id' => $course->id, 'title' => 'L'], $attrs));
+        $lesson->tenant_id = $tenant->id;
+        $lesson->save();
+
+        return $lesson;
+    }
+
     public function test_lesson_has_many_assets_and_one_video(): void
     {
         $tenant = $this->makeTenant('demo');
@@ -70,12 +84,7 @@ class CourseCatalogTest extends TestCase
         $h = ['X-Tenant' => 'demo'];
 
         $course = $this->makeCourse($tenant, ['visibility' => ContentVisibility::Visible->value]);
-        $unit = new Unit(['course_id' => $course->id, 'title' => 'U']);
-        $unit->tenant_id = $tenant->id;
-        $unit->save();
-        $lesson = new Lesson(['unit_id' => $unit->id, 'course_id' => $course->id, 'title' => 'L']);
-        $lesson->tenant_id = $tenant->id;
-        $lesson->save();
+        $lesson = $this->makeLesson($tenant, $course);
 
         // The ONE video (also carries lesson_id, like the real upload flow).
         $video = new MediaAsset(['lesson_id' => $lesson->id, 'type' => MediaType::HlsVideo->value, 'status' => 'ready', 'title' => 'vid']);
@@ -93,65 +102,32 @@ class CourseCatalogTest extends TestCase
         $this->assertSame($video->id, $lesson->video->id);
 
         // API: the lesson exposes `video` (one) separately from `attachments` (many).
-        $row = $this->withHeaders($h)->getJson("/api/v1/teacher/units/{$unit->id}/lessons")->assertOk()->json('data.0');
+        // Lessons are standalone now — read via the year-scoped show endpoint.
+        $year = AcademicYear::where('tenant_id', $tenant->id)->firstOrFail();
+        $row = $this->withHeaders($h + ['X-Academic-Year' => $year->uuid])
+            ->getJson("/api/v1/teacher/lessons/{$lesson->id}")->assertOk()->json('data');
         $this->assertTrue($row['has_video']);
         $this->assertSame('hls_video', $row['video']['type']);
         $this->assertCount(1, $row['attachments']);
         $this->assertNotContains('hls_video', array_column($row['attachments'], 'type'));
     }
 
-    public function test_teacher_can_create_course_and_build_structure(): void
+    public function test_course_descriptive_fields_show_in_public_detail(): void
     {
         $tenant = $this->makeTenant('demo');
-        Sanctum::actingAs($this->makeTeacher($tenant));
         $h = ['X-Tenant' => 'demo'];
 
-        // Create course
-        $course = $this->withHeaders($h)->postJson('/api/v1/teacher/courses', [
-            'title' => 'Algebra 101',
-            'price_minor' => 15000,
-            'visibility' => 'visible',
-        ])->assertStatus(201)->assertJsonPath('data.title', 'Algebra 101')->json('data');
-
-        $uuid = $course['uuid'];
-        $this->assertNotEmpty($course['slug']);
-
-        // Add a unit
-        $unit = $this->withHeaders($h)->postJson("/api/v1/teacher/courses/{$uuid}/units", [
-            'title' => 'Chapter 1',
-        ])->assertStatus(201)->json('data');
-
-        // Add a lesson under the unit — its course_id is inherited from the unit
-        $this->withHeaders($h)->postJson("/api/v1/teacher/units/{$unit['id']}/lessons", [
-            'title' => 'Lesson 1',
-            'is_free_preview' => true,
-        ])->assertStatus(201)
-            ->assertJsonPath('data.is_free_preview', true)
-            ->assertJsonPath('data.course_id', $unit['course_id']);
-    }
-
-    public function test_course_descriptive_fields_persist_and_show_in_public_detail(): void
-    {
-        $tenant = $this->makeTenant('demo');
-        Sanctum::actingAs($this->makeTeacher($tenant));
-        $h = ['X-Tenant' => 'demo'];
-
-        $slug = $this->withHeaders($h)->postJson('/api/v1/teacher/courses', [
-            'title' => 'Physics',
+        $course = $this->makeCourse($tenant, [
             'subtitle' => 'Mechanics for beginners',
-            'visibility' => 'visible',
             'learning_outcomes' => ['Understand forces', 'Solve motion problems'],
             'requirements' => ['Basic algebra'],
             'audience' => ['Grade 10 students'],
             'parts' => [['title' => 'Kinematics', 'lessons_count' => 6, 'duration_min' => 90]],
             'promo_video_url' => 'https://youtu.be/demo',
-        ])->assertStatus(201)
-            ->assertJsonPath('data.subtitle', 'Mechanics for beginners')
-            ->assertJsonPath('data.promo_video_url', 'https://youtu.be/demo')
-            ->json('data.slug');
+        ]);
 
         // Public course detail exposes the rich marketing fields.
-        $this->withHeaders($h)->getJson("/api/v1/courses/{$slug}")
+        $this->withHeaders($h)->getJson("/api/v1/courses/{$course->slug}")
             ->assertOk()
             ->assertJsonPath('data.subtitle', 'Mechanics for beginners')
             ->assertJsonPath('data.learning_outcomes.0', 'Understand forces')
@@ -162,92 +138,21 @@ class CourseCatalogTest extends TestCase
     public function test_course_has_its_own_thumbnail_distinct_from_cover(): void
     {
         $tenant = $this->makeTenant('demo');
-        Sanctum::actingAs($this->makeTeacher($tenant));
         $h = ['X-Tenant' => 'demo'];
 
-        $slug = $this->withHeaders($h)->postJson('/api/v1/teacher/courses', [
-            'title' => 'Physics',
-            'visibility' => 'visible',
+        $course = $this->makeCourse($tenant, [
             'cover_url' => 'https://cdn.example.com/cover.jpg',
             'thumbnail_url' => 'https://cdn.example.com/thumb.jpg',
-        ])->assertStatus(201)
-            ->assertJsonPath('data.cover_url', 'https://cdn.example.com/cover.jpg')
-            ->assertJsonPath('data.thumbnail_url', 'https://cdn.example.com/thumb.jpg')
-            ->json('data.slug');
+        ]);
 
         // Public catalogue card + detail both expose the course's own thumbnail.
         $this->withHeaders($h)->getJson('/api/v1/courses')
             ->assertOk()
             ->assertJsonPath('data.0.thumbnail_url', 'https://cdn.example.com/thumb.jpg');
 
-        $this->withHeaders($h)->getJson("/api/v1/courses/{$slug}")
+        $this->withHeaders($h)->getJson("/api/v1/courses/{$course->slug}")
             ->assertOk()
             ->assertJsonPath('data.thumbnail_url', 'https://cdn.example.com/thumb.jpg');
-    }
-
-    public function test_thumbnail_url_must_be_a_valid_url(): void
-    {
-        $tenant = $this->makeTenant('demo');
-        Sanctum::actingAs($this->makeTeacher($tenant));
-
-        $this->withHeaders(['X-Tenant' => 'demo'])->postJson('/api/v1/teacher/courses', [
-            'title' => 'Bad thumb',
-            'thumbnail_url' => 'not-a-url',
-        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
-    }
-
-    public function test_arabic_title_gets_usable_slug(): void
-    {
-        $tenant = $this->makeTenant('demo');
-        Sanctum::actingAs($this->makeTeacher($tenant));
-
-        $slug = $this->withHeaders(['X-Tenant' => 'demo'])->postJson('/api/v1/teacher/courses', [
-            'title' => 'الرياضيات', // no ASCII → fallback slug
-        ])->assertStatus(201)->json('data.slug');
-
-        $this->assertNotEmpty($slug);
-        $this->assertMatchesRegularExpression('/^[a-z0-9-]+$/', $slug);
-    }
-
-    public function test_student_cannot_manage_courses(): void
-    {
-        $tenant = $this->makeTenant('demo');
-        $student = User::factory()->create();
-        TenantUser::create([
-            'tenant_id' => $tenant->id, 'user_id' => $student->id,
-            'role' => TenantUserRole::Student->value, 'status' => MembershipStatus::Active->value,
-        ]);
-        Sanctum::actingAs($student);
-
-        $this->withHeaders(['X-Tenant' => 'demo'])->postJson('/api/v1/teacher/courses', [
-            'title' => 'Nope',
-        ])->assertStatus(403);
-    }
-
-    /**
-     * Cross-tenant isolation — the sole guard on MySQL. A teacher of tenant A
-     * cannot reach tenant B's course even with its exact uuid (route binding is
-     * tenant-scoped → 404).
-     */
-    public function test_cross_tenant_course_access_is_404(): void
-    {
-        $tenantA = $this->makeTenant('alpha');
-        $tenantB = $this->makeTenant('beta');
-        $teacherA = $this->makeTeacher($tenantA);
-        $courseB = $this->makeCourse($tenantB, ['title' => 'B Secret']);
-
-        Sanctum::actingAs($teacherA);
-
-        // Teacher A, on tenant A's host, requesting tenant B's course uuid.
-        $this->withHeaders(['X-Tenant' => 'alpha'])
-            ->getJson("/api/v1/teacher/courses/{$courseB->uuid}")
-            ->assertStatus(404);
-
-        $this->withHeaders(['X-Tenant' => 'alpha'])
-            ->putJson("/api/v1/teacher/courses/{$courseB->uuid}", ['title' => 'hacked'])
-            ->assertStatus(404);
-
-        $this->assertSame('B Secret', $courseB->fresh()->title);
     }
 
     public function test_public_catalogue_shows_only_published_courses_of_the_tenant(): void
@@ -271,11 +176,27 @@ class CourseCatalogTest extends TestCase
     public function test_public_course_detail_404_for_hidden_course(): void
     {
         $tenant = $this->makeTenant('demo');
-        $hidden = $this->makeCourse($tenant, ['visibility' => ContentVisibility::Hidden->value, 'slug' => 'hidden-course']);
+        $this->makeCourse($tenant, ['visibility' => ContentVisibility::Hidden->value, 'slug' => 'hidden-course']);
 
         $this->withHeaders(['X-Tenant' => 'demo'])
             ->getJson('/api/v1/courses/hidden-course')
             ->assertStatus(404);
+    }
+
+    public function test_public_course_detail_lists_its_published_lessons(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $h = ['X-Tenant' => 'demo'];
+
+        $course = $this->makeCourse($tenant, ['slug' => 'phys-101']);
+        $this->makeLesson($tenant, $course, ['title' => 'Intro', 'sort_order' => 0, 'visibility' => ContentVisibility::Visible->value]);
+        $this->makeLesson($tenant, $course, ['title' => 'Hidden', 'sort_order' => 1, 'visibility' => ContentVisibility::Hidden->value]);
+
+        // Units retired → the detail exposes a flat, published lessons list.
+        $this->withHeaders($h)->getJson('/api/v1/courses/phys-101')
+            ->assertOk()
+            ->assertJsonCount(1, 'data.lessons')
+            ->assertJsonPath('data.lessons.0.title', 'Intro');
     }
 
     public function test_attachment_link_can_be_added_to_a_lesson(): void
@@ -287,8 +208,7 @@ class CourseCatalogTest extends TestCase
         // Set the tenant context so BelongsToTenant auto-fills tenant_id on create.
         app(TenantContext::class)->setTenant($tenant);
         $course = $this->makeCourse($tenant);
-        $unit = $course->units()->create(['title' => 'U1']);
-        $lesson = $unit->lessons()->create(['title' => 'L1', 'course_id' => $course->id]);
+        $lesson = $this->makeLesson($tenant, $course, ['title' => 'L1']);
 
         $this->withHeaders($h)->postJson("/api/v1/teacher/lessons/{$lesson->id}/attachments", [
             'type' => 'link',

@@ -6,7 +6,6 @@ use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
-use App\Modules\Catalog\Models\Unit;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -77,11 +76,7 @@ class YoutubeLessonTest extends TestCase
         $course->slug = 'c-'.uniqid();
         $course->save();
 
-        $unit = new Unit(['course_id' => $course->id, 'title' => 'U']);
-        $unit->tenant_id = $this->tenant->id;
-        $unit->save();
-
-        $lesson = new Lesson(array_merge(['unit_id' => $unit->id, 'course_id' => $course->id, 'title' => 'L'], $lessonAttrs));
+        $lesson = new Lesson(array_merge(['course_id' => $course->id, 'title' => 'L'], $lessonAttrs));
         $lesson->tenant_id = $this->tenant->id;
         $lesson->save();
 
@@ -103,10 +98,10 @@ class YoutubeLessonTest extends TestCase
     {
         Sanctum::actingAs($this->teacher());
         $lesson = $this->makeLesson();
-        $h = ['X-Tenant' => 'demo'];
+        $h = ['X-Tenant' => 'demo', 'X-Academic-Year' => $lesson->academicYear->uuid];
 
-        $this->withHeaders($h)->putJson("/api/v1/teacher/units/{$lesson->unit_id}/lessons/{$lesson->id}", [
-            'title' => 'L',
+        $this->withHeaders($h)->putJson("/api/v1/teacher/lessons/{$lesson->id}", [
+            'name' => 'L',
             'youtube_url' => self::URL,
             'active_video_source' => 'youtube',
         ])->assertOk()
@@ -122,9 +117,9 @@ class YoutubeLessonTest extends TestCase
         Sanctum::actingAs($this->teacher());
         $lesson = $this->makeLesson();
 
-        $this->withHeaders(['X-Tenant' => 'demo'])
-            ->putJson("/api/v1/teacher/units/{$lesson->unit_id}/lessons/{$lesson->id}", [
-                'title' => 'L',
+        $this->withHeaders(['X-Tenant' => 'demo', 'X-Academic-Year' => $lesson->academicYear->uuid])
+            ->putJson("/api/v1/teacher/lessons/{$lesson->id}", [
+                'name' => 'L',
                 'active_video_source' => 'youtube',
             ])->assertStatus(422)
             ->assertJsonPath('error.code', 'validation_error');
@@ -135,9 +130,9 @@ class YoutubeLessonTest extends TestCase
         Sanctum::actingAs($this->teacher());
         $lesson = $this->makeLesson();
 
-        $this->withHeaders(['X-Tenant' => 'demo'])
-            ->putJson("/api/v1/teacher/units/{$lesson->unit_id}/lessons/{$lesson->id}", [
-                'title' => 'L',
+        $this->withHeaders(['X-Tenant' => 'demo', 'X-Academic-Year' => $lesson->academicYear->uuid])
+            ->putJson("/api/v1/teacher/lessons/{$lesson->id}", [
+                'name' => 'L',
                 'youtube_url' => 'https://vimeo.com/12345',
             ])->assertStatus(422)
             ->assertJsonPath('error.code', 'validation_error');
@@ -218,8 +213,8 @@ class YoutubeLessonTest extends TestCase
 
         $res = $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/courses/{$slug}")
             ->assertOk()
-            ->assertJsonPath('data.units.0.lessons.0.has_video', true)
-            ->assertJsonPath('data.units.0.lessons.0.active_video_source', 'youtube');
+            ->assertJsonPath('data.lessons.0.has_video', true)
+            ->assertJsonPath('data.lessons.0.active_video_source', 'youtube');
 
         // The raw YouTube URL is NEVER in the public outline — it's released only
         // through the enrollment-gated playback endpoint.

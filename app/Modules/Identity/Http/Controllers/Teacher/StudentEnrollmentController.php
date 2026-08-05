@@ -6,7 +6,6 @@ use App\Models\User;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
-use App\Modules\Catalog\Models\Unit;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Modules\Commerce\Models\Enrollment;
@@ -19,8 +18,9 @@ use Illuminate\Http\Response;
 
 /**
  * A teacher granting/revoking a student's access directly (no payment) — e.g.
- * offline/center students. A grant can target a whole course, a unit, a single
- * lesson, or a single exam (doc 11 R7). Manual enrollments are source=manual.
+ * offline/center students. A grant can target a whole course, a single lesson,
+ * or a single exam (doc 11 R7). Manual enrollments are source=manual. (Unit
+ * grants retired — Unit removed, VD §7.)
  */
 class StudentEnrollmentController
 {
@@ -65,7 +65,6 @@ class StudentEnrollmentController
         $userId = (int) $student->getKey();
 
         $enrollment = match ($type) {
-            'unit' => $this->enrollments->grantUnit($tenantId, $userId, $this->findUnit($target), EnrollmentSource::Manual),
             'lesson' => $this->enrollments->grantLesson($tenantId, $userId, $this->findLesson($target), EnrollmentSource::Manual),
             'exam' => $this->enrollments->grantExam($tenantId, $userId, $this->findExam($target), EnrollmentSource::Manual),
             default => $this->enrollments->grantCourse($tenantId, $userId, $this->findCourse($target), EnrollmentSource::Manual),
@@ -85,14 +84,6 @@ class StudentEnrollmentController
         abort_if($course === null, 404, 'Course not found in this academy.');
 
         return $course;
-    }
-
-    private function findUnit(?string $id): Unit
-    {
-        $unit = Unit::query()->find((int) $id);
-        abort_if($unit === null, 404, 'Unit not found in this academy.');
-
-        return $unit;
     }
 
     private function findLesson(?string $id): Lesson

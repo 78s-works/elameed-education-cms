@@ -4,11 +4,12 @@ namespace Tests\Feature\Catalog;
 
 use App\Models\User;
 use App\Modules\Assessment\Models\Exam;
+use App\Modules\Catalog\Enums\ContentAccessTarget;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonSection;
-use App\Modules\Catalog\Models\Unit;
+use App\Modules\Catalog\Services\ContentAccessOverrideService;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -23,14 +24,22 @@ use Tests\TestCase;
 
 /**
  * Gap 1 — manual teacher/assistant access overrides: a staff grant lets one
- * student open a locked lesson/section/unit, bypassing unmet dependencies. Revoke
+ * student open a locked lesson/section, bypassing unmet dependencies. Revoke
  * restores the gate. Grant/revoke are audit-logged.
+ *
+ * Units are retired (VD §7): lessons are grouped by the dormant `unit_id` column
+ * (synthetic ids here). Unit-target overrides can no longer be CREATED via the API
+ * (that path 422s), but the service still honours an existing unit override over
+ * the dormant column — the last test grants one directly to prove that coverage.
  */
 class ContentAccessOverrideTest extends TestCase
 {
     use RefreshDatabase;
 
     private Tenant $tenant;
+
+    /** Hands out synthetic unit-group ids (no units table any more). */
+    private int $unitSeq = 0;
 
     protected function setUp(): void
     {
@@ -60,18 +69,15 @@ class ContentAccessOverrideTest extends TestCase
         return $course;
     }
 
-    private function unit(Course $course, int $sort): Unit
+    /** A synthetic "unit" group id — a value for the dormant lessons.unit_id column. */
+    private function unit(): int
     {
-        $unit = new Unit(['course_id' => $course->id, 'title' => "U{$sort}", 'sort_order' => $sort]);
-        $unit->tenant_id = $this->tenant->id;
-        $unit->save();
-
-        return $unit;
+        return ++$this->unitSeq;
     }
 
-    private function lesson(Unit $unit, int $sort): Lesson
+    private function lesson(Course $course, int $unitId, int $sort): Lesson
     {
-        $lesson = new Lesson(['unit_id' => $unit->id, 'course_id' => $unit->course_id, 'title' => "L{$sort}", 'sort_order' => $sort]);
+        $lesson = new Lesson(['unit_id' => $unitId, 'course_id' => $course->id, 'title' => "L{$sort}", 'sort_order' => $sort]);
         $lesson->tenant_id = $this->tenant->id;
         $lesson->save();
 
@@ -112,13 +118,13 @@ class ContentAccessOverrideTest extends TestCase
         $teacher = $this->member(TenantUserRole::Teacher);
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
-        $unit = $this->unit($course, 0);
-        $l1 = $this->lesson($unit, 0);
-        $l2 = $this->lesson($unit, 1);
+        $unit = $this->unit();
+        $l1 = $this->lesson($course, $unit, 0);
+        $l2 = $this->lesson($course, $unit, 1);
         $this->enroll($student, $course);
 
         // L1 carries a published quiz → L2 is locked until it's submitted.
-        $this->exam($course->id, ['type' => 'lesson_quiz', 'unit_id' => $unit->id, 'lesson_id' => $l1->id]);
+        $this->exam($course->id, ['type' => 'lesson_quiz', 'unit_id' => $unit, 'lesson_id' => $l1->id]);
 
         Sanctum::actingAs($student);
         $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2->id}/sections")->assertStatus(423);
@@ -161,12 +167,12 @@ class ContentAccessOverrideTest extends TestCase
         $teacher = $this->member(TenantUserRole::Teacher);
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
-        $unit = $this->unit($course, 0);
-        $lesson = $this->lesson($unit, 0);
+        $unit = $this->unit();
+        $lesson = $this->lesson($course, $unit, 0);
         $this->enroll($student, $course);
 
         // A quiz + its solution video — the solution is hidden until the quiz is submitted.
-        $this->exam($course->id, ['type' => 'lesson_quiz', 'unit_id' => $unit->id, 'lesson_id' => $lesson->id]);
+        $this->exam($course->id, ['type' => 'lesson_quiz', 'unit_id' => $unit, 'lesson_id' => $lesson->id]);
         $solution = $this->section($lesson, ['type' => 'quiz_solution', 'media_asset_id' => 1, 'sort_order' => 0]);
 
         Sanctum::actingAs($student);
@@ -188,31 +194,30 @@ class ContentAccessOverrideTest extends TestCase
             ->assertJsonPath('data.0.locked', false);
     }
 
-    // ---- unit-level override covers every lesson under it -----------------------
+    // ---- unit-level override still covers lessons under it (dormant column) ------
 
     public function test_unit_override_covers_a_locked_lesson_in_that_unit(): void
     {
         $teacher = $this->member(TenantUserRole::Teacher);
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
-        $unit = $this->unit($course, 0);
-        $l1 = $this->lesson($unit, 0);
-        $l2 = $this->lesson($unit, 1); // second lesson — gated by L1's quiz
+        $unit = $this->unit();
+        $l1 = $this->lesson($course, $unit, 0);
+        $l2 = $this->lesson($course, $unit, 1); // second lesson — gated by L1's quiz
         $this->enroll($student, $course);
 
         // L1 has an unsubmitted quiz → L2 is progression-locked.
-        $this->exam($course->id, ['type' => 'lesson_quiz', 'unit_id' => $unit->id, 'lesson_id' => $l1->id]);
+        $this->exam($course->id, ['type' => 'lesson_quiz', 'unit_id' => $unit, 'lesson_id' => $l1->id]);
 
         Sanctum::actingAs($student);
         $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2->id}/sections")->assertStatus(423);
 
-        // A unit override on the unit opens its lessons.
-        Sanctum::actingAs($teacher);
-        $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/students/{$student->uuid}/content-overrides", [
-                'target_type' => 'unit', 'target_id' => $unit->id,
-            ])
-            ->assertCreated();
+        // Unit-target overrides can no longer be created through the API (Unit
+        // retired) — but an existing one over the dormant unit_id still opens the
+        // unit's lessons. Grant it directly through the service.
+        app(ContentAccessOverrideService::class)->grant(
+            $this->tenant->id, $student->id, ContentAccessTarget::Unit, $unit, $teacher->id, null,
+        );
 
         Sanctum::actingAs($student);
         $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/lessons/{$l2->id}/sections")->assertOk();

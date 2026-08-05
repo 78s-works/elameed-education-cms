@@ -8,7 +8,6 @@ use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonAccessWindow;
 use App\Modules\Catalog\Models\LessonSection;
-use App\Modules\Catalog\Models\Unit;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -63,24 +62,11 @@ class LessonContentModelTest extends TestCase
         $course->slug = 'c-'.uniqid();
         $course->save();
 
-        $unit = new Unit(['course_id' => $course->id, 'title' => 'U']);
-        $unit->tenant_id = $this->tenant->id;
-        $unit->save();
-
-        $lesson = new Lesson(['unit_id' => $unit->id, 'course_id' => $course->id, 'title' => 'L']);
+        $lesson = new Lesson(['course_id' => $course->id, 'title' => 'L']);
         $lesson->tenant_id = $this->tenant->id;
         $lesson->save();
 
         return $lesson->fresh();
-    }
-
-    private function pdfAsset(): MediaAsset
-    {
-        $asset = new MediaAsset(['type' => MediaType::Pdf->value, 'status' => MediaStatus::Ready->value, 'title' => 'Answer sheet']);
-        $asset->tenant_id = $this->tenant->id;
-        $asset->save();
-
-        return $asset;
     }
 
     /** @param array<string, mixed> $attrs */
@@ -94,87 +80,12 @@ class LessonContentModelTest extends TestCase
     }
 
     // ---- Task 1: Flexible Lesson Content Structure ----------------------------
-
-    public function test_teacher_creates_typed_sections(): void
-    {
-        $teacher = $this->member(TenantUserRole::Teacher);
-        $lesson = $this->lesson();
-        $pdf = $this->pdfAsset();
-
-        Sanctum::actingAs($teacher);
-
-        $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", [
-                'type' => 'pdf', 'title' => 'Notes', 'media_asset_id' => $pdf->id, 'pdf_kind' => 'lecture_notes', 'sort_order' => 1,
-            ])
-            ->assertCreated()
-            ->assertJsonPath('data.type', 'pdf')
-            ->assertJsonPath('data.pdf_kind', 'lecture_notes');
-
-        $this->assertDatabaseHas('lesson_sections', ['lesson_id' => $lesson->id, 'type' => 'pdf', 'pdf_kind' => 'lecture_notes']);
-    }
-
-    public function test_pdf_section_requires_media_and_rejects_pdf_kind_on_non_pdf(): void
-    {
-        $teacher = $this->member(TenantUserRole::Teacher);
-        $lesson = $this->lesson();
-        Sanctum::actingAs($teacher);
-
-        // pdf without media_asset_id → 422
-        $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'pdf'])
-            ->assertStatus(422);
-
-        // pdf_kind on a video section → 422
-        $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'lecture_video', 'media_asset_id' => 1, 'pdf_kind' => 'lecture_notes'])
-            ->assertStatus(422);
-    }
-
-    public function test_video_section_accepts_a_youtube_link_without_an_uploaded_asset(): void
-    {
-        $teacher = $this->member(TenantUserRole::Teacher);
-        $lesson = $this->lesson();
-        Sanctum::actingAs($teacher);
-
-        $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", [
-                'type' => 'lecture_video', 'title' => 'Explain', 'youtube_url' => 'https://youtu.be/dQw4w9WgXcQ', 'sort_order' => 1,
-            ])
-            ->assertCreated()
-            ->assertJsonPath('data.type', 'lecture_video')
-            ->assertJsonPath('data.youtube_url', 'https://youtu.be/dQw4w9WgXcQ')
-            ->assertJsonPath('data.media_asset_id', null);
-
-        $this->assertDatabaseHas('lesson_sections', [
-            'lesson_id' => $lesson->id, 'type' => 'lecture_video', 'youtube_url' => 'https://youtu.be/dQw4w9WgXcQ',
-        ]);
-    }
-
-    public function test_video_section_rejects_missing_media_and_youtube_and_bad_links(): void
-    {
-        $teacher = $this->member(TenantUserRole::Teacher);
-        $lesson = $this->lesson();
-        Sanctum::actingAs($teacher);
-
-        // Neither an uploaded asset nor a YouTube link → 422 (hw_solution is a video).
-        $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'hw_solution'])
-            ->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['media_asset_id']]]);
-
-        // A string that is not a YouTube link → 422.
-        $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'lecture_video', 'youtube_url' => 'https://vimeo.com/123'])
-            ->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['youtube_url']]]);
-
-        // youtube_url on a non-video section (pdf) → 422.
-        $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/teacher/lessons/{$lesson->id}/sections", ['type' => 'pdf', 'media_asset_id' => 1, 'youtube_url' => 'https://youtu.be/dQw4w9WgXcQ'])
-            ->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['youtube_url']]]);
-    }
-
-    // Solution-video gating (quiz_solution/hw_solution hidden until submit) is
-    // covered in LessonProgressionTest.
+    //
+    // Section *authoring* moved to the standalone-lesson part model (VD change set
+    // §7/§8, doc 13 Phase 3) — the create/validate cases now live in
+    // LessonAuthoringTest (typed parts video|homework|quiz, access_mode ceiling,
+    // degree/grading rules). Solution-video gating (quiz_solution/hw_solution
+    // hidden until submit) stays covered in LessonProgressionTest.
 
     // ---- Task 3 + 4: Availability, extensions, countdown, lock ----------------
 

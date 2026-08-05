@@ -8,8 +8,9 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * Public course detail (GET /courses/{slug}) — the outline a prospective student
- * sees. Exposes the published units/lessons with preview flags only; actual
- * playback is gated by enrollment + the playback-authz endpoint (Media step).
+ * sees. Exposes the published lessons with preview flags only; actual playback is
+ * gated by enrollment + the playback-authz endpoint (Media step). (Units retired,
+ * VD §7 — lessons are a flat published list now.)
  *
  * @mixin Course
  */
@@ -38,21 +39,17 @@ class CourseDetailResource extends JsonResource
                 'id' => $this->category->id,
                 'name' => $this->category->name,
             ] : null,
-            'units' => $this->units->map(fn ($unit) => [
-                'id' => $unit->id,
-                'title' => $unit->title,
-                'sort_order' => $unit->sort_order,
-                'lessons' => $unit->lessons->map(fn ($lesson) => [
-                    'id' => $lesson->id,
-                    'title' => $lesson->title,
-                    'duration_sec' => $lesson->duration_sec,
-                    'is_free_preview' => $lesson->is_free_preview,
-                    // Source-aware: true when the ACTIVE source (upload or YouTube) is set.
-                    // The name of the source is exposed, but never the YouTube URL here —
-                    // that is released only through the enrollment-gated playback endpoint.
-                    'has_video' => $lesson->hasActiveVideo(),
-                    'active_video_source' => $lesson->active_video_source?->value,
-                ])->values(),
+            'lessons' => $this->lessons->map(fn ($lesson) => [
+                'id' => $lesson->id,
+                'title' => $lesson->title,
+                'sort_order' => $lesson->sort_order,
+                'duration_sec' => $lesson->duration_sec,
+                'is_free_preview' => $lesson->is_free_preview,
+                // Source-aware: true when the ACTIVE source (upload or YouTube) is set.
+                // The name of the source is exposed, but never the YouTube URL here —
+                // that is released only through the enrollment-gated playback endpoint.
+                'has_video' => $lesson->hasActiveVideo(),
+                'active_video_source' => $lesson->active_video_source?->value,
             ])->values(),
         ];
     }

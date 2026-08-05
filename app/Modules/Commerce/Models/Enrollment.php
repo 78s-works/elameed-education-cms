@@ -3,10 +3,8 @@
 namespace App\Modules\Commerce\Models;
 
 use App\Models\User;
-use App\Modules\Catalog\Models\Bundle;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
-use App\Modules\Catalog\Models\Unit;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Support\Traits\BelongsToTenant;
@@ -15,10 +13,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * Grants a student access to a course, a unit, or a single lesson — the single
- * source of truth for access (03_Data_Model.md §5). A row carries exactly one of
- * `course_id` (whole course), `unit_id` (one chapter), or `lesson_id` (one lesson,
- * part of a course). `bundle_id` records the package the grant came from, if any.
+ * Grants a student access to a course, or a single lesson — the single source of
+ * truth for access (03_Data_Model.md §5). A row carries `course_id` (whole
+ * course), `lesson_id` (one lesson), or `exam_id`. `unit_id` / `bundle_id` are
+ * dormant columns (Unit + Bundle retired — VD change set §7); no relations remain.
  *
  * @property EnrollmentStatus $status
  * @property EnrollmentSource $source
@@ -62,11 +60,6 @@ class Enrollment extends Model
         return $this->belongsTo(Course::class);
     }
 
-    public function unit(): BelongsTo
-    {
-        return $this->belongsTo(Unit::class);
-    }
-
     public function lesson(): BelongsTo
     {
         return $this->belongsTo(Lesson::class);
@@ -75,11 +68,6 @@ class Enrollment extends Model
     public function exam(): BelongsTo
     {
         return $this->belongsTo(\App\Modules\Assessment\Models\Exam::class);
-    }
-
-    public function bundle(): BelongsTo
-    {
-        return $this->belongsTo(Bundle::class);
     }
 
     /** Active, started, and not past its access window. */

@@ -3,6 +3,7 @@
 namespace App\Modules\Assessment\Http\Controllers;
 
 use App\Modules\Assessment\Enums\AttemptStatus;
+use App\Modules\Assessment\Enums\ExamGradingMode;
 use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Enums\QuestionType;
 use App\Modules\Assessment\Http\Requests\SubmitAttemptRequest;
@@ -153,18 +154,22 @@ class AttemptController
             $attempt->answers ?? [], // keep files uploaded before submit
         );
 
+        // A bubble-sheet part with grading_mode=auto is fully machine-scored on
+        // submit — never routed to a teacher — even if the sheet somehow held a
+        // non-auto question (doc 13 Phase 7).
+        $needsManual = $exam->grading_mode === ExamGradingMode::Auto ? false : $graded['needs_manual'];
+
         $attempt->update([
             'answers' => $graded['answers'],
             'score' => $graded['score'],
             'max_score' => $graded['max_score'],
-            'needs_manual_grade' => $graded['needs_manual'],
-            'status' => $graded['needs_manual'] ? AttemptStatus::Submitted->value : AttemptStatus::Graded->value,
+            'needs_manual_grade' => $needsManual,
+            'status' => $needsManual ? AttemptStatus::Submitted->value : AttemptStatus::Graded->value,
             'submitted_at' => now(),
         ]);
 
         // Award points if fully graded on submit and passed (idempotent per exam).
-        if (! $graded['needs_manual'] && $graded['max_score'] > 0
-            && ($graded['score'] / $graded['max_score'] * 100) >= $exam->pass_percent) {
+        if (! $needsManual && $exam->passed($graded['score'], $graded['max_score']) === true) {
             $this->points->award((int) $exam->tenant_id, $request->user()->getKey(),
                 (int) config('gamification.exam_points', 20), 'exam.passed', 'exam', $exam->id);
         }
@@ -332,9 +337,7 @@ class AttemptController
         if ($scoreVisible) {
             $data['score'] = $attempt->score;
             $data['max_score'] = $attempt->max_score;
-            $data['passed'] = $attempt->max_score > 0
-                ? ($attempt->score / $attempt->max_score * 100) >= $exam->pass_percent
-                : null;
+            $data['passed'] = $exam->passed((int) $attempt->score, (int) $attempt->max_score);
 
             if ($exam->show_answers) {
                 $data['review'] = $this->review($exam, $attempt);

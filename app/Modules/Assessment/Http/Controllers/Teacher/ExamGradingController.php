@@ -59,8 +59,8 @@ class ExamGradingController
         );
 
         // Award points once the attempt is fully graded and passing.
-        if ($attempt->status->value === 'graded' && $attempt->max_score > 0
-            && ($attempt->score / $attempt->max_score * 100) >= $exam->pass_percent) {
+        if ($attempt->status->value === 'graded'
+            && $exam->passed((int) $attempt->score, (int) $attempt->max_score) === true) {
             $this->points->award((int) $exam->tenant_id, (int) $attempt->user_id,
                 (int) config('gamification.exam_points', 20), 'exam.passed', 'exam', $exam->id);
         }

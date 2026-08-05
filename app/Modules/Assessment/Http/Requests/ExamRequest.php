@@ -37,10 +37,12 @@ class ExamRequest extends FormRequest
                 'required_if:type,'.ExamType::LessonQuiz->value.','.ExamType::Homework->value,
                 Rule::exists('lessons', 'id')->where('tenant_id', $tenantId),
             ],
+            // Units retired (VD §7): unit_id is a dormant passthrough scalar for a
+            // unit_exam — no units table to validate against any more.
             'unit_id' => [
                 'nullable',
                 'required_if:type,'.ExamType::UnitExam->value,
-                Rule::exists('units', 'id')->where('tenant_id', $tenantId),
+                'integer',
             ],
 
             'pass_percent' => ['nullable', 'integer', 'min:0', 'max:100'],

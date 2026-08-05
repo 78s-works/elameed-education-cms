@@ -7,7 +7,6 @@ use App\Modules\Assessment\Http\Requests\ExamRequest;
 use App\Modules\Assessment\Http\Resources\ExamResource;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Catalog\Models\Lesson;
-use App\Modules\Catalog\Models\Unit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -104,8 +103,9 @@ class ExamController
 
     /**
      * Resolve course_id/unit_id/lesson_id from the exam type + its link input.
-     * lesson_quiz/homework derive course+unit from the lesson; unit_exam derives
-     * course from the unit; free_exam links to nothing.
+     * lesson_quiz/homework derive course+unit from the lesson; free_exam links to
+     * nothing. `unit_exam` is retired (Unit removed, VD §7): the `unit_id` it may
+     * carry is a dormant passthrough scalar, no longer resolved against a table.
      *
      * @param  array<string, mixed>  $data
      * @return array{course_id: ?int, unit_id: ?int, lesson_id: ?int}
@@ -119,9 +119,9 @@ class ExamController
         }
 
         if ($type->linksUnit()) {
-            $unit = Unit::query()->findOrFail($data['unit_id']);
+            $unitId = isset($data['unit_id']) ? (int) $data['unit_id'] : null;
 
-            return ['course_id' => $unit->course_id, 'unit_id' => $unit->id, 'lesson_id' => null];
+            return ['course_id' => null, 'unit_id' => $unitId, 'lesson_id' => null];
         }
 
         // free_exam — no links.

@@ -10,7 +10,6 @@ use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonSection;
-use App\Modules\Catalog\Models\Unit;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -28,12 +27,19 @@ use Tests\TestCase;
  * Convention-gating model — the automatic prev-lesson quiz+homework gate, the
  * always-open first lesson, exams that are never locked, free exams open to any
  * student, and solution videos hidden until the matching submission.
+ *
+ * Units are retired (VD §7): the progression gate still groups lessons by the
+ * (now-dormant) `unit_id` column, so these tests set a synthetic unit-group id on
+ * lessons directly instead of creating Unit rows.
  */
 class LessonProgressionTest extends TestCase
 {
     use RefreshDatabase;
 
     private Tenant $tenant;
+
+    /** Hands out synthetic unit-group ids (no units table any more). */
+    private int $unitSeq = 0;
 
     protected function setUp(): void
     {
@@ -63,18 +69,15 @@ class LessonProgressionTest extends TestCase
         return $course;
     }
 
-    private function unit(Course $course, int $sort): Unit
+    /** A synthetic "unit" group id — a value for the dormant lessons.unit_id column. */
+    private function unit(): int
     {
-        $unit = new Unit(['course_id' => $course->id, 'title' => "U{$sort}", 'sort_order' => $sort]);
-        $unit->tenant_id = $this->tenant->id;
-        $unit->save();
-
-        return $unit;
+        return ++$this->unitSeq;
     }
 
-    private function lesson(Unit $unit, int $sort): Lesson
+    private function lesson(Course $course, int $unitId, int $sort): Lesson
     {
-        $lesson = new Lesson(['unit_id' => $unit->id, 'course_id' => $unit->course_id, 'title' => "L{$sort}", 'sort_order' => $sort]);
+        $lesson = new Lesson(['unit_id' => $unitId, 'course_id' => $course->id, 'title' => "L{$sort}", 'sort_order' => $sort]);
         $lesson->tenant_id = $this->tenant->id;
         $lesson->save();
 
@@ -142,8 +145,8 @@ class LessonProgressionTest extends TestCase
     {
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
-        $unit = $this->unit($course, 0);
-        $l1 = $this->lesson($unit, 0);
+        $unit = $this->unit();
+        $l1 = $this->lesson($course, $unit, 0);
         $this->enroll($student, $course);
 
         // A quiz on the first lesson, unsubmitted, must NOT block the first lesson.
@@ -156,9 +159,9 @@ class LessonProgressionTest extends TestCase
     {
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
-        $unit = $this->unit($course, 0);
-        $l1 = $this->lesson($unit, 0);
-        $l2 = $this->lesson($unit, 1);
+        $unit = $this->unit();
+        $l1 = $this->lesson($course, $unit, 0);
+        $l2 = $this->lesson($course, $unit, 1);
         $this->enroll($student, $course);
 
         $quiz = $this->lessonExam($l1, ExamType::LessonQuiz);
@@ -180,9 +183,9 @@ class LessonProgressionTest extends TestCase
     {
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
-        $unit = $this->unit($course, 0);
-        $this->lesson($unit, 0);
-        $l2 = $this->lesson($unit, 1);
+        $unit = $this->unit();
+        $this->lesson($course, $unit, 0);
+        $l2 = $this->lesson($course, $unit, 1);
         $this->enroll($student, $course);
 
         $this->sections($student, $l2)->assertOk();
@@ -192,14 +195,14 @@ class LessonProgressionTest extends TestCase
     {
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
-        $u1 = $this->unit($course, 0);
-        $u2 = $this->unit($course, 1);
-        $this->lesson($u1, 0);
-        $l2a = $this->lesson($u2, 0); // first lesson of the next unit
+        $u1 = $this->unit();
+        $u2 = $this->unit();
+        $this->lesson($course, $u1, 0);
+        $l2a = $this->lesson($course, $u2, 0); // first lesson of the next unit
         $this->enroll($student, $course);
 
         // An unanswered unit exam on u1 must NOT lock u2's first lesson (no cross-unit gate).
-        $this->exam(['course_id' => $course->id, 'unit_id' => $u1->id, 'type' => ExamType::UnitExam->value]);
+        $this->exam(['course_id' => $course->id, 'unit_id' => $u1, 'type' => ExamType::UnitExam->value]);
 
         $this->sections($student, $l2a)->assertOk();
     }
@@ -210,8 +213,8 @@ class LessonProgressionTest extends TestCase
     {
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
-        $unit = $this->unit($course, 0);
-        $l1 = $this->lesson($unit, 0);
+        $unit = $this->unit();
+        $l1 = $this->lesson($course, $unit, 0);
         $this->enroll($student, $course);
 
         $quiz = $this->lessonExam($l1, ExamType::LessonQuiz);
@@ -237,9 +240,9 @@ class LessonProgressionTest extends TestCase
     {
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
-        $unit = $this->unit($course, 0);
-        $l1 = $this->lesson($unit, 0);
-        $l2 = $this->lesson($unit, 1);
+        $unit = $this->unit();
+        $this->lesson($course, $unit, 0);
+        $l2 = $this->lesson($course, $unit, 1);
         $this->enroll($student, $course);
 
         // L2's quiz is playable even though L2 (the lesson) is progression-locked.
@@ -267,21 +270,21 @@ class LessonProgressionTest extends TestCase
     public function test_teacher_creates_one_unit_exam_per_unit(): void
     {
         $teacher = $this->member(TenantUserRole::Teacher);
-        $course = $this->course();
-        $unit = $this->unit($course, 0);
+        $this->course();
+        $unit = $this->unit();
 
         Sanctum::actingAs($teacher);
 
         $this->withHeader('X-Tenant', 'demo')
-            ->postJson('/api/v1/teacher/exams', ['title' => 'Unit test', 'type' => 'unit_exam', 'unit_id' => $unit->id])
+            ->postJson('/api/v1/teacher/exams', ['title' => 'Unit test', 'type' => 'unit_exam', 'unit_id' => $unit])
             ->assertCreated();
 
-        // course_id auto-filled from the unit.
-        $this->assertDatabaseHas('exams', ['unit_id' => $unit->id, 'course_id' => $course->id, 'type' => 'unit_exam']);
+        // unit_id is a passthrough scalar now (Unit retired); course_id is null.
+        $this->assertDatabaseHas('exams', ['unit_id' => $unit, 'type' => 'unit_exam']);
 
-        // A unit has at most one unit_exam.
+        // A unit still holds at most one unit_exam (uniqueness keyed on unit_id).
         $this->withHeader('X-Tenant', 'demo')
-            ->postJson('/api/v1/teacher/exams', ['title' => 'Second', 'type' => 'unit_exam', 'unit_id' => $unit->id])
+            ->postJson('/api/v1/teacher/exams', ['title' => 'Second', 'type' => 'unit_exam', 'unit_id' => $unit])
             ->assertStatus(409);
     }
 
@@ -289,15 +292,15 @@ class LessonProgressionTest extends TestCase
     {
         $teacher = $this->member(TenantUserRole::Teacher);
         $course = $this->course();
-        $unit = $this->unit($course, 0);
-        $lesson = $this->lesson($unit, 0);
+        $unit = $this->unit();
+        $lesson = $this->lesson($course, $unit, 0);
 
         Sanctum::actingAs($teacher);
 
         $this->withHeader('X-Tenant', 'demo')
             ->postJson('/api/v1/teacher/exams', ['title' => 'Quiz', 'type' => 'lesson_quiz', 'lesson_id' => $lesson->id])
             ->assertCreated()
-            ->assertJsonPath('data.unit_id', $unit->id)
+            ->assertJsonPath('data.unit_id', $unit)
             ->assertJsonPath('data.course_id', $course->id);
     }
 
@@ -308,8 +311,8 @@ class LessonProgressionTest extends TestCase
         $teacher = $this->member(TenantUserRole::Teacher);
         $student = $this->member(TenantUserRole::Student);
         $course = $this->course();
-        $unit = $this->unit($course, 0);
-        $lesson = $this->lesson($unit, 0);
+        $unit = $this->unit();
+        $lesson = $this->lesson($course, $unit, 0);
         $lesson->update(['availability_days' => 7]);
 
         Sanctum::actingAs($teacher);
