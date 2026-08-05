@@ -8,9 +8,15 @@ use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Assessment\Models\Question;
 use App\Modules\Billing\Models\SubscriptionPackage;
 use App\Modules\Billing\Models\TenantSubscription;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\CourseCategory;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\LessonSection;
+use App\Modules\Catalog\Models\Package;
+use App\Modules\Catalog\Models\PackageItem;
+use App\Modules\Catalog\Models\PartPassOverride;
+use App\Modules\Catalog\Services\AcademicYearContext;
 use App\Modules\Centers\Models\ActivationCode;
 use App\Modules\Centers\Models\AttendanceRecord;
 use App\Modules\Centers\Models\Center;
@@ -89,10 +95,14 @@ class DatabaseSeeder extends Seeder
         'audit_logs', 'media_callback_events', 'login_attempts', 'otp_codes',
         'notifications', 'student_badges', 'badges', 'points_entries', 'favorites',
         'reviews', 'lesson_progress', 'playback_sessions', 'exam_attempts',
+        // VD content (§7/§8): parts, recursive packages + pass-overrides. Listed
+        // before their parents (lessons/exams/academic_years) for FK-safe DELETE.
+        'part_pass_overrides', 'package_items', 'packages', 'lesson_sections',
         'questions', 'exams', 'attendance_records', 'activation_codes', 'centers',
         'ledger_entries', 'wallets', 'invoices', 'payments', 'order_items', 'orders',
         'enrollments', 'media_renditions',
         'media_upload_sessions', 'media_versions', 'media_assets', 'lessons',
+        'academic_years',
         'courses', 'course_categories', 'parent_links', 'student_profiles',
         'teacher_profiles', 'tenant_user', 'tenant_subscriptions', 'tenant_domains',
         'tenants', 'subscription_packages', 'personal_access_tokens', 'sessions',
@@ -603,6 +613,12 @@ class DatabaseSeeder extends Seeder
 
         // --- Media extras (variety states) + callback event ---------------
         $this->seedMediaExtras($tenant, $courses, $lessonsByCourse, $teacher, $students);
+
+        // --- VD content model (§7/§8): lesson parts, recursive packages,
+        //     part pass-override. Populates lesson_sections/packages/
+        //     package_items/part_pass_overrides + the new access_mode/delivery/
+        //     gate_rule/degree columns.
+        $this->seedVdContent($tenant, $categories, $lessonsByCourse, $teacher, $students);
 
         // --- Bundles retired (VD §7 — replaced by content packages) -------
         $bundles = [];
@@ -1939,6 +1955,123 @@ class DatabaseSeeder extends Seeder
         unset($section);
 
         return $sections;
+    }
+
+    // =====================================================================
+    // VD content model (§7/§8): parts, recursive packages, pass-override
+    // =====================================================================
+
+    /**
+     * Real lesson parts + a recursive package tree + one teacher pass-override.
+     * Fills lesson_sections, packages, package_items, part_pass_overrides and
+     * every new VD column on them (access_mode / delivery / gate_rule / degree).
+     *
+     * @param  array<int, CourseCategory>  $categories
+     * @param  array<int, array<int, Lesson>>  $lessonsByCourse
+     * @param  array<int, User>  $students
+     */
+    private function seedVdContent(Tenant $tenant, array $categories, array $lessonsByCourse, User $teacher, array $students): void
+    {
+        $lessons = $lessonsByCourse[0] ?? [];
+        if (count($lessons) < 2) {
+            return;
+        }
+
+        $category = $categories[0];
+        $lesson0 = $lessons[0];
+        $sort = 0;
+
+        // Video part (points at the lesson's uploaded HLS asset when present).
+        if ($lesson0->video_asset_id) {
+            LessonSection::create([
+                'lesson_id' => $lesson0->id, 'type' => 'video', 'access_mode' => 'both',
+                'title' => 'شرح الفيديو', 'sort_order' => $sort++,
+                'media_asset_id' => $lesson0->video_asset_id, 'is_required' => true,
+            ]);
+        }
+
+        // Auto-graded on-site bubble-sheet quiz (must_pass gate, percent degree).
+        $quizExam = Exam::create([
+            'course_id' => $lesson0->course_id, 'lesson_id' => $lesson0->id,
+            'title' => 'كويز الجزء - '.$lesson0->title, 'type' => 'lesson_quiz',
+            'pass_percent' => 60, 'pass_mode' => 'percent', 'pass_value' => 60, 'total_marks' => 6,
+            'grading_mode' => 'auto', 'duration_min' => 15, 'attempts_allowed' => 2,
+            'question_order' => 'fixed', 'scoring' => 'best', 'starts_at' => now()->subWeek(),
+            'ends_at' => now()->addMonth(), 'result_visibility' => 'immediate', 'show_answers' => true,
+            'mode' => 'bubble_sheet', 'is_published' => true,
+        ]);
+        $this->seedBubbleQuestions($quizExam, $category);
+        $quizPart = LessonSection::create([
+            'lesson_id' => $lesson0->id, 'type' => 'quiz', 'access_mode' => 'both',
+            'delivery' => 'bubble_sheet', 'gate_rule' => 'must_pass', 'max_tries' => 2,
+            'title' => 'كويز الدرس', 'sort_order' => $sort++, 'exam_id' => $quizExam->id, 'is_required' => true,
+        ]);
+
+        // Manual homework (pdf upload, must_submit gate, absolute-marks degree).
+        $hwExam = Exam::create([
+            'course_id' => $lesson0->course_id, 'lesson_id' => $lesson0->id,
+            'title' => 'واجب الجزء - '.$lesson0->title, 'type' => 'homework',
+            'pass_percent' => 50, 'pass_mode' => 'marks', 'pass_value' => 15, 'total_marks' => 30,
+            'grading_mode' => 'manual', 'duration_min' => null, 'attempts_allowed' => 0,
+            'question_order' => 'fixed', 'scoring' => 'last', 'starts_at' => now()->subWeek(),
+            'ends_at' => now()->addWeeks(3), 'result_visibility' => 'after_close', 'show_answers' => false,
+            'mode' => 'standard', 'is_published' => true,
+        ]);
+        LessonSection::create([
+            'lesson_id' => $lesson0->id, 'type' => 'homework', 'access_mode' => 'both',
+            'delivery' => 'pdf_upload', 'gate_rule' => 'must_submit', 'max_tries' => null,
+            'title' => 'واجب الدرس', 'sort_order' => $sort++, 'exam_id' => $hwExam->id, 'is_required' => true,
+        ]);
+
+        // Teacher pass-override: one student manually passed the must_pass quiz.
+        if (! empty($students)) {
+            PartPassOverride::create([
+                'lesson_section_id' => $quizPart->id, 'user_id' => $students[0]->id,
+                'granted_by' => $teacher->id, 'granted_at' => now()->subDays(2),
+                'note' => 'اعتُمد النجاح يدويًا بعد حل ورقي بالسنتر.',
+            ]);
+        }
+
+        // Recursive packages. Set the academic-year context so Package's
+        // academic_year_id auto-fills (BelongsToAcademicYear has no seeder default).
+        $year = AcademicYear::withoutGlobalScopes()
+            ->where('tenant_id', $tenant->id)->orderBy('sort_order')->orderBy('id')->first();
+        if ($year === null) {
+            return;
+        }
+
+        $ctx = app(AcademicYearContext::class);
+        $ctx->set($year->id);
+
+        $monthly = Package::create([
+            'name' => 'باقة الشهر الأول', 'access_mode' => 'both',
+            'price_minor' => 20000, 'currency' => 'EGP', 'is_purchasable' => true,
+        ]);
+        $pos = 0;
+        foreach (array_slice($lessons, 0, 2) as $l) {
+            PackageItem::create([
+                'package_id' => $monthly->id, 'item_type' => PackageItem::TYPE_LESSON,
+                'item_id' => $l->id, 'sort_order' => $pos++,
+            ]);
+        }
+
+        // Term package nests the monthly package (recursive) + one more lesson.
+        $term = Package::create([
+            'name' => 'باقة الترم الكاملة', 'access_mode' => 'both',
+            'price_minor' => 50000, 'currency' => 'EGP', 'is_purchasable' => true,
+        ]);
+        PackageItem::create([
+            'package_id' => $term->id, 'item_type' => PackageItem::TYPE_PACKAGE,
+            'item_id' => $monthly->id, 'sort_order' => 0,
+        ]);
+        if (isset($lessons[2])) {
+            PackageItem::create([
+                'package_id' => $term->id, 'item_type' => PackageItem::TYPE_LESSON,
+                'item_id' => $lessons[2]->id, 'sort_order' => 1,
+            ]);
+        }
+
+        $ctx->forget();
     }
 
     // =====================================================================

@@ -18,6 +18,7 @@ use App\Modules\Catalog\Http\Controllers\Teacher\AcademicYearController;
 use App\Modules\Catalog\Http\Controllers\Teacher\BundleController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CategoryController;
 use App\Modules\Catalog\Http\Controllers\Teacher\ContentPackageController;
+use App\Modules\Catalog\Http\Controllers\Teacher\CourseListController;
 use App\Modules\Catalog\Http\Controllers\Teacher\ExtensionRequestController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonAttachmentController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonAvailabilityController;
@@ -360,6 +361,13 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::get('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'show']);
             Route::put('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'update']);
             Route::delete('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'destroy']);
+
+            // Read-only course list (VD): teacher course CRUD retired (managed via
+            // lessons/packages now), but courses still exist as the public catalogue
+            // unit and several features still scope to them (coupons, reviews,
+            // center activation-codes). This lister is their picker source — no
+            // create/update/delete.
+            Route::get('/teacher/courses', [CourseListController::class, 'index']);
 
             // Catalog (M04) — course taxonomy + structure. Courses bind by uuid
             // (no id enumeration); nested units/lessons bind by id (own data).
