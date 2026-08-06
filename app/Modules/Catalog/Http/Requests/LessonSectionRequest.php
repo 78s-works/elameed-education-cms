@@ -42,8 +42,14 @@ class LessonSectionRequest extends FormRequest
             'is_required' => ['boolean'],
             'sort_order' => ['nullable', 'integer', 'min:0'],
 
-            // video
-            'media_asset_id' => ['nullable', 'integer', 'min:1', 'required_if:type,video'],
+            // video — an uploaded asset OR a YouTube link (one is required, see
+            // assertVideoSource()). youtube_url is validated as a real YouTube URL.
+            'media_asset_id' => ['nullable', 'integer', 'min:1'],
+            'youtube_url' => ['nullable', 'string', 'max:2048', function ($attr, $value, $fail): void {
+                if ($value !== null && $value !== '' && ! \App\Support\Youtube::isValid($value)) {
+                    $fail('The :attribute must be a valid YouTube link.');
+                }
+            }],
 
             // homework / quiz — backed by an exam
             'delivery' => ['nullable', Rule::enum(SectionDelivery::class), 'required_if:type,homework,quiz'],
@@ -67,10 +73,25 @@ class LessonSectionRequest extends FormRequest
 
             $this->assertWithinLessonCeiling($validator);
 
+            if ($type === LessonSectionType::Video) {
+                $this->assertVideoSource($validator);
+            }
+
             if ($type->backsExam()) {
                 $this->assertExamRules($validator, $type);
             }
         });
+    }
+
+    /** A video part needs exactly one source: an uploaded asset OR a YouTube link. */
+    private function assertVideoSource(Validator $validator): void
+    {
+        $hasMedia = $this->filled('media_asset_id');
+        $hasYoutube = $this->filled('youtube_url');
+
+        if (! $hasMedia && ! $hasYoutube) {
+            $validator->errors()->add('media_asset_id', 'A video part needs an uploaded video or a YouTube link.');
+        }
     }
 
     /** part.access_mode ⊆ lesson.access_mode (LP-5). */
@@ -133,7 +154,7 @@ class LessonSectionRequest extends FormRequest
     public function sectionAttributes(): array
     {
         $data = $this->validated();
-        $keys = ['type', 'access_mode', 'delivery', 'gate_rule', 'max_tries', 'sort_order', 'media_asset_id', 'is_required'];
+        $keys = ['type', 'access_mode', 'delivery', 'gate_rule', 'max_tries', 'sort_order', 'media_asset_id', 'youtube_url', 'is_required'];
 
         $attrs = array_intersect_key($data, array_flip($keys));
 
