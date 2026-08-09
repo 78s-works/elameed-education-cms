@@ -622,6 +622,10 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
                 // it via a nonexistent User::parents() relationship → 500. (Bug fix.)
                 Route::delete('/teacher/students/{student:uuid}/parents/{parent:uuid}', [StudentParentController::class, 'destroy'])
                     ->withoutScopedBindings();
+                // Re-issue a linked parent's password. `parent` resolved independently
+                // of `student` (same reason as destroy above); controller scopes by link.
+                Route::post('/teacher/students/{student:uuid}/parents/{parent:uuid}/reset-password', [StudentParentController::class, 'resetPassword'])
+                    ->withoutScopedBindings();
             }); // permission:students
 
             // Manual payment-receipt verification (VD R9/R10) — teacher, or an

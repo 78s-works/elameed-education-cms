@@ -10,9 +10,13 @@ use App\Modules\Identity\Http\Requests\LinkParentRequest;
 use App\Modules\Identity\Models\ParentLink;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Services\TenantContext;
+use App\Support\Audit\AuditLogger;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
  * Teacher manages the parents linked to one of their students (M13). Linking a
@@ -105,5 +109,46 @@ class StudentParentController
             ->delete();
 
         return response()->json(['data' => ['unlinked' => true]]);
+    }
+
+    /**
+     * Re-issue the password of a parent (ولي الأمر) linked to this student.
+     * Mirrors StudentController::resetPassword — omit `password` to auto-generate
+     * one, returned as `temporary_password`. Scoped to the (student, parent) link
+     * so a teacher can only reset guardians of their own students.
+     */
+    public function resetPassword(Request $request, User $student, User $parent): JsonResponse
+    {
+        $tenantId = $this->context->tenantOrFail()->getKey();
+        $this->membershipOrFail($tenantId, $student);
+
+        $linked = ParentLink::query()
+            ->where('student_user_id', $student->getKey())
+            ->where('parent_user_id', $parent->getKey())
+            ->exists();
+
+        if (! $linked) {
+            throw new NotFoundHttpException('Parent is not linked to this student.');
+        }
+
+        $validated = $request->validate([
+            'password' => ['nullable', 'string', 'min:8', 'max:72'],
+        ]);
+
+        $generated = ! isset($validated['password']);
+        $password = $validated['password'] ?? Str::password(10);
+
+        $parent->update(['password' => $password]); // hashed by cast
+        $parent->tokens()->delete();                // drop existing sessions
+
+        app(AuditLogger::class)->log('parent.password_reset', [
+            'student_id' => $student->getKey(),
+            'parent_id' => $parent->getKey(),
+        ], $tenantId, 'user', $parent->getKey());
+
+        return response()->json(['data' => array_filter([
+            'uuid' => $parent->uuid,
+            'temporary_password' => $generated ? $password : null,
+        ], fn ($v) => $v !== null)]);
     }
 }

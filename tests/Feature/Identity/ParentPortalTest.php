@@ -128,4 +128,35 @@ class ParentPortalTest extends TestCase
 
         $this->withHeaders($this->h)->getJson('/api/v1/parent/children')->assertStatus(403);
     }
+
+    public function test_teacher_can_reset_a_linked_parents_password_and_revoke_sessions(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $parent = $this->member(TenantUserRole::Parent);
+        $this->link($parent, $student);
+        $parent->createToken('api'); // an existing session
+        $originalHash = $parent->password;
+
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $res = $this->withHeaders($this->h)
+            ->postJson("/api/v1/teacher/students/{$student->uuid}/parents/{$parent->uuid}/reset-password")
+            ->assertOk();
+
+        $this->assertNotEmpty($res->json('data.temporary_password'));
+        $this->assertNotSame($originalHash, $parent->fresh()->password);   // password changed
+        $this->assertSame(0, $parent->fresh()->tokens()->count());          // sessions revoked
+    }
+
+    public function test_resetting_an_unlinked_parent_is_not_found(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $parent = $this->member(TenantUserRole::Parent); // never linked to this student
+
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $this->withHeaders($this->h)
+            ->postJson("/api/v1/teacher/students/{$student->uuid}/parents/{$parent->uuid}/reset-password")
+            ->assertStatus(404);
+    }
 }
