@@ -43,7 +43,9 @@ class StudentLessonSectionsController
             throw new HttpException(423, $lock);
         }
 
-        $sections = $lesson->sections()->ordered()->with(['mediaAsset'])->get();
+        // Eager-load the backing exam so quiz/homework parts expose `exam.id`
+        // (uuid) — the student player links its "Solve" action to it.
+        $sections = $lesson->sections()->ordered()->with(['mediaAsset', 'exam'])->get();
         $lockMap = $this->unlock->lockMap($tenantId, $userId, $lesson);
 
         foreach ($sections as $section) {
