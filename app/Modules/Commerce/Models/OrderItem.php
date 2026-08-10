@@ -12,7 +12,8 @@ class OrderItem extends Model
 
     public const TYPE_COURSE = 'course';
 
-    public const TYPE_BUNDLE = 'bundle';
+    /** Recursive content package (B15) — fans out into per-lesson enrollments on buy. */
+    public const TYPE_PACKAGE = 'package';
 
     public const TYPE_LESSON = 'lesson';
 

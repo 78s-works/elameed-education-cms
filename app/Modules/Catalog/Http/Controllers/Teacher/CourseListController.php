@@ -38,7 +38,7 @@ class CourseListController
             'uuid' => $c->uuid,
             'title' => $c->title,
             'visibility' => $c->visibility?->value,
-            'is_center' => (bool) $c->is_center,
+            'access_mode' => $c->access_mode?->value,
             'price_minor' => $c->price_minor,
             'currency' => $c->currency,
         ]);

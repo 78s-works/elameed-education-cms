@@ -2,6 +2,7 @@
 
 namespace App\Modules\Engagement\Http\Controllers;
 
+use App\Modules\Catalog\Events\LessonCompleted;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Engagement\Http\Requests\ProgressRequest;
@@ -55,6 +56,11 @@ class ProgressController
         if ($justCompleted) {
             $this->points->award($tenantId, $user->getKey(), (int) config('gamification.lesson_points', 5),
                 'lesson.completed', 'lesson', $lesson->getKey());
+
+            // Sequential unlock (B14 / VD R5): completing a lesson (watched to
+            // completion) opens the NEXT lesson's window in every package the
+            // student bought that contains it. The listener re-checks completion.
+            LessonCompleted::dispatch((int) $tenantId, (int) $user->getKey(), (int) $lesson->getKey());
         }
 
         return response()->json(['data' => [

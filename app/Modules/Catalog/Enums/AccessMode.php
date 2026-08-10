@@ -31,4 +31,22 @@ enum AccessMode: string
     {
         return $parent === self::Both || $this === $parent;
     }
+
+    /**
+     * Runtime part visibility (B12 / LP-6): is content of $this access_mode shown
+     * to a student whose study_mode is $studyMode? `both` is a wildcard on EITHER
+     * side — a hybrid (`both`) student sees every channel, and `both` content shows
+     * to everyone; otherwise a single-channel student sees only their own channel.
+     *
+     *   both   student → { center, online, both }
+     *   center student → { center, both }
+     *   online student → { online, both }
+     *
+     * Unlike isSubsetOf() this is symmetric in `both`, so it is NOT the ceiling
+     * rule reversed — a center student must still see `both` content.
+     */
+    public function isVisibleTo(self $studyMode): bool
+    {
+        return $this === self::Both || $studyMode === self::Both || $this === $studyMode;
+    }
 }

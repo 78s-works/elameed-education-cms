@@ -4,7 +4,11 @@ namespace Tests\Feature\Commerce;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Package;
+use App\Modules\Catalog\Models\PackageItem;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Invoice;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -56,6 +60,46 @@ class CheckoutTest extends TestCase
         return $course;
     }
 
+    /** A purchasable package holding two lessons (one nested a level down). */
+    private function packageWithLessons(int $priceMinor): Package
+    {
+        $year = new AcademicYear(['name' => '2025 / 2026', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
+
+        $mk = function (string $title) use ($year): Lesson {
+            $lesson = new Lesson(['title' => $title, 'access_mode' => 'both']);
+            $lesson->tenant_id = $this->tenant->id;
+            $lesson->academic_year_id = $year->id;
+            $lesson->save();
+
+            return $lesson;
+        };
+        $mkPkg = function (string $name, ?int $price) use ($year): Package {
+            $pkg = new Package(['name' => $name, 'access_mode' => 'both', 'price_minor' => $price, 'currency' => 'EGP', 'is_purchasable' => true]);
+            $pkg->tenant_id = $this->tenant->id;
+            $pkg->academic_year_id = $year->id;
+            $pkg->save();
+
+            return $pkg;
+        };
+        $attach = function (Package $pkg, string $type, int $id): void {
+            $item = new PackageItem(['package_id' => $pkg->id, 'item_type' => $type, 'item_id' => $id, 'sort_order' => 0]);
+            $item->tenant_id = $this->tenant->id;
+            $item->save();
+        };
+
+        $parent = $mkPkg('Term 1', $priceMinor);
+        $child = $mkPkg('Chapter 1', null);
+        $l1 = $mk('Lesson 1');
+        $l2 = $mk('Lesson 2 (nested)');
+        $attach($parent, PackageItem::TYPE_LESSON, $l1->id);
+        $attach($parent, PackageItem::TYPE_PACKAGE, $child->id);
+        $attach($child, PackageItem::TYPE_LESSON, $l2->id);
+
+        return $parent;
+    }
+
     private function creditWallet(User $user, int $amount): void
     {
         $ledger = app(LedgerService::class);
@@ -104,6 +148,57 @@ class CheckoutTest extends TestCase
         $debits = LedgerEntry::withoutGlobalScopes()->where('direction', 'debit')->sum('amount_minor');
         $credits = LedgerEntry::withoutGlobalScopes()->where('direction', 'credit')->sum('amount_minor');
         $this->assertSame((int) $debits, (int) $credits);
+    }
+
+    public function test_package_wallet_purchase_fans_out_into_per_lesson_enrollments(): void
+    {
+        $student = $this->student();
+        $package = $this->packageWithLessons(20000);
+        $this->creditWallet($student, 25000);
+        Sanctum::actingAs($student);
+        $h = ['X-Tenant' => 'demo'];
+
+        $this->withHeaders($h)->postJson('/api/v1/checkout/quote', [
+            'items' => [['type' => 'package', 'package' => $package->uuid]],
+        ])->assertOk()->assertJsonPath('data.total_minor', 20000);
+
+        $orderUuid = $this->withHeaders($h)->postJson('/api/v1/checkout/order', [
+            'items' => [['type' => 'package', 'package' => $package->uuid]],
+        ])->assertStatus(201)->json('data.uuid');
+
+        $this->withHeaders($h)->postJson('/api/v1/checkout/pay', [
+            'order' => $orderUuid, 'method' => 'wallet',
+        ])->assertOk()->assertJsonPath('data.status', 'paid');
+
+        // Both descendant lessons (direct + nested) become per-lesson grants tagged
+        // with the purchased package; the package itself is never an access row.
+        $grants = Enrollment::withoutGlobalScopes()->where('user_id', $student->id)->whereNotNull('lesson_id')->get();
+        $this->assertSame(2, $grants->count());
+        $this->assertTrue($grants->every(fn ($e) => (int) $e->package_id === $package->id));
+
+        // Ledger balances against the discounted (here, undiscounted) package total.
+        $debits = LedgerEntry::withoutGlobalScopes()->where('direction', 'debit')->sum('amount_minor');
+        $credits = LedgerEntry::withoutGlobalScopes()->where('direction', 'credit')->sum('amount_minor');
+        $this->assertSame((int) $debits, (int) $credits);
+    }
+
+    public function test_rebuying_a_fully_owned_package_is_rejected(): void
+    {
+        $student = $this->student();
+        $package = $this->packageWithLessons(20000);
+        $this->creditWallet($student, 60000);
+        Sanctum::actingAs($student);
+        $h = ['X-Tenant' => 'demo'];
+
+        $first = $this->withHeaders($h)->postJson('/api/v1/checkout/order', [
+            'items' => [['type' => 'package', 'package' => $package->uuid]],
+        ])->json('data.uuid');
+        $this->withHeaders($h)->postJson('/api/v1/checkout/pay', ['order' => $first, 'method' => 'wallet'])->assertOk();
+
+        // Every descendant lesson already owned → nothing new to grant → 422 at order.
+        $this->withHeaders($h)->postJson('/api/v1/checkout/order', [
+            'items' => [['type' => 'package', 'package' => $package->uuid]],
+        ])->assertStatus(422);
     }
 
     public function test_wallet_purchase_rejected_when_insufficient_balance(): void

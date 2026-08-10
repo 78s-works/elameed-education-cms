@@ -106,14 +106,17 @@ content & access** (sections listing, start, access, **auto reopen**, extension-
 **Query params**
 | Param | Type | Description |
 |---|---|---|
-| `filter[category_id]` | int | Restrict to one category. |
-| `filter[grade]` | string | Match courses whose category has this `grade`. |
-| `filter[subject]` | string | Match courses whose category has this `subject`. |
-| `q` | string | Case-insensitive `LIKE` on course `title`. |
+| `view` | enum `lessons\|packages` | **B19.** Switch the catalogue granularity (VD R8 / doc 12 §7 LP-9). Omitted → courses (below). `lessons` → published, individually-`is_purchasable` standalone lessons (`LessonResource`). `packages` → `is_purchasable` recursive content packages (`PackageResource`, with `items_count`). An unknown value → `422`. |
+| `access_mode` | enum `center\|online\|both` | **B19.** Channel filter on all three views. Reuses `AccessMode::isVisibleTo`, so `both` content always matches, `center`→`{center,both}`, `online`→`{online,both}`, and `both`→ every channel. |
+| `academic_year` | uuid | **B19.** `view=lessons\|packages` only — narrow to one academic year. An unknown/foreign uuid yields an empty page (never leaks other years). |
+| `filter[category_id]` | int | Courses view — restrict to one category. |
+| `filter[grade]` | string | Courses view — match courses whose category has this `grade`. |
+| `filter[subject]` | string | Courses view — match courses whose category has this `subject`. |
+| `q` | string | Case-insensitive `LIKE` on course/lesson `title` or package `name`. |
 | `page` | int | Page number (results are 20 per page, fixed). |
 
-Results are always sorted newest-first (`latest()` on `created_at`); there is no `sort` param and
-`per_page` is not honored (fixed at 20).
+The courses view sorts newest-first (`latest()` on `created_at`); `lessons` sort by `sort_order` then
+`id`, `packages` by `name` then `id`. There is no `sort` param and `per_page` is not honored (fixed at 20).
 
 **Request body:** None
 
@@ -135,7 +138,7 @@ Results are always sorted newest-first (`latest()` on `created_at`); there is no
       "publish_at": "2026-06-01T09:00:00+00:00",
       "is_free": false,
       "purchase_enabled": true,
-      "is_center": false,
+      "access_mode": "online",
       "cover_url": "https://cdn.example.com/course-cover.jpg",
       "thumbnail_url": "https://cdn.example.com/course-thumb.jpg",
       "promo_video_url": "https://youtube.com/watch?v=abc123",
@@ -438,7 +441,7 @@ to a random stem for non-ASCII/Arabic titles); `tenant_id` is filled automatical
   "publish_at": "2026-08-01T09:00:00Z",
   "is_free": false,
   "purchase_enabled": true,
-  "is_center": false,
+  "access_mode": "both",
   "cover_url": "https://cdn.example.com/course-cover.jpg",
   "thumbnail_url": "https://cdn.example.com/course-thumb.jpg",
   "promo_video_url": "https://youtube.com/watch?v=abc123",
@@ -462,7 +465,7 @@ to a random stem for non-ASCII/Arabic titles); `tenant_id` is filled automatical
 | `publish_at` | nullable, date |
 | `is_free` | boolean |
 | `purchase_enabled` | boolean |
-| `is_center` | boolean |
+| `access_mode` | enum `center\|online\|both` (default `both`) — folds in the retired `is_center` (VD doc 12 R2) |
 | `cover_url` | nullable, url, max 2048 (wide hero banner) |
 | `thumbnail_url` | nullable, url, max 2048 (small card/grid preview) |
 | `promo_video_url` | nullable, url, max 2048 (public teaser) |

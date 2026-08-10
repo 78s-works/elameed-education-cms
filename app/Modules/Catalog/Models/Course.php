@@ -2,6 +2,7 @@
 
 namespace App\Modules\Catalog\Models;
 
+use App\Modules\Catalog\Enums\AccessMode;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Builder;
@@ -14,6 +15,7 @@ use Illuminate\Support\Str;
 
 /**
  * @property ContentVisibility $visibility
+ * @property AccessMode $access_mode
  */
 class Course extends Model
 {
@@ -24,6 +26,7 @@ class Course extends Model
     /** In-memory defaults matching the DB defaults (so a fresh model has them). */
     protected $attributes = [
         'visibility' => 'hidden',
+        'access_mode' => 'both',
     ];
 
     protected $fillable = [
@@ -43,7 +46,7 @@ class Course extends Model
         'publish_at',
         'is_free',
         'purchase_enabled',
-        'is_center',
+        'access_mode',
         'cover_url',
         'thumbnail_url',
         'promo_video_url',
@@ -52,10 +55,10 @@ class Course extends Model
 
     protected $casts = [
         'visibility' => ContentVisibility::class,
+        'access_mode' => AccessMode::class,
         'publish_at' => 'datetime',
         'is_free' => 'boolean',
         'purchase_enabled' => 'boolean',
-        'is_center' => 'boolean',
         'price_minor' => 'integer',
         'points' => 'integer',
         'learning_outcomes' => 'array',

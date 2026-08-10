@@ -6,17 +6,24 @@ use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Services\LessonAvailabilityService;
+use App\Modules\Catalog\Services\PackageItemService;
+use App\Modules\Catalog\Services\SequentialUnlockService;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Modules\Commerce\Models\Enrollment;
+use Illuminate\Support\Collection;
 
 /**
  * Grants and checks content access. Takes an explicit tenant id so it works from
  * webhook contexts where no tenant is resolved from the host.
  *
- * Access lives in the `enrollments` table. A grant is whole-course (`course_id`),
- * a single lesson (`lesson_id`), or a single exam (`exam_id`). Course grants open
+ * Access lives in the `enrollments` table. A grant targets a whole course
+ * (`course_id`), a single lesson (`lesson_id`), a single exam (`exam_id`), or a
+ * recursive package. A package grant is NOT stored as one row: it fans out
+ * (depth-first) into a per-lesson enrollment for every descendant lesson, each
+ * tagged with the source `package_id` (B15 / VD LP-D2). Course grants open
  * everything in the course (lessons + exams); lesson grants open just that lesson.
  * (`unit_id` / `bundle_id` are dormant columns — Unit + Bundle retired, VD §7.)
  */
@@ -24,6 +31,8 @@ class EnrollmentService
 {
     public function __construct(
         private readonly LessonAvailabilityService $availability,
+        private readonly PackageItemService $packageItems,
+        private readonly SequentialUnlockService $sequential,
     ) {}
 
     /**
@@ -34,26 +43,55 @@ class EnrollmentService
     {
         $expiresAt = $course->access_days ? now()->addDays($course->access_days) : null;
 
-        return $this->grant($tenantId, $userId, $source, $course->getKey(), null, null, null, $bundleId, $expiresAt);
+        return $this->grant($tenantId, $userId, $source, $course->getKey(), null, null, null, $bundleId, null, $expiresAt);
     }
 
     /**
      * Grant access to a single lesson (doc 11 R4 "pay lesson" + R7). Opens the
      * time-boxed availability window immediately so the "week" counts from the
      * grant/payment (decision D3); no-op window when the lesson is unlimited.
+     * `$packageId` records the package the grant fanned out from, when it did (B15).
      */
-    public function grantLesson(int $tenantId, int $userId, Lesson $lesson, EnrollmentSource $source): Enrollment
+    public function grantLesson(int $tenantId, int $userId, Lesson $lesson, EnrollmentSource $source, ?int $packageId = null): Enrollment
     {
-        $enrollment = $this->grant($tenantId, $userId, $source, null, null, $lesson->getKey(), null, null, null);
+        $enrollment = $this->grant($tenantId, $userId, $source, null, null, $lesson->getKey(), null, null, $packageId, null);
         $this->availability->start($tenantId, $userId, $lesson);
 
         return $enrollment;
     }
 
+    /**
+     * Grant a recursive package (B15 / VD LP-D2). Fans the purchase out depth-first
+     * into a per-lesson enrollment for every descendant lesson — the package's own
+     * lessons plus every lesson inside every sub-package, nested to any depth — each
+     * tagged with this `$package`'s id as provenance. Idempotent per lesson: a
+     * lesson already granted (bought alone, or shared by another package) is reused,
+     * never duplicated, so a re-buy or partial overlap adds only the missing lessons.
+     * No package-level access row is written; access is always resolved per-lesson.
+     *
+     * Sequential unlock (B14 / VD R5): the fan-out grants ACCESS to every lesson but
+     * does NOT open their windows. Only the FIRST lesson's window opens now; the
+     * rest open one at a time as each previous lesson is completed
+     * ({@see SequentialUnlockService}).
+     *
+     * @return Collection<int, Enrollment> the per-lesson grants (existing + new)
+     */
+    public function grantPackage(int $tenantId, int $userId, Package $package, EnrollmentSource $source): Collection
+    {
+        $grants = $this->packageItems->descendantLessonIds($package)
+            ->map(fn (int $lessonId): ?Enrollment => $this->grantPackageLesson($tenantId, $userId, $lessonId, $package->getKey(), $source))
+            ->filter()
+            ->values();
+
+        $this->sequential->openFirst($tenantId, $userId, $package);
+
+        return $grants;
+    }
+
     /** Grant access to a single exam (doc 11 R7 / decision D7). */
     public function grantExam(int $tenantId, int $userId, Exam $exam, EnrollmentSource $source): Enrollment
     {
-        return $this->grant($tenantId, $userId, $source, null, null, null, $exam->getKey(), null, null);
+        return $this->grant($tenantId, $userId, $source, null, null, null, $exam->getKey(), null, null, null);
     }
 
     /** Does the user currently have access to the whole course? Free courses are open. */
@@ -146,9 +184,26 @@ class EnrollmentService
     }
 
     /**
+     * One leg of a package fan-out: resolve the descendant lesson (scope-free, so it
+     * works from a webhook where no tenant/year is resolved) and grant ACCESS only —
+     * the availability window is NOT opened here (unlike a standalone lesson buy).
+     * The sequential-unlock engine opens windows one at a time (B14). Skips a lesson
+     * that vanished mid-flight.
+     */
+    private function grantPackageLesson(int $tenantId, int $userId, int $lessonId, int $packageId, EnrollmentSource $source): ?Enrollment
+    {
+        $lesson = Lesson::withoutGlobalScopes()->find($lessonId);
+
+        return $lesson === null
+            ? null
+            : $this->grant($tenantId, $userId, $source, null, null, $lesson->getKey(), null, null, $packageId, null);
+    }
+
+    /**
      * Upsert an active enrollment for a course, unit, lesson, OR exam (exactly one
      * id is non-null). Returns the existing active grant if one is already present
-     * (so replays / repeat purchases don't stack).
+     * (so replays / repeat purchases don't stack). `$packageId` is provenance only
+     * — carried on a lesson row that fanned out from a package, never a match key.
      */
     private function grant(
         int $tenantId,
@@ -159,6 +214,7 @@ class EnrollmentService
         ?int $lessonId,
         ?int $examId,
         ?int $bundleId,
+        ?int $packageId,
         ?\DateTimeInterface $expiresAt,
     ): Enrollment {
         $existing = Enrollment::withoutGlobalScopes()
@@ -182,6 +238,7 @@ class EnrollmentService
             'lesson_id' => $lessonId,
             'exam_id' => $examId,
             'bundle_id' => $bundleId,
+            'package_id' => $packageId,
             'source' => $source->value,
             'starts_at' => now(),
             'expires_at' => $expiresAt,

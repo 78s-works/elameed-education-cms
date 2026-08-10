@@ -4,6 +4,8 @@ namespace App\Modules\Commerce\Services;
 
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Package;
+use App\Modules\Catalog\Services\PackageItemService;
 use App\Modules\Commerce\Models\Coupon;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Order;
@@ -14,15 +16,16 @@ use Illuminate\Validation\ValidationException;
 /**
  * Prices a cart server-side (never trusts client prices — 04_API_Spec §4) and
  * persists orders. Supports single-course purchase, single-lesson purchase,
- * wallet top-up, and an optional coupon discount (M21) applied to the content
- * subtotal. (Bundle purchase retired — Bundle removed, VD §7; recursive-package
- * checkout is a later doc.)
+ * recursive-package purchase (B15 — fans out into per-lesson enrollments at
+ * fulfilment), wallet top-up, and an optional coupon discount (M21) applied to
+ * the content subtotal. (Bundle purchase retired — Bundle removed, VD §7.)
  */
 class CheckoutService
 {
     public function __construct(
         private readonly TenantContext $context,
         private readonly CouponService $coupons,
+        private readonly PackageItemService $packageItems,
     ) {}
 
     /**
@@ -38,6 +41,7 @@ class CheckoutService
             $line = match ($item['type']) {
                 OrderItem::TYPE_COURSE => $this->priceCourse($item),
                 OrderItem::TYPE_LESSON => $this->priceLesson($item),
+                OrderItem::TYPE_PACKAGE => $this->pricePackage($item),
                 OrderItem::TYPE_WALLET_TOPUP => $this->priceTopup($item),
                 default => throw ValidationException::withMessages(['items' => 'Unsupported item type.']),
             };
@@ -99,6 +103,14 @@ class CheckoutService
     /** Reject an order line for content the buyer already has access to. */
     private function assertNotAlreadyOwned(int $userId, array $line): void
     {
+        // A package is "owned" only when the buyer already holds every descendant
+        // lesson — a partial overlap is still buyable (the fan-out grants the rest).
+        if ($line['item_type'] === OrderItem::TYPE_PACKAGE) {
+            $this->assertPackageNotFullyOwned($userId, (int) $line['item_id']);
+
+            return;
+        }
+
         $column = match ($line['item_type']) {
             OrderItem::TYPE_COURSE => 'course_id',
             OrderItem::TYPE_LESSON => 'lesson_id',
@@ -115,6 +127,31 @@ class CheckoutService
             ->exists();
 
         if ($owns) {
+            throw ValidationException::withMessages(['items' => 'You already have access to one of these items.']);
+        }
+    }
+
+    /** Block a package re-buy only when nothing new would be granted (B15). */
+    private function assertPackageNotFullyOwned(int $userId, int $packageId): void
+    {
+        $package = Package::withoutGlobalScope('academic_year')->find($packageId);
+        if ($package === null) {
+            return;
+        }
+
+        $lessonIds = $this->packageItems->descendantLessonIds($package);
+        if ($lessonIds->isEmpty()) {
+            return; // an empty package grants nothing — never a duplicate
+        }
+
+        $owned = Enrollment::query()
+            ->where('user_id', $userId)
+            ->whereIn('lesson_id', $lessonIds->all())
+            ->grantsAccess()
+            ->distinct()
+            ->count('lesson_id');
+
+        if ($owned >= $lessonIds->count()) {
             throw ValidationException::withMessages(['items' => 'You already have access to one of these items.']);
         }
     }
@@ -148,6 +185,29 @@ class CheckoutService
             'item_id' => $lesson->id,
             'price_minor' => (int) $lesson->price_minor,
             'title' => $lesson->title,
+        ];
+    }
+
+    /**
+     * A recursive content package (B15). Addressed by uuid like a course; resolved
+     * across academic years (a package sells regardless of the year currently in
+     * context) but still tenant-scoped. Must be purchasable and priced.
+     */
+    private function pricePackage(array $item): array
+    {
+        $package = Package::withoutGlobalScope('academic_year')
+            ->where('uuid', $item['package'] ?? null)
+            ->first();
+
+        if ($package === null || ! $package->is_purchasable || $package->price_minor === null) {
+            throw ValidationException::withMessages(['items' => 'Package not available for purchase.']);
+        }
+
+        return [
+            'item_type' => OrderItem::TYPE_PACKAGE,
+            'item_id' => $package->id,
+            'price_minor' => (int) $package->price_minor,
+            'title' => $package->name,
         ];
     }
 

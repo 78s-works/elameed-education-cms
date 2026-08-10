@@ -3,6 +3,7 @@
 namespace App\Modules\Identity\Actions;
 
 use App\Models\User;
+use App\Modules\Centers\Models\Center;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\OtpPurpose;
 use App\Modules\Identity\Enums\TenantUserRole;
@@ -78,10 +79,15 @@ class RegisterStudentAction
                 'joined_at' => $sendOtp ? null : now(),
             ]);
 
-            // Per-academy registration details from the sign-up form.
+            // Per-academy registration details from the sign-up form. `study_mode`
+            // rides in via fields(); the center uuid is resolved to its FK here
+            // (RegisterRequest already checked it belongs to this tenant).
             $profile = new StudentProfile(StudentProfile::fields($data));
             $profile->tenant_id = $tenant->getKey();
             $profile->user_id = $user->getKey();
+            if (! empty($data['center'])) {
+                $profile->center_id = Center::query()->where('uuid', $data['center'])->value('id');
+            }
             $profile->save();
 
             return $user;

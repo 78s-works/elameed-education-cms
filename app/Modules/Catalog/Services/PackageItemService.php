@@ -130,6 +130,10 @@ class PackageItemService
      * lessons plus every lesson inside every sub-package, recursively (LP-D2). The
      * `$seen` set makes it safe even if the data somehow holds a cycle.
      *
+     * Queried scope-free but pinned to the package's own tenant, so it returns the
+     * same result whether called from the tenant-scoped authoring request or from a
+     * checkout webhook where no tenant is resolved (the fan-out path, B15).
+     *
      * @return Collection<int, int>
      */
     public function descendantLessonIds(Package $package): Collection
@@ -146,7 +150,7 @@ class PackageItemService
             }
             $seen[$current] = true;
 
-            foreach (PackageItem::where('package_id', $current)->get() as $item) {
+            foreach ($this->itemsOf($package->tenant_id, $current) as $item) {
                 if ($item->item_type === PackageItem::TYPE_LESSON) {
                     $lessonIds->push((int) $item->item_id);
                 } else {
@@ -156,6 +160,60 @@ class PackageItemService
         }
 
         return $lessonIds->unique()->values();
+    }
+
+    /**
+     * ORDERED depth-first walk of every descendant lesson id — direct lessons and
+     * lessons inside sub-packages — following `package_items.sort_order` (then id)
+     * at each level (B14 / VD R5 §7.5). Unlike {@see descendantLessonIds} (a set,
+     * order-agnostic, used by the checkout fan-out), the ORDER matters here: it is
+     * the exact sequence the sequential-unlock engine advances through. `$seen`
+     * makes it cycle-safe; a lesson reachable twice keeps its first position.
+     *
+     * @return Collection<int, int>
+     */
+    public function orderedLessonIds(Package $package): Collection
+    {
+        $lessonIds = [];
+        $this->walkOrdered((int) $package->tenant_id, (int) $package->id, $lessonIds, []);
+
+        return collect($lessonIds)->unique()->values();
+    }
+
+    /**
+     * @param  array<int, int>  $lessonIds  accumulated in sequence (by reference)
+     * @param  array<int, bool>  $seen  packages already walked (cycle guard)
+     */
+    private function walkOrdered(int $tenantId, int $packageId, array &$lessonIds, array $seen): void
+    {
+        if (isset($seen[$packageId])) {
+            return;
+        }
+        $seen[$packageId] = true;
+
+        $items = PackageItem::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('package_id', $packageId)
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($items as $item) {
+            if ($item->item_type === PackageItem::TYPE_LESSON) {
+                $lessonIds[] = (int) $item->item_id;
+            } else {
+                $this->walkOrdered($tenantId, (int) $item->item_id, $lessonIds, $seen);
+            }
+        }
+    }
+
+    /** Scope-free package_items lookup, pinned to one tenant (webhook-safe). */
+    private function itemsOf(int $tenantId, int $packageId): Collection
+    {
+        return PackageItem::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('package_id', $packageId)
+            ->get();
     }
 
     /**

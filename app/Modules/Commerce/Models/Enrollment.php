@@ -5,6 +5,7 @@ namespace App\Modules\Commerce\Models;
 use App\Models\User;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Package;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Support\Traits\BelongsToTenant;
@@ -15,8 +16,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /**
  * Grants a student access to a course, or a single lesson — the single source of
  * truth for access (03_Data_Model.md §5). A row carries `course_id` (whole
- * course), `lesson_id` (one lesson), or `exam_id`. `unit_id` / `bundle_id` are
- * dormant columns (Unit + Bundle retired — VD change set §7); no relations remain.
+ * course), `lesson_id` (one lesson), or `exam_id`. A package purchase fans out
+ * into per-lesson rows (B15 / VD LP-D2); each carries the source `package_id` as
+ * provenance (never an access key — access is always by `lesson_id`). `unit_id` /
+ * `bundle_id` are dormant columns (Unit + Bundle retired — VD change set §7).
  *
  * @property EnrollmentStatus $status
  * @property EnrollmentSource $source
@@ -32,6 +35,7 @@ class Enrollment extends Model
         'lesson_id',
         'exam_id',
         'bundle_id',
+        'package_id',
         'source',
         'starts_at',
         'expires_at',
@@ -63,6 +67,12 @@ class Enrollment extends Model
     public function lesson(): BelongsTo
     {
         return $this->belongsTo(Lesson::class);
+    }
+
+    /** The package this per-lesson grant fanned out from, when it did (B15). */
+    public function package(): BelongsTo
+    {
+        return $this->belongsTo(Package::class);
     }
 
     public function exam(): BelongsTo

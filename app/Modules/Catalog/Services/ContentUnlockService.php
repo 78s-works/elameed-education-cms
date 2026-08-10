@@ -5,21 +5,35 @@ namespace App\Modules\Catalog\Services;
 use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
+use App\Modules\Catalog\Enums\GateRule;
 use App\Modules\Catalog\Enums\LessonSectionType;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonSection;
+use App\Modules\Catalog\Models\PartPassOverride;
 
 /**
- * The ONLY within-lesson gate left in the convention model: solution/answer
- * videos are hidden until the matching exam is submitted.
+ * Within-lesson content gating. Two gates coexist during the VD migration:
  *
- *   quiz_solution — locked until this lesson's lesson_quiz has a submitted attempt.
- *   hw_solution   — locked until this lesson's homework  has a submitted attempt.
+ * 1. Per-part sequential gate (VD change set §7, LP-13/LP-14) — the new authoring
+ *    model. Parts are ordered by sort_order; a quiz/homework part carries a
+ *    `gate_rule` that gates every LATER part until the student clears it:
+ *      must_submit — the backing exam has a submitted attempt.
+ *      must_pass   — a submitted attempt's best score meets the exam's degree of
+ *                    success (pass_mode/pass_value, best across tries — LP-14),
+ *                    OR a teacher pass-override row exists (part_pass_overrides,
+ *                    LP-D3). Once one gate is unmet, all following parts lock.
  *
- * Every other section type (lecture_video, pdf) is always open, and exams are
- * never locked. A lesson with no (published) exam of the matching type doesn't
- * gate its solution — an orphan solution simply shows. A staff-granted override
- * on the section/lesson/unit unlocks outright.
+ * 2. Legacy solution gate (doc 11) — answer videos hidden until the matching
+ *    lesson-level exam is submitted:
+ *      quiz_solution — locked until this lesson's lesson_quiz has a submitted attempt.
+ *      hw_solution   — locked until this lesson's homework  has a submitted attempt.
+ *
+ * Plain content (video/lecture_video/pdf) is open unless a preceding gate locks it,
+ * and exams themselves are never locked (attempt endpoints stay reachable — the
+ * gate sequences CONTENT, not exam access). A lesson with no gating part / no
+ * matching exam gates nothing. A staff-granted override on the section/lesson/unit
+ * unlocks that content outright (it does NOT satisfy a must_pass gate for later
+ * parts — only a real pass or a pass-override does).
  *
  * Access-critical, so tenant id is explicit and queries run withoutGlobalScopes
  * (mirrors EnrollmentService).
@@ -40,6 +54,8 @@ class ContentUnlockService
         $sections = LessonSection::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('lesson_id', $lesson->getKey())
+            ->orderBy('sort_order')
+            ->orderBy('id')
             ->get();
 
         $overrideSets = $this->overrides->activeTargetSets($tenantId, $userId);
@@ -50,61 +66,82 @@ class ContentUnlockService
         $hwSubmitted = $this->examSubmitted($tenantId, $userId, (int) $lesson->getKey(), ExamType::Homework);
 
         $map = [];
+        $gateBlocked = false; // flipped once a preceding part's gate_rule is unmet (LP-13)
+
         foreach ($sections as $section) {
-            if ($this->overrides->sectionCovered($overrideSets, $section, $unitId)) {
-                $map[(int) $section->id] = false;
+            $covered = $this->overrides->sectionCovered($overrideSets, $section, $unitId);
 
-                continue;
+            // Displayed lock: an override opens the part outright; otherwise a
+            // preceding unmet gate (new model) OR the legacy solution gate locks it.
+            $map[(int) $section->id] = $covered
+                ? false
+                : ($gateBlocked || $this->lockedByType($section->type, $quizSubmitted, $hwSubmitted));
+
+            // Does THIS part gate the parts after it? Evaluated from real progress
+            // (not the override) so a content override never masks a missing pass.
+            if (! $gateBlocked && $this->isGatingPart($section)
+                && ! $this->gateSatisfied($tenantId, $userId, $section)) {
+                $gateBlocked = true;
             }
-
-            $map[(int) $section->id] = $this->lockedByType($section->type, $quizSubmitted, $hwSubmitted);
         }
 
         return $map;
     }
 
-    /** Is this single section locked for the user? */
+    /**
+     * Is this single section locked for the user? Delegates to lockMap so the
+     * per-part sequential gate and the legacy solution gate resolve identically
+     * whether we ask for one section or the whole lesson.
+     */
     public function isSectionLocked(int $tenantId, int $userId, LessonSection $section): bool
     {
-        if (! $section->type->isSolution()) {
-            return false; // only solution videos are gated
-        }
-
-        $unitId = Lesson::withoutGlobalScopes()
+        $lesson = Lesson::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('id', $section->lesson_id)
-            ->value('unit_id');
+            ->first();
 
-        if ($this->overrides->hasActiveForSection($tenantId, $userId, $section, $unitId !== null ? (int) $unitId : null)) {
+        if ($lesson === null) {
             return false;
         }
 
-        $type = $section->type === LessonSectionType::QuizSolution ? ExamType::LessonQuiz : ExamType::Homework;
-
-        return ! $this->examSubmitted($tenantId, $userId, (int) $section->lesson_id, $type);
+        return $this->lockMap($tenantId, $userId, $lesson)[(int) $section->id] ?? false;
     }
 
     /**
-     * Is `$assetId`, as delivered inside lesson `$lessonId`, blocked by a solution
-     * gate? Reachable while any hosting section is unlocked; not gated when no
-     * section hosts the asset (a plain lesson video). Guards the playback endpoint
-     * so the solution gate can't be skipped by requesting a token directly.
+     * Is `$assetId`, as delivered inside lesson `$lessonId`, blocked by a content
+     * gate (a preceding part's gate_rule or the legacy solution gate)? Reachable
+     * while any hosting section is unlocked; not gated when no section hosts the
+     * asset (a plain lesson video). Guards the playback endpoint so the gate can't
+     * be skipped by requesting a token directly.
      */
     public function isAssetLockedInLesson(int $tenantId, int $userId, int $lessonId, int $assetId): bool
     {
-        $sections = LessonSection::withoutGlobalScopes()
+        $lesson = Lesson::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
-            ->where('lesson_id', $lessonId)
-            ->where('media_asset_id', $assetId)
-            ->get();
+            ->where('id', $lessonId)
+            ->first();
 
-        if ($sections->isEmpty()) {
+        if ($lesson === null) {
             return false;
         }
 
-        foreach ($sections as $section) {
-            if (! $this->isSectionLocked($tenantId, $userId, $section)) {
-                return false;
+        $hostingIds = LessonSection::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('lesson_id', $lessonId)
+            ->where('media_asset_id', $assetId)
+            ->pluck('id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
+
+        if ($hostingIds === []) {
+            return false;
+        }
+
+        $map = $this->lockMap($tenantId, $userId, $lesson);
+
+        foreach ($hostingIds as $id) {
+            if (($map[$id] ?? false) === false) {
+                return false; // a hosting section is open → the asset is reachable
             }
         }
 
@@ -119,6 +156,60 @@ class ContentUnlockService
             LessonSectionType::HwSolution => ! $hwSubmitted,
             default => false,
         };
+    }
+
+    /** A quiz/homework part with a gate_rule + backing exam gates the later parts. */
+    private function isGatingPart(LessonSection $section): bool
+    {
+        return $section->gate_rule !== null && $section->exam_id !== null;
+    }
+
+    /**
+     * Has the user cleared this gating part's gate_rule (VD LP-13/LP-14)?
+     *   must_submit — a submitted attempt on the backing exam exists.
+     *   must_pass   — a teacher pass-override exists (LP-D3), OR the best submitted
+     *                 attempt meets the exam's degree of success (Exam::passed).
+     * A missing backing exam gates nothing (true).
+     */
+    private function gateSatisfied(int $tenantId, int $userId, LessonSection $section): bool
+    {
+        $exam = Exam::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('id', $section->exam_id)
+            ->first();
+
+        if ($exam === null) {
+            return true;
+        }
+
+        if ($section->gate_rule === GateRule::MustPass
+            && PartPassOverride::withoutGlobalScopes()
+                ->where('tenant_id', $tenantId)
+                ->where('lesson_section_id', $section->getKey())
+                ->where('user_id', $userId)
+                ->exists()) {
+            return true;
+        }
+
+        $attempts = ExamAttempt::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('exam_id', $exam->getKey())
+            ->where('user_id', $userId)
+            ->whereNotNull('submitted_at')
+            ->get(['score', 'max_score']);
+
+        if ($section->gate_rule === GateRule::MustSubmit) {
+            return $attempts->isNotEmpty();
+        }
+
+        // must_pass: best attempt across tries meets the degree of success (LP-14).
+        foreach ($attempts as $attempt) {
+            if ($exam->passed((float) $attempt->score, (float) $attempt->max_score) === true) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

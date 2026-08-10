@@ -18,8 +18,9 @@ Identity is deliberately built around the distinction between a **global user id
 ## Models
 
 - **`TenantUser`** (`tenant_user`) — a user's membership + role within one tenant. **Global** mapping table (not RLS-scoped). Casts `role` → `TenantUserRole`, `status` → `MembershipStatus`, `permissions` → `array` (the M18 granular grant, only meaningful for assistants); `isActive()`, `hasPermission($key)`, `effectivePermissions()` helpers.
-- **`StudentProfile`** — per-academy registration details for a student (`gender`, `governorate`, `region`, `academic_year`, `education_type`, `guardian_phone`). Tenant-scoped, one row per (tenant, student). Free-text; the frontend owns the dropdown options. Exposes `FIELDS`, `rules($prefix)`, `fields($data)`.
+- **`StudentProfile`** — per-academy registration details for a student (`gender`, `governorate`, `region`, `academic_year`, `education_type`, `guardian_phone`, plus VD R6/R7 `study_mode` enum `center|online|both` default `online` + `center_id` nullable FK → `centers`). Tenant-scoped, one row per (tenant, student). Free-text profile fields; the frontend owns the dropdown options. `guardian_phone` is non-unique (siblings share). Exposes `FIELDS` (incl. `study_mode`; `center_id` is resolved from a center uuid, not plucked), `rules($prefix)`, `fields($data)`, and a `center()` relation.
 - **`ParentLink`** — links a parent user to a student user within a tenant, with an optional `relation`. Tenant-scoped.
+- **`ParentMagicLink`** — a permanent, revocable passwordless login token for a guardian (VD R11). Stores only the SHA-256 `token_hash` (never the raw token) + `is_active` + `last_used_at`. Tenant-scoped; consumed via `GET /parent/magic/{token}` to mint a parent session. Issued/rotated/revoked by `ParentMagicLinkService`.
 - **`OtpCode`** — a one-time passcode. Stores only `code_hash` (never plaintext), plus `identifier`, `channel`, `purpose`, `attempts`, `expires_at`, `consumed_at`. `isExpired()` / `isConsumed()` helpers.
 - **`LoginAttempt`** — an audit row for every login attempt (`user_id`, `tenant_id`, `identifier`, `ip`, `user_agent`, `success`). Create-only (`UPDATED_AT = null`).
 - **`User`** (`app/Models/User`, shared) — the global identity Identity authenticates and edits (`name`, `phone`, `email`, `password`, `locale`, verification timestamps, `isPlatformAdmin()`, `membershipFor()`).
@@ -67,7 +68,9 @@ Registration is student self-signup into the current academy: it creates the glo
   "region": "Nasr City",
   "academic_year": "Grade 12",
   "education_type": "general",
-  "guardian_phone": "+201009998887"
+  "guardian_phone": "+201009998887",
+  "study_mode": "center",
+  "center": "9f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f"
 }
 ```
 
@@ -83,7 +86,9 @@ Registration is student self-signup into the current academy: it creates the glo
 | `region` | nullable, string, max 100 |
 | `academic_year` | nullable, string, max 100 |
 | `education_type` | nullable, string, max 100 |
-| `guardian_phone` | nullable, string, max 30, regex `^[0-9+]{6,30}$` |
+| `guardian_phone` | nullable, string, max 30, regex `^[0-9+]{6,30}$` (non-unique — siblings share) |
+| `study_mode` | nullable, one of `center` \| `online` \| `both` (defaults `online`) — VD R6/R7 |
+| `center` | center **uuid** (not the numeric id); **required when `study_mode` ∈ {center, both}**; must belong to the current tenant; resolved to `student_profiles.center_id` |
 
 **Response** `202 Accepted`
 ```json
@@ -372,10 +377,41 @@ OTP required (when `otp.login_required` is on):
 
 Read-only. A parent (`role:parent`) sees only children linked to them in this academy, plus each child's progress and results. Targeting a student who isn't the parent's linked child returns `404`.
 
+Parents may sign in **passwordless** via a permanent magic link (VD R11) instead of a password. The link is minted by the teacher (`POST /v1/teacher/students/{student}/parents/{parent}/magic-link`, see the teacher section) and consumed at the public endpoint below.
+
+---
+
+#### `GET /v1/parent/magic/{token}`
+**Purpose:** Passwordless parent login. Resolves the guardian from a permanent magic-link token **in the resolved tenant**, mints a normal parent Sanctum session, and returns the child list.
+**Auth:** 🔓 public (no token)
+**Middleware:** `tenant`, `throttle:auth`
+
+**Path params**
+| Param | In | Description |
+|---|---|---|
+| `token` | path | Raw magic-link token (compared by SHA-256 hash; never stored in plaintext) |
+
+**Request body:** None
+
+**Response** `200`
+```json
+{
+  "data": {
+    "token": "42|xxxx…",
+    "user": { "uuid": "…", "name": "Abu Sara", "phone": "+20…" },
+    "children": [ { "uuid": "…", "name": "Sara Kamal", "phone": "+20…", "relation": "father", "lessons_completed": 12 } ],
+    "active_child": "…"
+  }
+}
+```
+
+**Lifecycle (VD-D5 — permanent + revocable):** the token never expires and is **reusable** (each consume stamps `last_used_at`). It is **tenant-scoped** (a token minted on another academy host resolves to nothing) and **cryptographically random**. Revocation is explicit — teacher rotate (a new link deactivates the old) or DELETE (`is_active=false`).
+**Errors:** `404` on an invalid / revoked / cross-tenant token, or when the guardian has no active `parent` membership (no enumeration); `403` if the academy's sign-in is disabled; `429` if rate-limited.
+
 ---
 
 #### `GET /v1/parent/children`
-**Purpose:** List the parent's linked children in this academy, with a completed-lessons count.
+**Purpose:** List the parent's linked children in this academy, with a completed-lessons count. Only **active** students are listed (a suspended/removed child drops off — the magic link stays valid). Each child carries an `active` flag = the session's currently-selected child.
 **Auth:** 👪 role:parent
 **Middleware:** `tenant`, `auth:sanctum`, `active`, `role:parent`
 
@@ -398,13 +434,33 @@ Read-only. A parent (`role:parent`) sees only children linked to them in this ac
       "name": "Sara Kamal",
       "phone": "+201223334445",
       "relation": "father",
-      "lessons_completed": 12
+      "lessons_completed": 12,
+      "active": true
     }
   ]
 }
 ```
 
 **Errors:** `401`; `403` if not a parent of this tenant.
+
+---
+
+#### `POST /v1/parent/switch`
+**Purpose:** Multi-child switcher (VD R11) — set the active child of **this session only** (persisted on `personal_access_tokens.active_child_id`, so it never leaks to another device/session).
+**Auth:** 👪 role:parent
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:parent`
+
+**Request body**
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `student` | uuid | yes | A child linked to this parent and still an active student |
+
+**Response** `200`
+```json
+{ "data": { "uuid": "…", "name": "Sara Kamal", "phone": "+20…", "relation": "father", "lessons_completed": 12, "active": true } }
+```
+
+**Errors:** `404` if the target isn't a linked/active child; `422` if `student` is missing/not a uuid.
 
 ---
 
@@ -575,7 +631,7 @@ The teacher's roster + student lifecycle. All actions are tenant-scoped and oper
 | `phone` | required, string, max 20, regex `^[0-9+]{6,20}$` |
 | `email` | nullable, email, max 255 |
 | `password` | nullable, string, min 8 (if omitted a temp password is generated and returned once) |
-| profile fields | `gender`, `governorate`, `region`, `academic_year`, `education_type`, `guardian_phone` — all nullable (see `StudentProfile`) |
+| profile fields | `gender`, `governorate`, `region`, `academic_year`, `education_type`, `guardian_phone`, `study_mode` (`center\|online\|both`) — all nullable (see `StudentProfile`). `center_id` is only settable via `/auth/register` (center uuid). |
 
 **Response** `201` (nulls stripped; `temporary_password` present only when generated)
 ```json
@@ -684,7 +740,7 @@ The teacher's roster + student lifecycle. All actions are tenant-scoped and oper
 | `phone` | sometimes, string, max 30, unique in `users` (ignoring this student) |
 | `email` | sometimes, nullable, email, max 190, unique in `users` (ignoring this student) |
 | `status` | sometimes, `active` \| `suspended` |
-| profile fields | `gender`, `governorate`, `region`, `academic_year`, `education_type`, `guardian_phone` (all nullable) |
+| profile fields | `gender`, `governorate`, `region`, `academic_year`, `education_type`, `guardian_phone`, `study_mode` (`center\|online\|both`) — all nullable |
 
 **Response** `200`
 ```json
@@ -1444,6 +1500,50 @@ Manage the parents linked to one of the teacher's students (M13). Linking provis
 ```
 
 **Errors:** `404` not a student here; `401`/`403`.
+
+---
+
+#### `POST /v1/teacher/students/{student:uuid}/parents/{parent:uuid}/magic-link`
+**Purpose:** Issue (rotating) a permanent passwordless magic link for a linked guardian (VD R11). Any prior link for that guardian is deactivated. The **raw** token is returned **once** — only its SHA-256 hash is stored. Scoped to the `(student, parent)` link. Audit: `parent.magic_link_issued`.
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
+
+**Path params**
+| Param | In | Description |
+|---|---|---|
+| `student` | path | Student **uuid** |
+| `parent` | path | Parent **uuid** (must be linked to the student) |
+
+**Request body:** None
+
+**Response** `201`
+```json
+{ "data": { "uuid": "<parent uuid>", "magic_token": "a1b2…(48 hex)", "magic_path": "/parent/magic/a1b2…" } }
+```
+
+**Errors:** `404` if the parent isn't linked to this student (or the student isn't here); `401`/`403`.
+
+---
+
+#### `DELETE /v1/teacher/students/{student:uuid}/parents/{parent:uuid}/magic-link`
+**Purpose:** Revoke **every** magic link for a linked guardian (`is_active=false`). Audit: `parent.magic_link_revoked`.
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students`
+
+**Path params**
+| Param | In | Description |
+|---|---|---|
+| `student` | path | Student **uuid** |
+| `parent` | path | Parent **uuid** (must be linked to the student) |
+
+**Request body:** None
+
+**Response** `200`
+```json
+{ "data": { "revoked": true } }
+```
+
+**Errors:** `404` if the parent isn't linked to this student; `401`/`403`.
 
 ---
 

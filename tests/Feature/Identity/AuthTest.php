@@ -3,8 +3,10 @@
 namespace Tests\Feature\Identity;
 
 use App\Models\User;
+use App\Modules\Centers\Models\Center;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
+use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Notifications\Contracts\SmsSender;
 use App\Modules\Tenancy\Enums\TenantStatus;
@@ -57,6 +59,15 @@ class AuthTest extends TestCase
         return $user;
     }
 
+    private function center(?Tenant $tenant = null): Center
+    {
+        $center = new Center(['name' => 'Main Branch', 'is_active' => true]);
+        $center->tenant_id = ($tenant ?? $this->tenant)->id; // no request context in tests
+        $center->save();
+
+        return $center;
+    }
+
     private function setAccess(bool $login, bool $registration, string $verificationMode = 'auto'): void
     {
         $profile = new TeacherProfile([
@@ -99,6 +110,101 @@ class AuthTest extends TestCase
             'governorate' => 'القاهرة',
             'academic_year' => 'الثالث الثانوي',
         ]);
+    }
+
+    public function test_register_persists_study_mode_and_resolves_center_uuid(): void
+    {
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+        $center = $this->center();
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Center Kid',
+            'phone' => '01000000020',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'study_mode' => 'center',
+            'center' => $center->uuid, // uuid, not the numeric id
+        ])->assertCreated();
+
+        $user = User::where('phone', '01000000020')->firstOrFail();
+        $this->assertDatabaseHas('student_profiles', [
+            'user_id' => $user->id,
+            'study_mode' => 'center',
+            'center_id' => $center->id,
+        ]);
+    }
+
+    public function test_register_defaults_study_mode_online_with_no_center(): void
+    {
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Online Kid',
+            'phone' => '01000000021',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+        ])->assertCreated();
+
+        $user = User::where('phone', '01000000021')->firstOrFail();
+        $this->assertDatabaseHas('student_profiles', [
+            'user_id' => $user->id,
+            'study_mode' => 'online', // column default
+            'center_id' => null,
+        ]);
+    }
+
+    public function test_register_requires_center_when_study_mode_is_center(): void
+    {
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'No Center',
+            'phone' => '01000000022',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'study_mode' => 'both',
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+
+        $this->assertDatabaseMissing('users', ['phone' => '01000000022']);
+    }
+
+    public function test_register_rejects_center_from_another_tenant(): void
+    {
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+
+        $other = Tenant::create(['slug' => 'other', 'name' => 'Other Academy', 'status' => TenantStatus::Active]);
+        $foreignCenter = $this->center($other); // belongs to a DIFFERENT academy
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Cross Tenant',
+            'phone' => '01000000023',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'study_mode' => 'center',
+            'center' => $foreignCenter->uuid,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+
+        $this->assertDatabaseMissing('users', ['phone' => '01000000023']);
+    }
+
+    public function test_register_allows_siblings_to_share_a_guardian_phone(): void
+    {
+        // guardian_phone is non-unique (VD R6): two students in the same academy
+        // may share one guardian number.
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+        $guardian = '01055555555';
+
+        foreach (['01000000024', '01000000025'] as $phone) {
+            $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+                'name' => 'Sibling '.$phone,
+                'phone' => $phone,
+                'password' => 'password123',
+                'password_confirmation' => 'password123',
+                'guardian_phone' => $guardian,
+            ])->assertCreated();
+        }
+
+        $this->assertSame(2, StudentProfile::withoutGlobalScopes()->where('guardian_phone', $guardian)->count());
     }
 
     public function test_register_sends_otp_when_teacher_chooses_otp_verification(): void

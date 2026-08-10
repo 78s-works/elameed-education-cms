@@ -2,32 +2,48 @@
 
 namespace App\Modules\Catalog\Http\Controllers;
 
+use App\Modules\Catalog\Enums\AccessMode;
 use App\Modules\Catalog\Http\Resources\CourseDetailResource;
 use App\Modules\Catalog\Http\Resources\CourseResource;
+use App\Modules\Catalog\Http\Resources\LessonResource;
+use App\Modules\Catalog\Http\Resources\PackageResource;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Package;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 /**
  * Public catalogue for the resolved tenant (GET /courses, /courses/{slug}).
- * Only published (visible + due) courses are returned; tenant isolation is via
+ * Only published (visible + due) content is returned; tenant isolation is via
  * the BelongsToTenant scope. No auth.
+ *
+ * GET /courses serves the three discovery granularities (VD R8 / doc 12 §7 LP-9):
+ *   - default          → published courses (unchanged; backward compatible).
+ *   - ?view=lessons     → published, individually-purchasable standalone lessons.
+ *   - ?view=packages    → purchasable recursive content packages.
+ *
+ * All three accept ?access_mode=center|online|both (channel filter, wildcard on
+ * `both` via {@see AccessMode::isVisibleTo}) and — for the year-scoped lessons/
+ * packages views — an optional ?academic_year=<uuid> narrowing.
  */
 class PublicCatalogController
 {
     public function index(Request $request): AnonymousResourceCollection
     {
-        $courses = Course::query()
-            ->published()
-            ->with('category')
-            ->when($request->input('filter.category_id'), fn ($q, $id) => $q->where('category_id', $id))
-            ->when($request->input('filter.grade'), fn ($q, $grade) => $q->whereHas('category', fn ($c) => $c->where('grade', $grade)))
-            ->when($request->input('filter.subject'), fn ($q, $subject) => $q->whereHas('category', fn ($c) => $c->where('subject', $subject)))
-            ->when($request->input('q'), fn ($q, $term) => $q->where('title', 'like', '%'.$term.'%'))
-            ->latest()
-            ->paginate(20);
+        $request->validate([
+            'view' => ['sometimes', Rule::in(['courses', 'lessons', 'packages'])],
+            'access_mode' => ['sometimes', Rule::enum(AccessMode::class)],
+        ]);
 
-        return CourseResource::collection($courses);
+        return match ((string) $request->string('view')) {
+            'lessons' => $this->lessons($request),
+            'packages' => $this->packages($request),
+            default => $this->courses($request),
+        };
     }
 
     public function show(Course $course): CourseDetailResource
@@ -43,5 +59,94 @@ class PublicCatalogController
         ]);
 
         return new CourseDetailResource($course);
+    }
+
+    /** Default view — published courses of the tenant. */
+    private function courses(Request $request): AnonymousResourceCollection
+    {
+        $courses = Course::query()
+            ->published()
+            ->with('category')
+            ->when($request->input('filter.category_id'), fn ($q, $id) => $q->where('category_id', $id))
+            ->when($request->input('filter.grade'), fn ($q, $grade) => $q->whereHas('category', fn ($c) => $c->where('grade', $grade)))
+            ->when($request->input('filter.subject'), fn ($q, $subject) => $q->whereHas('category', fn ($c) => $c->where('subject', $subject)))
+            ->when($request->input('q'), fn ($q, $term) => $q->where('title', 'like', '%'.$term.'%'))
+            ->tap(fn (Builder $q) => $this->applyAccessMode($q, $request))
+            ->latest()
+            ->paginate(20);
+
+        return CourseResource::collection($courses);
+    }
+
+    /** view=lessons — published, individually-purchasable standalone lessons (R8 "single lectures"). */
+    private function lessons(Request $request): AnonymousResourceCollection
+    {
+        $lessons = Lesson::query()
+            ->published()
+            ->where('is_purchasable', true)
+            ->when($request->input('q'), fn ($q, $term) => $q->where('title', 'like', '%'.$term.'%'))
+            ->tap(fn (Builder $q) => $this->applyAccessMode($q, $request))
+            ->tap(fn (Builder $q) => $this->applyAcademicYear($q, $request))
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->paginate(20);
+
+        return LessonResource::collection($lessons);
+    }
+
+    /** view=packages — purchasable recursive content packages (R8 modules/bundles). */
+    private function packages(Request $request): AnonymousResourceCollection
+    {
+        $packages = Package::query()
+            ->where('is_purchasable', true)
+            ->when($request->input('q'), fn ($q, $term) => $q->where('name', 'like', '%'.$term.'%'))
+            ->tap(fn (Builder $q) => $this->applyAccessMode($q, $request))
+            ->tap(fn (Builder $q) => $this->applyAcademicYear($q, $request))
+            ->withCount('items')
+            ->orderBy('name')
+            ->orderBy('id')
+            ->paginate(20);
+
+        return PackageResource::collection($packages);
+    }
+
+    /**
+     * Channel filter on the `access_mode` column. Reuses {@see AccessMode::isVisibleTo}
+     * so `both` content always shows and `?access_mode=both` returns every channel —
+     * i.e. the filter behaves like a student of that study_mode browsing.
+     */
+    private function applyAccessMode(Builder $query, Request $request): void
+    {
+        $mode = AccessMode::tryFrom((string) $request->string('access_mode'));
+
+        if ($mode === null) {
+            return;
+        }
+
+        $allowed = array_map(
+            fn (AccessMode $m) => $m->value,
+            array_filter(AccessMode::cases(), fn (AccessMode $m) => $m->isVisibleTo($mode)),
+        );
+
+        $query->whereIn('access_mode', $allowed);
+    }
+
+    /**
+     * Optional ?academic_year=<uuid> narrowing for the year-scoped lessons/packages
+     * views. The uuid is tenant-scoped by the BelongsToTenant global scope; an
+     * unknown/foreign uuid resolves to no year, yielding an empty result set rather
+     * than silently leaking every year.
+     */
+    private function applyAcademicYear(Builder $query, Request $request): void
+    {
+        if (! $request->filled('academic_year')) {
+            return;
+        }
+
+        $yearId = AcademicYear::query()
+            ->where('uuid', (string) $request->string('academic_year'))
+            ->value('id');
+
+        $query->where('academic_year_id', $yearId ?? 0);
     }
 }

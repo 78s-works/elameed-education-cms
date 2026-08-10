@@ -30,7 +30,7 @@ class CourseResource extends JsonResource
             'publish_at' => $this->publish_at?->toIso8601String(),
             'is_free' => $this->is_free,
             'purchase_enabled' => $this->purchase_enabled,
-            'is_center' => $this->is_center,
+            'access_mode' => $this->access_mode?->value,
             'cover_url' => $this->cover_url,
             'thumbnail_url' => $this->thumbnail_url,
             'promo_video_url' => $this->promo_video_url,

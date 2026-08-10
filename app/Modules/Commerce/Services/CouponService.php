@@ -45,13 +45,14 @@ class CouponService
         return ['coupon' => $coupon, 'discount_minor' => $coupon->discountFor($base)];
     }
 
-    /** Sum of content (course + bundle) line prices; top-ups are never discountable. */
+    /** Sum of content (course + package) line prices; top-ups are never discountable. */
     private function contentSubtotal(array $lines): int
     {
         $sum = 0;
 
         foreach ($lines as $line) {
-            if (in_array($line['item_type'], [OrderItem::TYPE_COURSE, OrderItem::TYPE_BUNDLE], true)) {
+            // `package` replaces the retired `bundle` as the content grouping (B15).
+            if (in_array($line['item_type'], [OrderItem::TYPE_COURSE, OrderItem::TYPE_PACKAGE], true)) {
                 $sum += (int) $line['price_minor'];
             }
         }

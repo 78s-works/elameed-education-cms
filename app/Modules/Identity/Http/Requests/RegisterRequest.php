@@ -2,7 +2,9 @@
 
 namespace App\Modules\Identity\Http\Requests;
 
+use App\Modules\Centers\Models\Center;
 use App\Modules\Identity\Models\StudentProfile;
+use Closure;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rules\Password;
 
@@ -22,8 +24,22 @@ class RegisterRequest extends FormRequest
             // Client sends `password_confirmation` (تأكيد كلمة المرور); must match.
             'password' => ['required', 'string', 'confirmed', Password::min(8)],
             'locale' => ['sometimes', 'string', 'in:ar,en'],
-            ...StudentProfile::rules(), // gender, governorate, region, academic_year, education_type, guardian_phone
+            ...StudentProfile::rules(), // gender, governorate, region, academic_year, education_type, guardian_phone, study_mode
+            // Center uuid (not the numeric id) — required when the student attends
+            // on-site (study_mode center|both), forbidden meaning for online-only.
+            // Resolved to student_profiles.center_id in RegisterStudentAction.
+            'center' => ['nullable', 'required_if:study_mode,center,both', 'string', $this->centerInTenant()],
         ];
+    }
+
+    /** The center uuid must resolve inside the current tenant (BelongsToTenant scope). */
+    private function centerInTenant(): Closure
+    {
+        return function (string $attribute, mixed $value, Closure $fail): void {
+            if (! Center::query()->where('uuid', $value)->exists()) {
+                $fail('The selected center is invalid.');
+            }
+        };
     }
 
     protected function prepareForValidation(): void

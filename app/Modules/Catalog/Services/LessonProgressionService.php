@@ -31,11 +31,13 @@ class LessonProgressionService
 {
     public function __construct(
         private readonly ContentAccessOverrideService $overrides,
+        private readonly SequentialUnlockService $sequential,
     ) {}
 
     /**
-     * @return string|null null = the lesson may be opened; otherwise a machine
-     *                     lock reason (prev_quiz_missing | prev_homework_missing).
+     * @return string|null null = the lesson may be opened; otherwise a machine lock
+     *                     reason (prev_lesson_incomplete | prev_quiz_missing |
+     *                     prev_homework_missing).
      */
     public function progressionLock(int $tenantId, int $userId, Lesson $lesson): ?string
     {
@@ -46,6 +48,14 @@ class LessonProgressionService
         // A staff-granted override on this lesson (or its unit) opens it outright.
         if ($this->overrides->hasActiveForLesson($tenantId, $userId, $lesson)) {
             return null;
+        }
+
+        // Sequential package unlock (B14 / VD R5): a lesson bought as part of a
+        // package stays locked until the PREVIOUS lesson in that package's ordered
+        // sequence is completed. No-op for lessons not sourced from a package.
+        $sequenceLock = $this->sequential->sequenceLock($tenantId, $userId, $lesson);
+        if ($sequenceLock !== null) {
+            return $sequenceLock;
         }
 
         $previous = $this->previousLesson($tenantId, $lesson);

@@ -3,6 +3,7 @@
 namespace App\Modules\Tenancy\Services;
 
 use App\Models\User;
+use App\Modules\Catalog\Enums\AccessMode;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
@@ -224,7 +225,7 @@ class LandingResolver
             'cover_url' => $c->cover_url ?: ($c->thumbnail_url ?: ($posters[$c->id] ?? null)),
             'thumbnail_url' => $c->thumbnail_url,
             'grade' => $c->category?->grade ?? $c->category?->name,
-            'type' => $c->is_center ? 'center' : 'online',
+            'type' => $c->access_mode === AccessMode::Center ? 'center' : 'online',
             'price' => ['amount_minor' => (int) $c->price_minor, 'currency' => $c->currency],
             'is_free' => (bool) $c->is_free,
             'lessons_count' => (int) ($lessons[$c->id]->c ?? 0),

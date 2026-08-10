@@ -9,6 +9,7 @@ use App\Modules\Identity\Http\Controllers\Teacher\Concerns\ManagesTenantStudents
 use App\Modules\Identity\Http\Requests\LinkParentRequest;
 use App\Modules\Identity\Models\ParentLink;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Identity\Services\ParentMagicLinkService;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Support\Audit\AuditLogger;
 use Illuminate\Http\JsonResponse;
@@ -121,15 +122,7 @@ class StudentParentController
     {
         $tenantId = $this->context->tenantOrFail()->getKey();
         $this->membershipOrFail($tenantId, $student);
-
-        $linked = ParentLink::query()
-            ->where('student_user_id', $student->getKey())
-            ->where('parent_user_id', $parent->getKey())
-            ->exists();
-
-        if (! $linked) {
-            throw new NotFoundHttpException('Parent is not linked to this student.');
-        }
+        $this->assertLinked($student, $parent);
 
         $validated = $request->validate([
             'password' => ['nullable', 'string', 'min:8', 'max:72'],
@@ -150,5 +143,61 @@ class StudentParentController
             'uuid' => $parent->uuid,
             'temporary_password' => $generated ? $password : null,
         ], fn ($v) => $v !== null)]);
+    }
+
+    /**
+     * Issue (rotating) a permanent passwordless magic link for a linked guardian
+     * (VD R11). The RAW token is returned ONCE, as a relative path to hand over
+     * (WhatsApp/SMS); only its hash is stored. Any prior link stops working.
+     * Scoped to the (student, parent) link — a teacher can only mint for their own.
+     */
+    public function magicLink(User $student, User $parent, ParentMagicLinkService $links): JsonResponse
+    {
+        $tenantId = $this->context->tenantOrFail()->getKey();
+        $this->membershipOrFail($tenantId, $student);
+        $this->assertLinked($student, $parent);
+
+        $raw = $links->issueFor($parent);
+
+        app(AuditLogger::class)->log('parent.magic_link_issued', [
+            'student_id' => $student->getKey(),
+            'parent_id' => $parent->getKey(),
+        ], $tenantId, 'user', $parent->getKey());
+
+        return response()->json(['data' => [
+            'uuid' => $parent->uuid,
+            'magic_token' => $raw,
+            'magic_path' => "/parent/magic/{$raw}",
+        ]], 201);
+    }
+
+    /** Revoke every magic link for a linked guardian (VD R11 revocable / VD-D5). */
+    public function revokeMagicLink(User $student, User $parent, ParentMagicLinkService $links): JsonResponse
+    {
+        $tenantId = $this->context->tenantOrFail()->getKey();
+        $this->membershipOrFail($tenantId, $student);
+        $this->assertLinked($student, $parent);
+
+        $links->revokeFor($parent);
+
+        app(AuditLogger::class)->log('parent.magic_link_revoked', [
+            'student_id' => $student->getKey(),
+            'parent_id' => $parent->getKey(),
+        ], $tenantId, 'user', $parent->getKey());
+
+        return response()->json(['data' => ['revoked' => true]]);
+    }
+
+    /** The parent must be linked to this student, else 404. */
+    private function assertLinked(User $student, User $parent): void
+    {
+        $linked = ParentLink::query()
+            ->where('student_user_id', $student->getKey())
+            ->where('parent_user_id', $parent->getKey())
+            ->exists();
+
+        if (! $linked) {
+            throw new NotFoundHttpException('Parent is not linked to this student.');
+        }
     }
 }

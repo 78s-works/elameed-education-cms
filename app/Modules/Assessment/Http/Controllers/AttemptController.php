@@ -15,6 +15,7 @@ use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Assessment\Services\ExamTimeExtensionService;
 use App\Modules\Assessment\Services\GradingService;
 use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\LessonSection;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Engagement\Services\PointsService;
@@ -95,7 +96,11 @@ class AttemptController
         if ($attempt === null) {
             $count = ExamAttempt::query()->where('exam_id', $exam->id)->where('user_id', $userId)->count();
 
-            if ($exam->attempts_allowed > 0 && $count >= $exam->attempts_allowed) {
+            // Retake cap (VD LP-14): a quiz/homework part sets max_tries per student
+            // on its backing exam (null = unlimited); otherwise fall back to the
+            // exam's own attempts_allowed. 0 means unlimited in both.
+            $cap = $this->attemptCap($exam);
+            if ($cap > 0 && $count >= $cap) {
                 throw new ConflictHttpException('No attempts remaining for this exam.');
             }
 
@@ -269,6 +274,25 @@ class AttemptController
         if (! $this->enrollments->hasExamAccess((int) $exam->tenant_id, $request->user()->getKey(), $exam)) {
             throw new AccessDeniedHttpException('You do not have access to this exam.');
         }
+    }
+
+    /**
+     * The per-student attempt cap for this exam. When the exam backs a lesson part
+     * (VD LP-14), the part's max_tries governs (null = unlimited → 0); otherwise
+     * the exam's own attempts_allowed applies. 0 = unlimited.
+     */
+    private function attemptCap(Exam $exam): int
+    {
+        $section = LessonSection::withoutGlobalScopes()
+            ->where('tenant_id', $exam->tenant_id)
+            ->where('exam_id', $exam->id)
+            ->first(['max_tries']);
+
+        if ($section !== null) {
+            return (int) ($section->max_tries ?? 0);
+        }
+
+        return (int) $exam->attempts_allowed;
     }
 
     private function assertOwned(Request $request, Exam $exam, ExamAttempt $attempt): void

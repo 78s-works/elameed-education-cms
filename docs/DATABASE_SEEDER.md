@@ -111,7 +111,7 @@ are derived** from `ledger_entries` (credits − debits), never stored.
 
 ### Booleans
 Stored as `tinyint(0|1)` in MySQL but returned as real JSON booleans through
-model casts (`is_free`, `is_center`, `is_published`, `downloadable`, `success`,
+model casts (`is_free`, `is_published`, `downloadable`, `success`,
 `is_visible`, `hide_ranking`, `login_enabled`, `registration_enabled`, …).
 
 ### Enums
@@ -275,7 +275,8 @@ Legend: **Null?** ✓ = nullable · **FK** → referenced table · *(enum)* valu
 | `access_days` | int | ✓ | validity window after purchase; null = lifetime |
 | `visibility` | string | | *(ContentVisibility)* `visible`\|`hidden`\|`scheduled` |
 | `publish_at` | datetime | ✓ | |
-| `is_free`, `purchase_enabled`, `is_center` | bool | | |
+| `is_free`, `purchase_enabled` | bool | | |
+| `access_mode` | string | | *(AccessMode)* `center`\|`online`\|`both` (default `both`); folds in retired `is_center` — VD doc 12 R2 |
 | `cover_url`, `thumbnail_url`, `promo_video_url` | string | ✓ | |
 | `points` | int | | gamification points on completion |
 
@@ -609,7 +610,7 @@ physics vs chemistry):
 | الفيزياء الحديثة | `modern-physics-g3` | 450 EGP | paid, 2 units, exams (standard + assignment + archived) |
 | ميكانيكا الكم المبسّطة | `quantum-mechanics-simplified` | 600 EGP | paid, bubble-sheet exam |
 | مقدمة مجانية في الفيزياء | `physics-intro-free` | free | `is_free`, all-preview lessons |
-| كورس السنتر - فيزياء | `center-physics` | 300 EGP | `is_center`, unlocked by activation code |
+| كورس السنتر - فيزياء | `center-physics` | 300 EGP | `access_mode=center`, unlocked by activation code |
 | أرشيف: الكهربية ٢٠٢٣ | `archive-electricity-2023` | 250 EGP | **soft-deleted**, `hidden` |
 
 (Academy B mirrors this with `organic-chemistry-g3`, `inorganic-chemistry`,

@@ -202,6 +202,11 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
     Route::post('/auth/password/forgot', [AuthController::class, 'forgotPassword'])->middleware('throttle:otp');
     Route::post('/auth/password/reset', [AuthController::class, 'resetPassword'])->middleware('throttle:otp');
 
+    // Passwordless parent access (M13/VD R11) — public: a permanent magic-link
+    // token mints a parent session. Rate-limited per IP (auth-class) against
+    // token guessing; the token is hashed at rest and tenant-scoped.
+    Route::get('/parent/magic/{token}', [ParentController::class, 'magicLogin'])->middleware('throttle:auth');
+
     // Authenticated — must be an ACTIVE member of this tenant (suspend blocks here).
     Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
         Route::post('/auth/logout', [AuthController::class, 'logout']);
@@ -303,6 +308,8 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         // Parent portal (M13) — parent role in the current tenant
         Route::middleware('role:parent')->group(function (): void {
             Route::get('/parent/children', [ParentController::class, 'children']);
+            // Multi-child switcher (VD R11) — set the active child of this session.
+            Route::post('/parent/switch', [ParentController::class, 'switchChild']);
             Route::get('/parent/children/{student:uuid}/progress', [ParentController::class, 'progress']);
             Route::get('/parent/children/{student:uuid}/results', [ParentController::class, 'results']);
         });
@@ -625,6 +632,12 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
                 // Re-issue a linked parent's password. `parent` resolved independently
                 // of `student` (same reason as destroy above); controller scopes by link.
                 Route::post('/teacher/students/{student:uuid}/parents/{parent:uuid}/reset-password', [StudentParentController::class, 'resetPassword'])
+                    ->withoutScopedBindings();
+                // Passwordless magic link (VD R11): issue (rotates) / revoke. `parent`
+                // resolved independently of `student` (same reason as reset-password).
+                Route::post('/teacher/students/{student:uuid}/parents/{parent:uuid}/magic-link', [StudentParentController::class, 'magicLink'])
+                    ->withoutScopedBindings();
+                Route::delete('/teacher/students/{student:uuid}/parents/{parent:uuid}/magic-link', [StudentParentController::class, 'revokeMagicLink'])
                     ->withoutScopedBindings();
             }); // permission:students
 

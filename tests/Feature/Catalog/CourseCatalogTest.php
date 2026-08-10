@@ -7,6 +7,7 @@ use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Package;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
@@ -75,6 +76,28 @@ class CourseCatalogTest extends TestCase
         $lesson->save();
 
         return $lesson;
+    }
+
+    private function makeYear(Tenant $tenant, string $name = 'Default'): AcademicYear
+    {
+        $year = new AcademicYear(['name' => $name, 'sort_order' => 0]);
+        $year->tenant_id = $tenant->id;
+        $year->save();
+
+        return $year;
+    }
+
+    private function makePackage(Tenant $tenant, array $attrs = []): Package
+    {
+        $package = new Package(array_merge(['name' => 'Pack '.uniqid()], $attrs));
+        $package->tenant_id = $tenant->id;
+        // academic_year_id is NOT NULL; fall back to (or create) a Default year.
+        $package->academic_year_id = $attrs['academic_year_id']
+            ?? AcademicYear::where('tenant_id', $tenant->id)->orderBy('id')->value('id')
+            ?? $this->makeYear($tenant)->id;
+        $package->save();
+
+        return $package;
     }
 
     public function test_lesson_has_many_assets_and_one_video(): void
@@ -221,5 +244,93 @@ class CourseCatalogTest extends TestCase
         $this->withHeaders($h)->getJson("/api/v1/teacher/lessons/{$lesson->id}/attachments")
             ->assertOk()
             ->assertJsonCount(1, 'data');
+    }
+
+    // ── B19: view=lessons|packages + access_mode filter ────────────────────────
+
+    public function test_catalogue_lessons_view_lists_only_published_purchasable_lessons(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $h = ['X-Tenant' => 'demo'];
+        $course = $this->makeCourse($tenant);
+
+        $this->makeLesson($tenant, $course, ['title' => 'Sellable', 'is_purchasable' => true, 'visibility' => ContentVisibility::Visible->value]);
+        $this->makeLesson($tenant, $course, ['title' => 'NotSellable', 'is_purchasable' => false, 'visibility' => ContentVisibility::Visible->value]);
+        $this->makeLesson($tenant, $course, ['title' => 'HiddenSellable', 'is_purchasable' => true, 'visibility' => ContentVisibility::Hidden->value]);
+
+        $names = collect($this->withHeaders($h)->getJson('/api/v1/courses?view=lessons')
+            ->assertOk()->json('data'))->pluck('name')->all();
+
+        $this->assertSame(['Sellable'], $names); // purchasable + published only
+    }
+
+    public function test_catalogue_packages_view_lists_only_purchasable_packages(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $h = ['X-Tenant' => 'demo'];
+
+        $this->makePackage($tenant, ['name' => 'Sellable Pack', 'is_purchasable' => true]);
+        $this->makePackage($tenant, ['name' => 'Locked Pack', 'is_purchasable' => false]);
+
+        $names = collect($this->withHeaders($h)->getJson('/api/v1/courses?view=packages')
+            ->assertOk()->json('data'))->pluck('name')->all();
+
+        $this->assertSame(['Sellable Pack'], $names);
+    }
+
+    public function test_catalogue_access_mode_filter_center_includes_both_excludes_online(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $h = ['X-Tenant' => 'demo'];
+        $course = $this->makeCourse($tenant);
+
+        foreach (['center', 'online', 'both'] as $mode) {
+            $this->makeLesson($tenant, $course, ['title' => ucfirst($mode), 'is_purchasable' => true, 'access_mode' => $mode]);
+        }
+
+        $names = collect($this->withHeaders($h)->getJson('/api/v1/courses?view=lessons&access_mode=center')
+            ->assertOk()->json('data'))->pluck('name')->all();
+
+        sort($names);
+        $this->assertSame(['Both', 'Center'], $names); // `both` is a wildcard; online excluded
+    }
+
+    public function test_catalogue_academic_year_filter_narrows_lessons(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $h = ['X-Tenant' => 'demo'];
+        $course = $this->makeCourse($tenant);
+
+        $y1 = $this->makeYear($tenant, 'Year 1');
+        $y2 = $this->makeYear($tenant, 'Year 2');
+        $this->makeLesson($tenant, $course, ['title' => 'In Y1', 'is_purchasable' => true, 'academic_year_id' => $y1->id]);
+        $this->makeLesson($tenant, $course, ['title' => 'In Y2', 'is_purchasable' => true, 'academic_year_id' => $y2->id]);
+
+        $names = collect($this->withHeaders($h)->getJson("/api/v1/courses?view=lessons&academic_year={$y1->uuid}")
+            ->assertOk()->json('data'))->pluck('name')->all();
+
+        $this->assertSame(['In Y1'], $names);
+    }
+
+    public function test_catalogue_default_view_still_returns_courses(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $h = ['X-Tenant' => 'demo'];
+        $this->makeCourse($tenant, ['title' => 'A Course', 'visibility' => ContentVisibility::Visible->value]);
+
+        // No view param → the course catalogue, unchanged (backward compatible).
+        $this->withHeaders($h)->getJson('/api/v1/courses')
+            ->assertOk()
+            ->assertJsonPath('data.0.title', 'A Course');
+    }
+
+    public function test_catalogue_rejects_unknown_view(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $this->makeCourse($tenant);
+
+        $this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson('/api/v1/courses?view=bundles')
+            ->assertStatus(422);
     }
 }

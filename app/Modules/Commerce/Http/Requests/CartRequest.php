@@ -20,9 +20,11 @@ class CartRequest extends FormRequest
     {
         return [
             'items' => ['required', 'array', 'min:1', 'max:50'],
-            'items.*.type' => ['required', Rule::in(['course', 'bundle', 'lesson', 'wallet_topup'])],
+            // `bundle` retired (Bundle removed, VD §7); `package` is the recursive
+            // content grouping that replaced it (B15).
+            'items.*.type' => ['required', Rule::in(['course', 'package', 'lesson', 'wallet_topup'])],
             'items.*.course' => ['required_if:items.*.type,course', 'string'],
-            'items.*.bundle' => ['required_if:items.*.type,bundle', 'string'],
+            'items.*.package' => ['required_if:items.*.type,package', 'string'],
             'items.*.lesson' => ['required_if:items.*.type,lesson', 'integer', 'min:1'],
             'items.*.amount_minor' => ['required_if:items.*.type,wallet_topup', 'integer', 'min:1'],
             // Optional promo code (M21); validated + priced server-side.

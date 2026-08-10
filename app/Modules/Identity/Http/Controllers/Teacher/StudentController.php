@@ -283,6 +283,7 @@ class StudentController
     private function attachProfiles($memberships, int $tenantId): void
     {
         $profiles = StudentProfile::withoutGlobalScopes()
+            ->with('center')
             ->where('tenant_id', $tenantId)
             ->whereIn('user_id', $memberships->pluck('user_id'))
             ->get()->keyBy('user_id');
@@ -315,6 +316,8 @@ class StudentController
             'academic_year' => $profile?->academic_year,
             'education_type' => $profile?->education_type,
             'guardian_phone' => $profile?->guardian_phone,
+            'study_mode' => $profile?->study_mode,
+            'center' => $profile?->center?->uuid,
         ];
     }
 }

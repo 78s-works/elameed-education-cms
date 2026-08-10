@@ -6,6 +6,7 @@ use App\Modules\Catalog\Http\Resources\LessonSectionResource;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Services\ContentUnlockService;
 use App\Modules\Catalog\Services\LessonProgressionService;
+use App\Modules\Catalog\Services\StudentPartVisibility;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\Request;
@@ -16,7 +17,8 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
  * GET /lessons/{lesson}/sections — the student's view of a lesson's typed
  * content sections, each stamped with its computed `locked` state from the
  * mandatory "Content Dependencies & Unlock Rules". Optional dependencies never
- * lock; they surface for the client to display.
+ * lock; they surface for the client to display. Parts outside the student's
+ * study_mode channel (B12 / LP-6) are filtered out before the response.
  */
 class StudentLessonSectionsController
 {
@@ -24,6 +26,7 @@ class StudentLessonSectionsController
         private readonly ContentUnlockService $unlock,
         private readonly EnrollmentService $enrollments,
         private readonly LessonProgressionService $progression,
+        private readonly StudentPartVisibility $visibility,
         private readonly TenantContext $context,
     ) {}
 
@@ -46,6 +49,13 @@ class StudentLessonSectionsController
         // Eager-load the backing exam so quiz/homework parts expose `exam.id`
         // (uuid) — the student player links its "Solve" action to it.
         $sections = $lesson->sections()->ordered()->with(['mediaAsset', 'exam'])->get();
+
+        // B12 (LP-6): hide parts outside the student's study_mode channel — an
+        // online student never sees center-only parts, and vice versa; `both`
+        // parts and `both` students are unrestricted.
+        $studyMode = $this->visibility->studyModeFor($tenantId, $userId);
+        $sections = $this->visibility->filter($sections, $studyMode);
+
         $lockMap = $this->unlock->lockMap($tenantId, $userId, $lesson);
 
         foreach ($sections as $section) {

@@ -32,6 +32,8 @@ class StudentResource extends JsonResource
             'academic_year' => $this->student_profile?->academic_year,
             'education_type' => $this->student_profile?->education_type,
             'guardian_phone' => $this->student_profile?->guardian_phone,
+            'study_mode' => $this->student_profile?->study_mode,
+            'center' => $this->student_profile?->center?->uuid,
         ];
     }
 }

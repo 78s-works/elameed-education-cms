@@ -4,6 +4,7 @@ namespace App\Modules\Commerce\Services;
 
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Package;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\OrderStatus;
 use App\Modules\Commerce\Models\Order;
@@ -44,6 +45,7 @@ class FulfillOrderService
         $contentTotal = 0;
         $courseIds = [];
         $lessonIds = [];
+        $packageIds = [];
 
         foreach ($order->items as $item) {
             if ($item->item_type === OrderItem::TYPE_COURSE) {
@@ -52,6 +54,9 @@ class FulfillOrderService
             } elseif ($item->item_type === OrderItem::TYPE_LESSON) {
                 $contentTotal += (int) $item->price_minor;
                 $lessonIds[] = (int) $item->item_id;
+            } elseif ($item->item_type === OrderItem::TYPE_PACKAGE) {
+                $contentTotal += (int) $item->price_minor;
+                $packageIds[] = (int) $item->item_id;
             } elseif ($item->item_type === OrderItem::TYPE_WALLET_TOPUP) {
                 // Money lands in the student's wallet.
                 $legs[] = $this->leg(LedgerEntry::STUDENT_WALLET, LedgerEntry::CREDIT, (int) $item->price_minor, $wallet->id);
@@ -76,7 +81,7 @@ class FulfillOrderService
         $fundingWalletId = $funding === LedgerEntry::STUDENT_WALLET ? $wallet->id : null;
         $legs[] = $this->leg($funding, LedgerEntry::DEBIT, (int) $order->total_minor, $fundingWalletId);
 
-        DB::transaction(function () use ($order, $tenantId, $legs, $courseIds, $lessonIds, $funding): void {
+        DB::transaction(function () use ($order, $tenantId, $legs, $courseIds, $lessonIds, $packageIds, $funding): void {
             $this->ledger->post($tenantId, "order:{$order->id}:fulfill", $legs, 'order', (int) $order->id);
 
             $source = $funding === LedgerEntry::STUDENT_WALLET ? EnrollmentSource::Wallet : EnrollmentSource::Purchase;
@@ -93,6 +98,16 @@ class FulfillOrderService
                 $lesson = Lesson::withoutGlobalScopes()->find($lessonId);
                 if ($lesson !== null) {
                     $this->enrollments->grantLesson($tenantId, (int) $order->user_id, $lesson, $source);
+                }
+            }
+
+            // A package purchase (B15 / VD LP-D2) fans out depth-first into a
+            // per-lesson enrollment for every descendant lesson (nested packages
+            // included), idempotent per lesson so overlaps never double-grant.
+            foreach (array_unique($packageIds) as $packageId) {
+                $package = Package::withoutGlobalScopes()->find($packageId);
+                if ($package !== null) {
+                    $this->enrollments->grantPackage($tenantId, (int) $order->user_id, $package, $source);
                 }
             }
 

@@ -8,6 +8,7 @@ use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Assessment\Models\Question;
 use App\Modules\Billing\Models\SubscriptionPackage;
 use App\Modules\Billing\Models\TenantSubscription;
+use App\Modules\Catalog\Enums\AccessMode;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\CourseCategory;
@@ -381,7 +382,7 @@ class DatabaseSeeder extends Seeder
         return [
             [
                 'title' => 'الفيزياء الحديثة - الصف الثالث الثانوي', 'subtitle' => 'الكم والنسبية وفيزياء الجسيمات في منهج بسيط ومترابط',
-                'slug' => 'modern-physics-g3', 'category' => 0, 'price_minor' => 45000, 'is_free' => false, 'is_center' => false,
+                'slug' => 'modern-physics-g3', 'category' => 0, 'price_minor' => 45000, 'is_free' => false, 'access_mode' => 'online',
                 'access_days' => 180, 'points' => 100, 'visibility' => 'visible', 'deleted' => false,
                 'outcomes' => ['فهم ازدواجية الموجة والجسيم', 'حل مسائل الظاهرة الكهروضوئية', 'تفسير أطياف الذرات', 'إتقان أسئلة الامتحان النهائي'],
                 'requirements' => ['إتقان أساسيات الميكانيكا', 'معرفة أولية بالكهربية', 'آلة حاسبة علمية'],
@@ -401,7 +402,7 @@ class DatabaseSeeder extends Seeder
             ],
             [
                 'title' => 'ميكانيكا الكم المبسّطة', 'subtitle' => 'من مبدأ عدم اليقين إلى معادلة شرودنجر بأسلوب مُيسّر',
-                'slug' => 'quantum-mechanics-simplified', 'category' => 2, 'price_minor' => 60000, 'is_free' => false, 'is_center' => false,
+                'slug' => 'quantum-mechanics-simplified', 'category' => 2, 'price_minor' => 60000, 'is_free' => false, 'access_mode' => 'online',
                 'access_days' => 365, 'points' => 150, 'visibility' => 'visible', 'deleted' => false,
                 'outcomes' => ['استيعاب مبدأ عدم اليقين لهايزنبرج', 'التعامل مع الدالة الموجية', 'تطبيقات الكم في الإلكترونيات'],
                 'requirements' => ['اجتياز كورس الفيزياء الحديثة أو ما يعادله'],
@@ -419,7 +420,7 @@ class DatabaseSeeder extends Seeder
             ],
             [
                 'title' => 'مقدمة مجانية في الفيزياء', 'subtitle' => 'ابدأ رحلتك مع الفيزياء خطوة بخطوة مجانًا',
-                'slug' => 'physics-intro-free', 'category' => 1, 'price_minor' => 0, 'is_free' => true, 'is_center' => false,
+                'slug' => 'physics-intro-free', 'category' => 1, 'price_minor' => 0, 'is_free' => true, 'access_mode' => 'online',
                 'access_days' => null, 'points' => 20, 'visibility' => 'visible', 'deleted' => false,
                 'outcomes' => ['التعرّف على فروع الفيزياء', 'أهمية الوحدات والقياس'],
                 'requirements' => ['لا يوجد - الكورس للمبتدئين'],
@@ -434,7 +435,7 @@ class DatabaseSeeder extends Seeder
             ],
             [
                 'title' => 'كورس السنتر - فيزياء (حضوري + أونلاين)', 'subtitle' => 'المحتوى المصاحب لطلاب السنتر مع كود التفعيل',
-                'slug' => 'center-physics', 'category' => 0, 'price_minor' => 30000, 'is_free' => false, 'is_center' => true,
+                'slug' => 'center-physics', 'category' => 0, 'price_minor' => 30000, 'is_free' => false, 'access_mode' => 'center',
                 'access_days' => 120, 'points' => 60, 'visibility' => 'visible', 'deleted' => false,
                 'outcomes' => ['متابعة شرح السنتر أونلاين', 'حل الواجبات الأسبوعية'],
                 'requirements' => ['كود تفعيل من السنتر'],
@@ -448,7 +449,7 @@ class DatabaseSeeder extends Seeder
             ],
             [
                 'title' => 'أرشيف: الكهربية ٢٠٢٣ (متوقف)', 'subtitle' => 'نسخة قديمة محفوظة للأرشيف',
-                'slug' => 'archive-electricity-2023', 'category' => 1, 'price_minor' => 25000, 'is_free' => false, 'is_center' => false,
+                'slug' => 'archive-electricity-2023', 'category' => 1, 'price_minor' => 25000, 'is_free' => false, 'access_mode' => 'online',
                 'access_days' => 90, 'points' => 40, 'visibility' => 'hidden', 'deleted' => true,
                 'outcomes' => ['محتوى مؤرشف'], 'requirements' => ['—'], 'audience' => ['—'],
                 'units' => [
@@ -467,7 +468,7 @@ class DatabaseSeeder extends Seeder
         return [
             [
                 'title' => 'الكيمياء العضوية - الصف الثالث الثانوي', 'subtitle' => 'الهيدروكربونات والمجموعات الوظيفية بشرح تفاعلي',
-                'slug' => 'organic-chemistry-g3', 'category' => 0, 'price_minor' => 50000, 'is_free' => false, 'is_center' => false,
+                'slug' => 'organic-chemistry-g3', 'category' => 0, 'price_minor' => 50000, 'is_free' => false, 'access_mode' => 'online',
                 'access_days' => 200, 'points' => 120, 'visibility' => 'visible', 'deleted' => false,
                 'outcomes' => ['تسمية المركبات العضوية', 'التمييز بين المجموعات الوظيفية', 'كتابة معادلات التفاعلات العضوية'],
                 'requirements' => ['أساسيات الكيمياء العامة', 'الجدول الدوري'],
@@ -486,7 +487,7 @@ class DatabaseSeeder extends Seeder
             ],
             [
                 'title' => 'الكيمياء غير العضوية', 'subtitle' => 'العناصر الانتقالية والاتزان الكيميائي',
-                'slug' => 'inorganic-chemistry', 'category' => 2, 'price_minor' => 55000, 'is_free' => false, 'is_center' => false,
+                'slug' => 'inorganic-chemistry', 'category' => 2, 'price_minor' => 55000, 'is_free' => false, 'access_mode' => 'online',
                 'access_days' => 300, 'points' => 130, 'visibility' => 'visible', 'deleted' => false,
                 'outcomes' => ['فهم خواص العناصر الانتقالية', 'حساب ثابت الاتزان', 'تطبيقات التحليل الكيميائي'],
                 'requirements' => ['الكيمياء العضوية أو ما يعادلها'],
@@ -503,7 +504,7 @@ class DatabaseSeeder extends Seeder
             ],
             [
                 'title' => 'أساسيات الكيمياء (مجاني)', 'subtitle' => 'مدخل مجاني لعالم الكيمياء',
-                'slug' => 'chemistry-basics-free', 'category' => 1, 'price_minor' => 0, 'is_free' => true, 'is_center' => false,
+                'slug' => 'chemistry-basics-free', 'category' => 1, 'price_minor' => 0, 'is_free' => true, 'access_mode' => 'online',
                 'access_days' => null, 'points' => 15, 'visibility' => 'visible', 'deleted' => false,
                 'outcomes' => ['تركيب الذرة', 'قراءة الجدول الدوري'],
                 'requirements' => ['لا يوجد'],
@@ -518,7 +519,7 @@ class DatabaseSeeder extends Seeder
             ],
             [
                 'title' => 'كورس السنتر - كيمياء', 'subtitle' => 'محتوى سنتر طنطا للطلاب الحضوريين',
-                'slug' => 'center-chemistry', 'category' => 0, 'price_minor' => 35000, 'is_free' => false, 'is_center' => true,
+                'slug' => 'center-chemistry', 'category' => 0, 'price_minor' => 35000, 'is_free' => false, 'access_mode' => 'center',
                 'access_days' => 120, 'points' => 60, 'visibility' => 'visible', 'deleted' => false,
                 'outcomes' => ['متابعة حصص السنتر', 'حل الاختبارات الدورية'],
                 'requirements' => ['كود تفعيل من السنتر'],
@@ -532,7 +533,7 @@ class DatabaseSeeder extends Seeder
             ],
             [
                 'title' => 'أرشيف: كيمياء ٢٠٢٣ (متوقف)', 'subtitle' => 'نسخة قديمة محفوظة للأرشيف',
-                'slug' => 'archive-chemistry-2023', 'category' => 1, 'price_minor' => 20000, 'is_free' => false, 'is_center' => false,
+                'slug' => 'archive-chemistry-2023', 'category' => 1, 'price_minor' => 20000, 'is_free' => false, 'access_mode' => 'online',
                 'access_days' => 90, 'points' => 30, 'visibility' => 'hidden', 'deleted' => true,
                 'outcomes' => ['محتوى مؤرشف'], 'requirements' => ['—'], 'audience' => ['—'],
                 'units' => [
@@ -823,7 +824,7 @@ class DatabaseSeeder extends Seeder
                 'publish_at' => now()->subMonths(3)->addDays($ci),
                 'is_free' => $spec['is_free'],
                 'purchase_enabled' => ! $spec['is_free'],
-                'is_center' => $spec['is_center'],
+                'access_mode' => $spec['access_mode'],
                 'cover_url' => 'https://cdn.elameed.app/'.$config['slug'].'/courses/'.$spec['slug'].'-cover.jpg',
                 'thumbnail_url' => 'https://cdn.elameed.app/'.$config['slug'].'/courses/'.$spec['slug'].'-thumb.jpg',
                 'promo_video_url' => 'https://youtu.be/'.Str::lower(Str::random(11)),
@@ -2185,7 +2186,7 @@ class DatabaseSeeder extends Seeder
     /** @param  array<int, Course>  $courses  @return array<int, Course> */
     private function paidCourses(array $courses): array
     {
-        return array_filter($courses, fn (Course $c) => ! $c->is_free && ! $c->is_center && $c->deleted_at === null && $c->visibility->value === 'visible');
+        return array_filter($courses, fn (Course $c) => ! $c->is_free && $c->access_mode !== AccessMode::Center && $c->deleted_at === null && $c->visibility->value === 'visible');
     }
 
     /** @param  array<int, Course>  $courses */
@@ -2204,7 +2205,7 @@ class DatabaseSeeder extends Seeder
     private function firstCenterCourse(array $courses): ?Course
     {
         foreach ($courses as $c) {
-            if ($c->is_center) {
+            if ($c->access_mode === AccessMode::Center) {
                 return $c;
             }
         }

@@ -172,6 +172,24 @@ class ContentPackageTest extends TestCase
         $this->attach($a, 'package', $a)->assertStatus(422);          // self-cycle
     }
 
+    public function test_transitive_cycle_is_rejected(): void
+    {
+        Sanctum::actingAs($this->teacher());
+        $a = $this->makePackage('both', 'A');
+        $b = $this->makePackage('both', 'B');
+        $c = $this->makePackage('both', 'C');
+
+        $this->attach($a, 'package', $b)->assertStatus(201);          // A ⊃ B
+        $this->attach($b, 'package', $c)->assertStatus(201);          // B ⊃ C
+
+        // A ⊃ B ⊃ C already; attaching A under C closes the loop (C ⊃ … ⊃ A).
+        $this->attach($c, 'package', $a)->assertStatus(422)
+            ->assertJsonStructure(['error' => ['details' => ['item_id']]]);
+
+        // The mid-chain node likewise cannot swallow its ancestor.
+        $this->attach($c, 'package', $b)->assertStatus(422);          // C ⊃ B would loop
+    }
+
     public function test_subset_ceiling_is_enforced(): void
     {
         Sanctum::actingAs($this->teacher());

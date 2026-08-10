@@ -4,7 +4,8 @@
     $money = fn ($minor) => number_format(((int) $minor) / 100, 2).' '.$currency;
     $labels = [
         'course' => 'Course / كورس',
-        'bundle' => 'Package / باقة',
+        'package' => 'Package / باقة',
+        'lesson' => 'Lesson / درس',
         'wallet_topup' => 'Wallet top-up / شحن محفظة',
         'book' => 'Book / كتاب',
     ];
