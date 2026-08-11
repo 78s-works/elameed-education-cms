@@ -18,4 +18,5 @@ enum NotificationModule: string
     case Media = 'media';
     case Account = 'account';
     case Domains = 'domains';
+    case Support = 'support';
 }

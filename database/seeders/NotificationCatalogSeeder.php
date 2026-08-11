@@ -156,6 +156,23 @@ class NotificationCatalogSeeder extends Seeder
                     'en' => ['title' => 'Custom domain verified', 'body' => 'Your domain {domain} has been verified and is now live.'],
                 ]],
             ],
+            [
+                // Fired to staff (teacher + assistants with the `support` permission)
+                // when a student opens a ticket (B25 / VD Item 11).
+                'key' => 'support.ticket.created', 'module' => 'support', 'severity' => 'info',
+                'channels' => [$db => [
+                    'ar' => ['title' => 'تذكرة دعم جديدة', 'body' => 'فتح الطالب {student.name} تذكرة دعم: "{ticket.subject}".'],
+                    'en' => ['title' => 'New support ticket', 'body' => '{student.name} opened a support ticket: "{ticket.subject}".'],
+                ]],
+            ],
+            [
+                // Fired to the ticket owner when staff replies (B25 / VD Item 11).
+                'key' => 'support.ticket.replied', 'module' => 'support', 'severity' => 'info',
+                'channels' => [$db => [
+                    'ar' => ['title' => 'رد على تذكرة الدعم', 'body' => 'رد فريق الدعم على تذكرتك: "{ticket.subject}".'],
+                    'en' => ['title' => 'Reply to your ticket', 'body' => 'Support replied to your ticket: "{ticket.subject}".'],
+                ]],
+            ],
         ];
     }
 }

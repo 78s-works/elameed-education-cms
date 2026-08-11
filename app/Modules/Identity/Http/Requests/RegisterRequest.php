@@ -29,6 +29,12 @@ class RegisterRequest extends FormRequest
             // on-site (study_mode center|both), forbidden meaning for online-only.
             // Resolved to student_profiles.center_id in RegisterStudentAction.
             'center' => ['nullable', 'required_if:study_mode,center,both', 'string', $this->centerInTenant()],
+            // Center ID-code (B21): the alternative on-site path. When present it is
+            // the SINGLE source of truth for center + grade + study_mode, so manual
+            // center/study_mode/academic_year are prohibited (the code wins). The
+            // code itself is validated + consumed under lock in RegisterStudentAction
+            // (existence/unused there, not here, to keep one atomic redeem path).
+            'id_code' => ['nullable', 'string', 'max:40', 'prohibits:center,study_mode,academic_year'],
         ];
     }
 

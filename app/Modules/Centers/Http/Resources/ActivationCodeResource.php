@@ -19,6 +19,8 @@ class ActivationCodeResource extends JsonResource
             'course_id' => $this->course_id,
             'batch' => $this->batch,
             'status' => $this->status->value,
+            'is_expired' => $this->isExpired(),
+            'generated_by' => $this->generated_by,
             'redeemed_by' => $this->redeemed_by,
             'redeemed_at' => $this->redeemed_at?->toIso8601String(),
             'expires_at' => $this->expires_at?->toIso8601String(),

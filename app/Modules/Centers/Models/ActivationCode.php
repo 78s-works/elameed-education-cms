@@ -2,6 +2,7 @@
 
 namespace App\Modules\Centers\Models;
 
+use App\Models\User;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Centers\Enums\CodeStatus;
 use App\Modules\Centers\Enums\CodeType;
@@ -11,7 +12,9 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * A one-time recharge / activation code (M12).
+ * A one-time recharge / activation code (M12). A `wallet`-type code is a payment
+ * scratch code (B22): denominated by `amount_minor`, minted in a `batch`, single-use,
+ * tenant-scoped, credits the student wallet by exactly its denomination on redeem.
  */
 class ActivationCode extends Model
 {
@@ -24,6 +27,7 @@ class ActivationCode extends Model
         'amount_minor',
         'course_id',
         'center_id',
+        'generated_by',
         'batch',
         'status',
         'redeemed_by',
@@ -55,8 +59,21 @@ class ActivationCode extends Model
             && ($this->expires_at === null || $this->expires_at->isFuture());
     }
 
+    /** Active but past its expiry — an unusable "expired" scratch code (B22 list filter). */
+    public function isExpired(): bool
+    {
+        return $this->status === CodeStatus::Active
+            && $this->expires_at !== null
+            && $this->expires_at->isPast();
+    }
+
     public function course(): BelongsTo
     {
         return $this->belongsTo(Course::class);
+    }
+
+    public function generatedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'generated_by');
     }
 }

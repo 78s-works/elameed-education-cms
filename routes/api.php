@@ -29,6 +29,7 @@ use App\Modules\Centers\Http\Controllers\Teacher\ActivationCodeController;
 use App\Modules\Centers\Http\Controllers\Teacher\AttendanceController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterExamGradeController;
+use App\Modules\Centers\Http\Controllers\Teacher\CenterIdCodeController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterSyncController;
 use App\Modules\Commerce\Http\Controllers\CheckoutController;
 use App\Modules\Commerce\Http\Controllers\InvoiceController;
@@ -40,8 +41,10 @@ use App\Modules\Engagement\Http\Controllers\FavoriteController;
 use App\Modules\Engagement\Http\Controllers\GamificationController;
 use App\Modules\Engagement\Http\Controllers\ProgressController;
 use App\Modules\Engagement\Http\Controllers\ReviewController;
+use App\Modules\Engagement\Http\Controllers\SupportTicketController;
 use App\Modules\Engagement\Http\Controllers\Teacher\BadgeController;
 use App\Modules\Engagement\Http\Controllers\Teacher\ForumController;
+use App\Modules\Engagement\Http\Controllers\Teacher\SupportTicketController as TeacherSupportTicketController;
 use App\Modules\Engagement\Http\Controllers\Teacher\ReviewController as TeacherReviewController;
 use App\Modules\Identity\Http\Controllers\AuthController;
 use App\Modules\Identity\Http\Controllers\MeController;
@@ -265,6 +268,14 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::get('/lessons/{lesson}/comments', [CommentController::class, 'index']);
         Route::post('/lessons/{lesson}/comments', [CommentController::class, 'store']);
         Route::post('/comments/{comment}/replies', [CommentController::class, 'reply']);
+
+        // Support tickets (M09, B24 / VD Item 11) — a student opens a ticket to
+        // teacher/assistant (subject + message + attachments + priority), lists
+        // their own, and reads a single thread with replies. {ticket} binds by
+        // uuid and is scoped to the caller in the controller.
+        Route::get('/support/tickets', [SupportTicketController::class, 'index']);
+        Route::post('/support/tickets', [SupportTicketController::class, 'store']);
+        Route::get('/support/tickets/{ticket}', [SupportTicketController::class, 'show']);
 
         // Favorites (M20)
         Route::get('/me/favorites', [FavoriteController::class, 'index']);
@@ -555,6 +566,11 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
                 Route::post('/teacher/codes/batch', [ActivationCodeController::class, 'batch']);
                 Route::post('/teacher/codes/{code:uuid}/disable', [ActivationCodeController::class, 'disable']);
 
+                // Center ID-codes (B20) — sequential, grade-encoded student-identity
+                // codes minted per center; a sibling of /codes, NOT the recharge codes.
+                Route::get('/teacher/center-id-codes', [CenterIdCodeController::class, 'index']);
+                Route::post('/teacher/center-id-codes/batch', [CenterIdCodeController::class, 'batch']);
+
                 // Center paper-exam grade entry (VD R12, doc 13 Phase 15). A grade
                 // belongs to an academic year, so these are year-scoped
                 // (X-Academic-Year); {grade} binds by uuid within the active year.
@@ -650,6 +666,18 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
                 Route::post('/teacher/payment-receipts/{receipt:uuid}/approve', [PaymentReceiptController::class, 'approve']);
                 Route::post('/teacher/payment-receipts/{receipt:uuid}/reject', [PaymentReceiptController::class, 'reject']);
             }); // permission:finance
+
+            // Support tickets — staff side (M09, B25 / VD Item 11). Teacher, or an
+            // assistant granted `support`, lists every ticket (filter ?status=
+            // &priority=), reads a thread, replies (notifies the student), and
+            // moves the status. {ticket} binds by uuid, tenant-scoped (no owner
+            // check — staff see the whole tenant). Student side: /support/tickets.
+            Route::middleware('permission:support')->group(function (): void {
+                Route::get('/teacher/support/tickets', [TeacherSupportTicketController::class, 'index']);
+                Route::get('/teacher/support/tickets/{ticket}', [TeacherSupportTicketController::class, 'show']);
+                Route::post('/teacher/support/tickets/{ticket}/replies', [TeacherSupportTicketController::class, 'reply']);
+                Route::patch('/teacher/support/tickets/{ticket}/status', [TeacherSupportTicketController::class, 'updateStatus']);
+            }); // permission:support
         }); // role:teacher,assistant
     });
 });

@@ -4,6 +4,7 @@ namespace App\Modules\Identity\Actions;
 
 use App\Models\User;
 use App\Modules\Centers\Models\Center;
+use App\Modules\Centers\Services\CenterIdCodeRedemptionService;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\OtpPurpose;
 use App\Modules\Identity\Enums\TenantUserRole;
@@ -28,7 +29,10 @@ use Illuminate\Validation\ValidationException;
  */
 class RegisterStudentAction
 {
-    public function __construct(private readonly OtpService $otp) {}
+    public function __construct(
+        private readonly OtpService $otp,
+        private readonly CenterIdCodeRedemptionService $idCodes,
+    ) {}
 
     public function handle(Tenant $tenant, array $data, string $verificationMode = 'auto'): User
     {
@@ -85,9 +89,21 @@ class RegisterStudentAction
             $profile = new StudentProfile(StudentProfile::fields($data));
             $profile->tenant_id = $tenant->getKey();
             $profile->user_id = $user->getKey();
-            if (! empty($data['center'])) {
+
+            if (! empty($data['id_code'])) {
+                // Center ID-code path (B21): validate + consume the code under lock,
+                // then bind center + grade + study_mode from its encoding. The code
+                // is the single source of truth (manual center/study_mode/academic_year
+                // were prohibited by RegisterRequest). study_mode = center (on-site);
+                // hybrid ("both") is not encoded in the code, so it stays a manual choice.
+                $idCode = $this->idCodes->consume($tenant->getKey(), $data['id_code'], $user);
+                $profile->center_id = $idCode->center_id;
+                $profile->study_mode = 'center';
+                $profile->academic_year = $idCode->gradeLabel();
+            } elseif (! empty($data['center'])) {
                 $profile->center_id = Center::query()->where('uuid', $data['center'])->value('id');
             }
+
             $profile->save();
 
             return $user;
