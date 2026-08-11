@@ -12,7 +12,7 @@ class MeController
 {
     public function __invoke(Request $request): MeResource
     {
-        $user = $request->user()->load('memberships.tenant');
+        $user = $request->user()->load(['memberships.tenant', 'studentProfile.center']);
 
         return new MeResource($user);
     }

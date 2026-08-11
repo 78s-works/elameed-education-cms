@@ -30,6 +30,11 @@ class MeResource extends JsonResource
             'email_verified' => $this->email_verified_at !== null,
             'phone_verified' => $this->phone_verified_at !== null,
             'is_platform_admin' => $this->isPlatformAdmin(),
+            // VD R5 — the student's study channel + physical center (null for
+            // non-students / online-only). Lets the student's own profile screen
+            // show study_mode without a separate lookup.
+            'study_mode' => $this->studentProfile?->study_mode,
+            'center' => $this->studentProfile?->center?->uuid,
             'memberships' => $this->memberships->map(fn ($m) => [
                 'tenant' => $m->tenant?->slug,
                 'tenant_name' => $m->tenant?->name,

@@ -52,6 +52,10 @@ class LessonSectionResource extends JsonResource
                 'is_published' => (bool) $this->exam->is_published,
             ] : null),
             'locked' => $this->whenNotNull($this->getAttribute('locked')),
+            // Per-part result for the student (VD F14): { passed, submitted,
+            // attempts_used, max_tries, best_score, best_max, degree_of_success,
+            // via_override }. Null on parts with no backing exam / teacher listings.
+            'result' => $this->whenNotNull($this->getAttribute('part_result')),
             'media' => $this->when(
                 ! $gated,
                 fn () => $this->whenLoaded('mediaAsset', fn () => $this->mediaAsset ? new MediaAssetResource($this->mediaAsset) : null),

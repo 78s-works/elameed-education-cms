@@ -445,4 +445,26 @@ class AuthTest extends TestCase
             ->assertJsonPath('data.phone', '01000000008')
             ->assertJsonPath('data.current.role', 'student');
     }
+
+    public function test_me_exposes_student_study_mode(): void
+    {
+        $user = User::factory()->create(['phone' => '01000000009']);
+        TenantUser::create([
+            'tenant_id' => $this->tenant->id,
+            'user_id' => $user->id,
+            'role' => TenantUserRole::Student->value,
+            'status' => MembershipStatus::Active->value,
+        ]);
+        $profile = new StudentProfile(['user_id' => $user->id, 'study_mode' => 'online']);
+        $profile->tenant_id = $this->tenant->id;
+        $profile->save();
+
+        $token = $user->createToken('test')->plainTextToken;
+
+        $this->withHeaders($this->tenantHeader() + ['Authorization' => "Bearer {$token}"])
+            ->getJson('/api/v1/me')
+            ->assertOk()
+            ->assertJsonPath('data.study_mode', 'online')
+            ->assertJsonPath('data.center', null);
+    }
 }

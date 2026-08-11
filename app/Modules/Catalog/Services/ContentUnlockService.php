@@ -213,6 +213,81 @@ class ContentUnlockService
     }
 
     /**
+     * Per-part result for the student (VD F14 / LP-14) — pass/fail, retake count,
+     * and degree of success. Returns null for a part with no backing exam (nothing
+     * to report). `degree_of_success` is the best attempt's percentage (0–100).
+     * `passed` folds in a teacher pass-override (LP-D3). For a `must_submit` part,
+     * "passed" means submitted; for `must_pass` (or any exam part), it means the
+     * best score met the exam's degree of success.
+     *
+     * @return array{
+     *   passed: bool, submitted: bool, attempts_used: int, max_tries: ?int,
+     *   best_score: ?float, best_max: ?float, degree_of_success: ?int, via_override: bool
+     * }|null
+     */
+    public function partResult(int $tenantId, int $userId, LessonSection $section): ?array
+    {
+        if ($section->exam_id === null) {
+            return null;
+        }
+
+        $exam = Exam::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('id', $section->exam_id)
+            ->first();
+
+        if ($exam === null) {
+            return null;
+        }
+
+        $override = PartPassOverride::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('lesson_section_id', $section->getKey())
+            ->where('user_id', $userId)
+            ->exists();
+
+        $attempts = ExamAttempt::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('exam_id', $exam->getKey())
+            ->where('user_id', $userId)
+            ->whereNotNull('submitted_at')
+            ->get(['score', 'max_score']);
+
+        // Best attempt = highest percentage across tries (the degree of success).
+        $best = null;
+        $bestPct = -1.0;
+        foreach ($attempts as $attempt) {
+            $max = (float) $attempt->max_score;
+            $pct = $max > 0 ? ((float) $attempt->score / $max) * 100 : 0.0;
+            if ($pct > $bestPct) {
+                $bestPct = $pct;
+                $best = $attempt;
+            }
+        }
+
+        $passedByScore = false;
+        foreach ($attempts as $attempt) {
+            if ($exam->passed((float) $attempt->score, (float) $attempt->max_score) === true) {
+                $passedByScore = true;
+                break;
+            }
+        }
+
+        $mustSubmitOnly = $section->gate_rule === GateRule::MustSubmit;
+
+        return [
+            'passed' => $override || ($mustSubmitOnly ? $attempts->isNotEmpty() : $passedByScore),
+            'submitted' => $attempts->isNotEmpty(),
+            'attempts_used' => $attempts->count(),
+            'max_tries' => $section->max_tries,
+            'best_score' => $best !== null ? (float) $best->score : null,
+            'best_max' => $best !== null ? (float) $best->max_score : null,
+            'degree_of_success' => $best !== null ? (int) round($bestPct) : null,
+            'via_override' => $override,
+        ];
+    }
+
+    /**
      * Has the user submitted the lesson's published exam of $type? True when the
      * lesson has no such exam (nothing to gate → the solution shows).
      */

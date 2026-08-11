@@ -246,4 +246,47 @@ class PartGatingTest extends TestCase
             ->postJson("/api/v1/exams/{$exam->uuid}/attempts")
             ->assertOk();
     }
+
+    // ---- per-part result (VD F14) ----------------------------------------------
+
+    public function test_section_exposes_per_part_result_with_degree_and_retakes(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $course = $this->course();
+        $lesson = $this->lesson($course);
+        $this->enroll($student, $course);
+
+        // pass_value 60% — a 50% then an 80% attempt: best degree 80, passed true.
+        $exam = $this->exam($lesson, ['pass_mode' => 'percent', 'pass_value' => 60]);
+        $this->section($lesson, ['type' => 'quiz', 'exam_id' => $exam->id, 'gate_rule' => 'must_pass', 'max_tries' => 3, 'sort_order' => 0]);
+        $this->attempt($exam, $student, 5, 10);  // 50%
+        $this->attempt($exam, $student, 8, 10);  // 80% (best)
+
+        $part = collect($this->sections($student, $lesson)->json('data'))->firstWhere('type', 'quiz');
+
+        $this->assertNotNull($part['result']);
+        $this->assertTrue($part['result']['passed']);
+        $this->assertSame(2, $part['result']['attempts_used']);
+        $this->assertSame(3, $part['result']['max_tries']);
+        $this->assertSame(80, $part['result']['degree_of_success']);
+        $this->assertFalse($part['result']['via_override']);
+    }
+
+    public function test_part_result_reflects_a_failing_best_attempt(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $course = $this->course();
+        $lesson = $this->lesson($course);
+        $this->enroll($student, $course);
+
+        $exam = $this->exam($lesson, ['pass_mode' => 'percent', 'pass_value' => 60]);
+        $this->section($lesson, ['type' => 'quiz', 'exam_id' => $exam->id, 'gate_rule' => 'must_pass', 'sort_order' => 0]);
+        $this->attempt($exam, $student, 4, 10); // 40% — below the bar
+
+        $part = collect($this->sections($student, $lesson)->json('data'))->firstWhere('type', 'quiz');
+
+        $this->assertFalse($part['result']['passed']);
+        $this->assertTrue($part['result']['submitted']);
+        $this->assertSame(40, $part['result']['degree_of_success']);
+    }
 }

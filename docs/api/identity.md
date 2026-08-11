@@ -359,6 +359,8 @@ OTP required (when `otp.login_required` is on):
     "email_verified": false,
     "phone_verified": true,
     "is_platform_admin": false,
+    "study_mode": "center",
+    "center": "b71f...-uuid",
     "memberships": [
       { "tenant": "academy", "tenant_name": "El Ameed Academy", "role": "student", "status": "active" }
     ],
@@ -368,6 +370,8 @@ OTP required (when `otp.login_required` is on):
 ```
 
 `current.permissions` is the caller's **effective** permission set in the current tenant (M18): a **teacher** gets the full catalog (`["students", "centers"]`), an **assistant** gets their granted subset, and any other role gets `[]`.
+
+`study_mode` (`center|online|both`) and `center` (the physical center's **uuid**) come from the caller's `StudentProfile` (VD R5/R6/R7); both are `null` for non-students and for online-only students (`center`). This lets the student's own profile screen show their study mode without a separate lookup.
 
 **Errors:** `401` missing/invalid token; `403` inactive membership.
 

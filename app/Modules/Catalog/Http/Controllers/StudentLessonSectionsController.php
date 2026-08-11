@@ -60,6 +60,9 @@ class StudentLessonSectionsController
 
         foreach ($sections as $section) {
             $section->setAttribute('locked', $lockMap[(int) $section->id] ?? false);
+            // Per-part result (VD F14 / LP-14): pass/fail, retake count, degree of
+            // success. Null for parts with no backing exam.
+            $section->setAttribute('part_result', $this->unlock->partResult($tenantId, $userId, $section));
         }
 
         return LessonSectionResource::collection($sections);
