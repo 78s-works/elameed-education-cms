@@ -17,6 +17,7 @@ enum Permission: string
     case Centers = 'centers';
     case Homework = 'homework';
     case Finance = 'finance';
+    case Support = 'support';
 
     /** @return list<string> */
     public static function values(): array
@@ -51,6 +52,11 @@ enum Permission: string
                 'key' => self::Finance->value,
                 'label' => 'Finance',
                 'description' => 'View and manage billing, invoices, wallet top-ups and financial reports.',
+            ],
+            [
+                'key' => self::Support->value,
+                'label' => 'Support tickets',
+                'description' => 'Read, reply to and change the status of student support tickets.',
             ],
         ];
     }

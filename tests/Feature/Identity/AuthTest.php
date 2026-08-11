@@ -4,6 +4,7 @@ namespace Tests\Feature\Identity;
 
 use App\Models\User;
 use App\Modules\Centers\Models\Center;
+use App\Modules\Centers\Models\CenterIdCode;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\StudentProfile;
@@ -14,6 +15,7 @@ use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 use Tests\Support\RecordingSmsSender;
 use Tests\TestCase;
 
@@ -66,6 +68,22 @@ class AuthTest extends TestCase
         $center->save();
 
         return $center;
+    }
+
+    private function idCode(Center $center, int $grade = 2, int $sequence = 1, string $status = 'active'): CenterIdCode
+    {
+        $code = new CenterIdCode([
+            'center_id' => $center->id,
+            'grade' => $grade,
+            'sequence' => $sequence,
+            'code' => sprintf('%d-%d-%06d', $grade, $center->id, $sequence),
+            'status' => $status,
+            'batch_id' => (string) Str::uuid(),
+        ]);
+        $code->tenant_id = $center->tenant_id; // no request context in tests
+        $code->save();
+
+        return $code;
     }
 
     private function setAccess(bool $login, bool $registration, string $verificationMode = 'auto'): void
@@ -185,6 +203,110 @@ class AuthTest extends TestCase
         ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
 
         $this->assertDatabaseMissing('users', ['phone' => '01000000023']);
+    }
+
+    public function test_register_with_id_code_binds_center_grade_and_marks_used(): void
+    {
+        // B21: an on-site student signs up with a Center ID-code. The code is the
+        // single source of truth — it links the center, sets study_mode=center and
+        // decodes the grade onto academic_year, and is flipped to used.
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+        $center = $this->center();
+        $code = $this->idCode($center, grade: 3, sequence: 7);
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Code Kid',
+            'phone' => '01000000030',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'id_code' => $code->code,
+        ])->assertCreated();
+
+        $user = User::where('phone', '01000000030')->firstOrFail();
+
+        // Center + study_mode + decoded grade all come from the code.
+        $this->assertDatabaseHas('student_profiles', [
+            'user_id' => $user->id,
+            'center_id' => $center->id,
+            'study_mode' => 'center',
+            'academic_year' => CenterIdCode::GRADE_LABELS[3], // grade 3 decoded
+        ]);
+
+        // The code is consumed: redeemed + stamped with this student.
+        $this->assertDatabaseHas('center_id_codes', [
+            'id' => $code->id,
+            'status' => 'redeemed',
+            'used_by' => $user->id,
+        ]);
+        $this->assertNotNull($code->fresh()->used_at);
+    }
+
+    public function test_register_rejects_an_already_used_id_code(): void
+    {
+        // Redeeming twice is refused — the code binds to exactly one student.
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+        $center = $this->center();
+        $code = $this->idCode($center, grade: 2, sequence: 1);
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'First',
+            'phone' => '01000000031',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'id_code' => $code->code,
+        ])->assertCreated();
+
+        // Second student, same code → 422, and no account is created.
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Second',
+            'phone' => '01000000032',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'id_code' => $code->code,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+
+        $this->assertDatabaseMissing('users', ['phone' => '01000000032']);
+        $this->assertSame('01000000031', User::findOrFail($code->fresh()->used_by)->phone);
+    }
+
+    public function test_register_rejects_an_id_code_from_another_tenant(): void
+    {
+        // A code minted at a DIFFERENT academy is unknown here → invalid, nothing created.
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+        $other = Tenant::create(['slug' => 'other', 'name' => 'Other Academy', 'status' => TenantStatus::Active]);
+        $foreignCode = $this->idCode($this->center($other), grade: 1, sequence: 1);
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Cross Tenant Code',
+            'phone' => '01000000033',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'id_code' => $foreignCode->code,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+
+        $this->assertDatabaseMissing('users', ['phone' => '01000000033']);
+        $this->assertSame('active', $foreignCode->fresh()->status->value); // untouched
+    }
+
+    public function test_register_prohibits_manual_center_alongside_an_id_code(): void
+    {
+        // The code owns center/study_mode/grade — sending them manually is a conflict.
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+        $center = $this->center();
+        $code = $this->idCode($center, grade: 2, sequence: 1);
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Conflict',
+            'phone' => '01000000034',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'id_code' => $code->code,
+            'study_mode' => 'center',
+            'center' => $center->uuid,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+
+        $this->assertDatabaseMissing('users', ['phone' => '01000000034']);
+        $this->assertSame('active', $code->fresh()->status->value); // not consumed
     }
 
     public function test_register_allows_siblings_to_share_a_guardian_phone(): void

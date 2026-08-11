@@ -1,11 +1,12 @@
 # Centers Module
 
-> The Centers module (M12) covers a teacher academy's **physical learning-center branches** and everything that flows through them: **activation / recharge codes** (printable one-time codes a student redeems for wallet credit or course access), **attendance** marking, **paper (in-center) exam-grade entry** (VD R12 — a center helper types an offline exam score onto a student, which then shows in the student's results and to the parent), and an **offline sync** ingest so a center's on-site app can flush queued events when it regains connectivity. It also owns two student-facing endpoints, `POST /codes/redeem` and `GET /me/center-exam-grades`. Everything here is tenant-scoped (`BelongsToTenant` + RLS): centers, codes, attendance, and grade rows all carry a `tenant_id` and never leak across academies. Redemption is atomic and one-time — the same code can never credit a wallet or grant a course twice, whether a student double-taps or an offline device re-syncs the same event.
+> The Centers module (M12) covers a teacher academy's **physical learning-center branches** and everything that flows through them: **activation / recharge codes** (printable one-time codes a student redeems for wallet credit or course access), **Center ID-codes** (B20 — *sequential*, grade-encoded student-identity codes minted per center, handed out so a student binds to that center + grade at sign-up — a distinct concept from recharge codes, in its own `center_id_codes` table), **attendance** marking, **paper (in-center) exam-grade entry** (VD R12 — a center helper types an offline exam score onto a student, which then shows in the student's results and to the parent), and an **offline sync** ingest so a center's on-site app can flush queued events when it regains connectivity. It also owns two student-facing endpoints, `POST /codes/redeem` and `GET /me/center-exam-grades`. Everything here is tenant-scoped (`BelongsToTenant` + RLS): centers, codes, attendance, and grade rows all carry a `tenant_id` and never leak across academies. Redemption is atomic and one-time — the same code can never credit a wallet or grant a course twice, whether a student double-taps or an offline device re-syncs the same event.
 
 ## Models
 
 - **`Center`** — A physical teaching branch. Tenant-scoped, `HasUuids`, route key `uuid`. Fillable: `name`, `address`, `phone`, `is_active` (bool). `hasMany` attendance records.
 - **`ActivationCode`** — A one-time recharge/activation code. Tenant-scoped, `HasUuids`, route key `uuid`. Fillable: `code` (the redeemable string), `type` (`CodeType`), `amount_minor` (int, wallet codes), `course_id` (course codes), `center_id` (optional origin branch), `batch` (optional label), `status` (`CodeStatus`), `redeemed_by`, `redeemed_at`, `expires_at`. `isRedeemable()` = status is `active` **and** (`expires_at` is null or in the future). `belongsTo` Course.
+- **`CenterIdCode`** (B20) — A **sequential, grade-encoded** student-identity code minted per center. Tenant-scoped, `HasUuids`, route key `uuid`. Fillable: `center_id`, `grade` (1|2|3 = 1st/2nd/3rd secondary; also the code's leading digit), `sequence` (running counter within `(center_id, grade)`), `code` (`"{grade}-{centerId}-{seq:06d}"`), `status` (reuses `CodeStatus`: `active`=unused, `redeemed`=used, `disabled`), `batch_id` (uuid grouping one generate call), `generated_by`, `used_by`, `used_at`. `isUnused()` = status `active`. Relations: `center()`, `generatedBy()`, `usedBy()`. **Distinct from `ActivationCode`** (random one-time wallet/course recharge): this code carries identity, not a grant — at sign-up it binds a student to `center_id` + `grade` (+ study_mode). Unique `(tenant_id, code)` and `(tenant_id, center_id, grade, sequence)`; register-time consumption is a follow-up (`used_by`/`used_at` exist so used/unused is queryable now).
 - **`AttendanceRecord`** — One student's attendance at a center on one day. Tenant-scoped (integer `id` key — **no** uuid). Fillable: `center_id`, `user_id`, `course_id`, `attended_on` (date), `status`, `marked_by` (teacher user id), `source` (`online` \| `offline`), `external_ref` (client idempotency key from sync), `note`. `belongsTo` Center; `student()` → `User` on `user_id`. A DB unique key on (`tenant_id`, `center_id`, `user_id`, `attended_on`) enforces one record per student/center/day.
 - **`CenterExamGrade`** (VD R12, doc 13 P15) — A paper (offline, in-center) exam score against a student. Tenant-scoped **and year-scoped** (`BelongsToTenant` + `BelongsToAcademicYear`), `HasUuids`, route key `uuid`. Fillable: `center_id`, `student_user_id`, `title` (paper-exam label), `total_marks` (decimal), `score` (decimal), `sat_on` (date), `entered_by` (staff user id, nullable), `note`. Casts `total_marks`/`score` → `decimal:2`, `sat_on` → `date`. Relations: `center()`, `student()` → `User` on `student_user_id`, `enteredBy()` → `User`. Lightweight by design (decision D13-9) — no questions/attempts; just the typed result. Index `(tenant_id, student_user_id)`.
 
@@ -438,6 +439,85 @@ Records created here get `source: "online"` and `marked_by` = the acting teacher
 **Response 200** — the `ActivationCodeResource` with `status` now `disabled` (or unchanged if it was not active).
 
 **Errors:** `404` unknown/cross-tenant code.
+
+---
+
+### Teacher · Center ID-codes (B20)
+
+Mint & list **Center ID-codes** — sequential, grade-encoded, per-center. **Auth** 🧑‍🏫 `role:teacher,assistant` + **`permission:centers`** (the same gate as attendance/codes; a teacher passes implicitly). Sibling of `/teacher/codes`, **not** merged with it — different table (`center_id_codes`), different lifecycle. **Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:centers`.
+
+#### `GET /teacher/center-id-codes`
+
+**Purpose:** List codes (newest first). **Paginated**, 50 per page.
+
+**Query params** (all optional)
+
+| Param | Example | Notes |
+|---|---|---|
+| `filter[status]` | `unused` | `unused` (=active) \| `used` (=redeemed), or raw `active` \| `redeemed` \| `disabled` |
+| `filter[grade]` | `2` | `1` \| `2` \| `3` |
+| `filter[center]` | `9d2a7c14-...` | center `uuid` |
+| `filter[batch_id]` | `b1f0...` | one generation batch |
+
+**Response 200** — a paginated `CenterIdCodeResource` collection.
+
+```json
+{
+  "data": [
+    {
+      "uuid": "3a1c9e77-4b2d-4c8e-9f10-77aa22bb33cc",
+      "code": "2-3-000001",
+      "grade": 2,
+      "sequence": 1,
+      "center_id": 3,
+      "center_uuid": "9d2a7c14-3b6e-4f0a-8b21-2c9f1d5e7a10",
+      "status": "active",
+      "batch_id": "b1f0a2e8-...",
+      "generated_by": 7,
+      "used_by": null,
+      "used_at": null,
+      "created_at": "2026-08-11T09:12:00+00:00"
+    }
+  ]
+}
+```
+
+#### `POST /teacher/center-id-codes/batch`
+
+**Purpose:** Mint `count` sequential grade-encoded codes for one center + grade, in one call. The running `sequence` continues from the highest existing `(center, grade)` pair (a `lockForUpdate` inside the transaction keeps concurrent batches from colliding); every row shares one server-assigned `batch_id`.
+
+**Request body**
+
+```json
+{
+  "center": "9d2a7c14-3b6e-4f0a-8b21-2c9f1d5e7a10",
+  "grade": 2,
+  "count": 50
+}
+```
+
+| Field | Type | Required | Rules / Notes |
+|---|---|---|---|
+| `center` | string | yes | center `uuid` — must resolve in this tenant |
+| `grade` | int | yes | `1` \| `2` \| `3` |
+| `count` | int | yes | `min:1`, `max:1000` |
+
+> `sequence`, `code`, `batch_id`, `generated_by`, and `status=active` are all assigned server-side — never client input.
+
+**Response 201** — an array of the created `CenterIdCodeResource` objects (no pagination meta, freshly created set). Codes are `"{grade}-{centerId}-{sequence:06d}"`, e.g. `2-3-000001`, `2-3-000002`, …
+
+**Errors:** `422` — unknown/foreign `center`, `grade` not in {1,2,3}, `count` out of range. `403` — assistant lacking `permission:centers`.
+
+#### Consumed at registration (B21)
+
+A Center ID-code is redeemed **at student sign-up**, not on a teacher endpoint. The student passes it as `id_code` to public `POST /auth/register` (M11). When present it is the **single source of truth** for the on-site identity:
+
+- `CenterIdCodeRedemptionService::consume` runs inside the register transaction — it locks the code row (`lockForUpdate`), rejects an unknown code (`422` `"Invalid ID code."`), an already-used one (`422` `"This ID code has already been used."`) or a disabled one, then flips `status`→`redeemed` and stamps `used_by`/`used_at`.
+- `RegisterStudentAction` then binds the new `student_profiles`: `center_id` = the code's center, `study_mode` = `center`, and `academic_year` = the code's decoded grade label (`CenterIdCode::GRADE_LABELS`: 1/2/3 → `الصف الأول/الثاني/الثالث الثانوي`).
+- The code wins, so sending `center`, `study_mode` or `academic_year` **alongside** `id_code` is a `422` (`prohibits`). Online sign-up (no `id_code`) is unchanged.
+- Center ID-codes have **no expiry** — `status=active` (unused) is the only redeem gate.
+
+See `04_API_Specification.md` → `POST /auth/register`.
 
 ---
 
