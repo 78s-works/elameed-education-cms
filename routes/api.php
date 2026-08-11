@@ -223,6 +223,8 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::get('/wallet/ledger', [WalletController::class, 'ledger']);
         // Manual top-up (VD R9) — submit a Vodafone Cash / InstaPay receipt → pending.
         Route::post('/wallet/topup/manual', [WalletController::class, 'topupManual'])->middleware('throttle:60,1');
+        // The student's own manual top-up receipts + status (VD F3). Read-only.
+        Route::get('/wallet/topups', [WalletController::class, 'topups']);
         Route::post('/checkout/quote', [CheckoutController::class, 'quote']);
         Route::post('/checkout/order', [CheckoutController::class, 'order']);
         Route::post('/checkout/pay', [CheckoutController::class, 'pay'])->middleware('throttle:auth');

@@ -7,6 +7,7 @@ use App\Modules\Tenancy\Services\TenantContext;
 use App\Modules\Wallet\Http\Requests\SubmitManualTopupRequest;
 use App\Modules\Wallet\Http\Resources\LedgerEntryResource;
 use App\Modules\Wallet\Http\Resources\PaymentReceiptResource;
+use App\Modules\Wallet\Models\PaymentReceipt;
 use App\Modules\Wallet\Services\LedgerService;
 use App\Modules\Wallet\Services\PaymentReceiptService;
 use Illuminate\Http\JsonResponse;
@@ -46,6 +47,22 @@ class WalletController
 
         return LedgerEntryResource::collection(
             $wallet->entries()->latest('id')->paginate(30)
+        );
+    }
+
+    /**
+     * The current student's own manual top-up receipts, newest first (VD R9/F3).
+     * Read-only status tracking (pending/approved/rejected) — no ledger effect.
+     * Tenant scope is enforced by the model's BelongsToTenant global scope.
+     */
+    public function topups(Request $request): AnonymousResourceCollection
+    {
+        return PaymentReceiptResource::collection(
+            PaymentReceipt::query()
+                ->where('user_id', $request->user()->getKey())
+                ->with('attachment')
+                ->latest('id')
+                ->paginate(30)
         );
     }
 
