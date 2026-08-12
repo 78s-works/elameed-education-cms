@@ -18,6 +18,7 @@ class PaymentReceiptResource extends JsonResource
             'uuid' => $this->uuid,
             'method' => $this->method,
             'amount_minor' => $this->amount_minor,
+            'corrected_amount_minor' => $this->corrected_amount_minor,
             'currency' => $this->currency,
             'status' => $this->status,
             'reject_reason' => $this->reject_reason,
