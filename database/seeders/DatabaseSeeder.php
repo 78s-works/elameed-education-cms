@@ -17,6 +17,24 @@ use App\Modules\Catalog\Models\LessonSection;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Models\PackageItem;
 use App\Modules\Catalog\Models\PartPassOverride;
+use App\Modules\Catalog\Models\ContentAccessOverride;
+use App\Modules\Catalog\Models\ContentDependency;
+use App\Modules\Catalog\Models\LessonAccessWindow;
+use App\Modules\Catalog\Models\LessonExtensionRequest;
+use App\Modules\Assessment\Models\ExamTimeExtension;
+use App\Modules\Notifications\Models\NotificationChannelSetting;
+use App\Modules\Notifications\Models\NotificationPreference;
+use App\Modules\Notifications\Models\NotificationType;
+use App\Modules\Centers\Models\CenterExamGrade;
+use App\Modules\Centers\Models\CenterIdCode;
+use App\Modules\Commerce\Models\Coupon;
+use App\Modules\Engagement\Models\Attachment;
+use App\Modules\Engagement\Models\Comment;
+use App\Modules\Engagement\Models\SupportTicket;
+use App\Modules\Engagement\Models\TicketReply;
+use App\Modules\Identity\Models\ParentMagicLink;
+use App\Modules\Tenancy\Models\TeacherMeta;
+use App\Modules\Wallet\Models\PaymentReceipt;
 use App\Modules\Catalog\Services\AcademicYearContext;
 use App\Modules\Centers\Models\ActivationCode;
 use App\Modules\Centers\Models\AttendanceRecord;
@@ -93,6 +111,15 @@ class DatabaseSeeder extends Seeder
 
     /** Every application table this seeder owns, ordered so truncation is FK-safe. */
     private const MANAGED_TABLES = [
+        // New-system tables (VD F-tasks). Listed first (children before their
+        // parents) for FK-safe DELETE: payment_receipts before attachments,
+        // ticket_replies before support_tickets, content_dependencies/
+        // lesson_access_windows/comments before lessons, center_* before centers,
+        // parent_magic_links before users.
+        'ticket_replies', 'support_tickets', 'payment_receipts', 'attachments',
+        'center_exam_grades', 'center_id_codes', 'content_dependencies',
+        'lesson_access_windows', 'comments', 'coupons', 'teacher_meta',
+        'parent_magic_links',
         'audit_logs', 'media_callback_events', 'login_attempts', 'otp_codes',
         'notifications', 'student_badges', 'badges', 'points_entries', 'favorites',
         'reviews', 'lesson_progress', 'playback_sessions', 'exam_attempts',
@@ -122,6 +149,9 @@ class DatabaseSeeder extends Seeder
         $this->truncateAll();
 
         DB::transaction(function (): void {
+            // Global notification catalog (types + system templates + ar/en copy).
+            $this->call(NotificationCatalogSeeder::class);
+
             $packages = $this->seedSubscriptionPackages();
             $admin = $this->seedPlatformAdmin();
 
@@ -635,6 +665,12 @@ class DatabaseSeeder extends Seeder
 
         // --- Engagement ---------------------------------------------------
         $this->seedEngagement($tenant, $courses, $lessonsByCourse, $examsByCourse, $students, $teacher);
+
+        // --- New-system extras (VD F-tasks): content dependencies, access
+        //     windows, center ID-codes, center paper grades, coupons, teacher
+        //     meta/SEO, support tickets, manual payment receipts, parent magic
+        //     links, lesson Q&A comments.
+        $this->seedNewSystemExtras($tenant, $teacher, $students, $centers, $lessonsByCourse);
 
         // --- Notifications + per-tenant auth/audit ------------------------
         $this->seedNotifications($tenant, $students, $teacher, $courses);
@@ -2073,6 +2109,235 @@ class DatabaseSeeder extends Seeder
         }
 
         $ctx->forget();
+    }
+
+    /**
+     * New-system tables introduced by the VD change set / F-tasks that the base
+     * seeder predates. Runs inside the tenant context so global scopes auto-fill
+     * tenant_id. Everything here is representative demo data covering every column.
+     */
+    private function seedNewSystemExtras(Tenant $tenant, User $teacher, array $students, array $centers, array $lessonsByCourse): void
+    {
+        $lessons = $lessonsByCourse[0] ?? [];
+        $firstLesson = $lessons[0] ?? null;
+
+        // content_dependencies — the quiz part stays locked until the video part
+        // is completed (mandatory rule; the unlock engine reads these).
+        if ($firstLesson) {
+            $video = LessonSection::where('lesson_id', $firstLesson->id)->where('type', 'video')->first();
+            $quiz = LessonSection::where('lesson_id', $firstLesson->id)->where('type', 'quiz')->first();
+            $homework = LessonSection::where('lesson_id', $firstLesson->id)->where('type', 'homework')->first();
+            // Homework stays locked until the quiz is passed (quiz + homework are
+            // always seeded); if a video part exists, the quiz waits on it too.
+            if ($quiz && $homework) {
+                ContentDependency::create([
+                    'section_id' => $homework->id, 'depends_on_section_id' => $quiz->id,
+                    'trigger' => 'passed', 'enforcement' => 'mandatory',
+                ]);
+            }
+            if ($video && $quiz) {
+                ContentDependency::create([
+                    'section_id' => $quiz->id, 'depends_on_section_id' => $video->id,
+                    'trigger' => 'completed', 'enforcement' => 'mandatory',
+                ]);
+            }
+
+            // content_access_overrides — teacher grants one student direct access
+            // to the (otherwise locked) quiz part, bypassing the dependency.
+            if ($quiz && ! empty($students)) {
+                ContentAccessOverride::create([
+                    'user_id' => $students[0]->id, 'lesson_id' => $firstLesson->id,
+                    'section_id' => $quiz->id, 'unit_id' => null, 'granted_by' => $teacher->id,
+                    'note' => 'سُمح بالوصول المباشر بعد حضور الحصة بالسنتر.',
+                    'granted_at' => now()->subDays(2), 'revoked_at' => null,
+                ]);
+            }
+
+            // lesson_access_windows — an open time-box for the first few students.
+            $firstWindow = null;
+            foreach (array_slice($students, 0, 3) as $s) {
+                $window = LessonAccessWindow::create([
+                    'user_id' => $s->id,
+                    'lesson_id' => $firstLesson->id,
+                    'started_at' => now()->subDays(3),
+                    'expires_at' => now()->addDays(4),
+                    'locked_at' => null,
+                    'extensions_used' => 0,
+                ]);
+                $firstWindow ??= $window;
+            }
+
+            // lesson_extension_requests — a pending "give me more time" request.
+            if ($firstWindow && ! empty($students)) {
+                LessonExtensionRequest::create([
+                    'access_window_id' => $firstWindow->id, 'user_id' => $students[0]->id,
+                    'status' => 'pending', 'requested_at' => now()->subHours(6),
+                    'decided_at' => null, 'decided_by' => null,
+                ]);
+            }
+
+            // exam_time_extensions — a pending extra-time request on the lesson quiz.
+            $quizExam = Exam::where('lesson_id', $firstLesson->id)->where('type', 'lesson_quiz')->first();
+            if ($quizExam && ! empty($students)) {
+                ExamTimeExtension::create([
+                    'exam_id' => $quizExam->id, 'user_id' => $students[0]->id,
+                    'requested_minutes' => 10, 'granted_minutes' => null,
+                    'status' => 'pending', 'requested_at' => now()->subHours(3),
+                    'decided_at' => null, 'decided_by' => null,
+                ]);
+            }
+
+            // comments (Q&A M09) — a student question + the teacher's answer.
+            if (! empty($students)) {
+                $question = Comment::create([
+                    'lesson_id' => $firstLesson->id, 'user_id' => $students[0]->id,
+                    'parent_id' => null, 'body' => 'لو سمحت، ممكن توضيح الجزء الأخير في الفيديو؟',
+                    'status' => 'answered', 'is_hidden' => false,
+                ]);
+                Comment::create([
+                    'lesson_id' => $firstLesson->id, 'user_id' => $teacher->id,
+                    'parent_id' => $question->id, 'body' => 'بالتأكيد — راجع الدقيقة 12، وفيه ملف مرفق يشرح المسألة.',
+                    'status' => 'new', 'is_hidden' => false,
+                ]);
+            }
+        }
+
+        // center_id_codes (F17) — one grade-1 batch for the first center; the
+        // first two are already redeemed by students.
+        if (! empty($centers)) {
+            $center = $centers[0];
+            $batchId = (string) Str::uuid();
+            for ($i = 1; $i <= 5; $i++) {
+                $redeemed = $i <= 2 && isset($students[$i - 1]);
+                CenterIdCode::create([
+                    'center_id' => $center->id, 'grade' => 1, 'sequence' => $i,
+                    'code' => sprintf('1-%d-%06d', $center->id, $i),
+                    'status' => $redeemed ? 'redeemed' : 'active',
+                    'batch_id' => $batchId, 'generated_by' => $teacher->id,
+                    'used_by' => $redeemed ? $students[$i - 1]->id : null,
+                    'used_at' => $redeemed ? now()->subDays(5) : null,
+                ]);
+            }
+
+            // center_exam_grades (F11) — paper-exam scores (year-scoped → set the
+            // academic-year context so BelongsToAcademicYear auto-fills).
+            $year = AcademicYear::withoutGlobalScopes()
+                ->where('tenant_id', $tenant->id)->orderBy('sort_order')->orderBy('id')->first();
+            if ($year !== null) {
+                $ctx = app(AcademicYearContext::class);
+                $ctx->set($year->id);
+                foreach (array_slice($students, 0, 3) as $idx => $s) {
+                    CenterExamGrade::create([
+                        'center_id' => $center->id, 'student_user_id' => $s->id,
+                        'title' => 'امتحان الشهر الأول (ورقي)', 'total_marks' => 50,
+                        'score' => 50 - ($idx * 6), 'sat_on' => now()->subDays(10)->toDateString(),
+                        'entered_by' => $teacher->id, 'note' => $idx === 0 ? 'ممتاز' : null,
+                    ]);
+                }
+                $ctx->forget();
+            }
+        }
+
+        // coupons (M21) — one percentage, one fixed-amount, both active.
+        Coupon::create([
+            'code' => 'WELCOME10', 'type' => 'percent', 'value' => 10, 'course_id' => null,
+            'min_subtotal_minor' => 0, 'usage_limit' => 100, 'starts_at' => now()->subMonth(),
+            'expires_at' => now()->addMonth(), 'is_active' => true,
+        ]);
+        Coupon::create([
+            'code' => 'SAVE50', 'type' => 'fixed', 'value' => 5000, 'course_id' => null,
+            'min_subtotal_minor' => 10000, 'usage_limit' => 50, 'starts_at' => now()->subWeek(),
+            'expires_at' => now()->addMonths(2), 'is_active' => true,
+        ]);
+
+        // teacher_meta (M02 SEO) — a small head/SEO set.
+        foreach ([
+            ['seo', 'title', $tenant->name.' — منصة تعليمية'],
+            ['seo', 'description', 'شرح مبسّط ومنظّم مع متابعة وامتحانات دورية.'],
+            ['seo', 'og_image', 'https://cdn.example.com/'.$tenant->slug.'/og.jpg'],
+        ] as $i => [$group, $key, $value]) {
+            TeacherMeta::create(['group' => $group, 'key' => $key, 'value' => $value, 'sort_order' => $i]);
+        }
+
+        if (! empty($students)) {
+            // support_tickets (F21) + a staff reply (F22) + an image attachment.
+            $ticket = SupportTicket::create([
+                'user_id' => $students[0]->id, 'assigned_to' => $teacher->id,
+                'subject' => 'مشكلة في تشغيل الفيديو', 'body' => 'الفيديو بيقف عند الدقيقة الخامسة.',
+                'priority' => 'normal', 'status' => 'in_progress',
+            ]);
+            TicketReply::create([
+                'ticket_id' => $ticket->id, 'user_id' => $teacher->id,
+                'body' => 'جرّب تحديث الصفحة ومسح الكاش، ولو استمرت المشكلة ابعتلنا سرعة النت.',
+            ]);
+            Attachment::create([
+                'attachable_type' => $ticket->getMorphClass(), 'attachable_id' => $ticket->id,
+                'kind' => 'image', 'storage_key' => 'seed/tickets/screenshot.jpg',
+                'mime' => 'image/jpeg', 'size_bytes' => 84213, 'duration_sec' => null,
+                'uploaded_by' => $students[0]->id,
+            ]);
+            SupportTicket::create([
+                'user_id' => ($students[1] ?? $students[0])->id, 'assigned_to' => null,
+                'subject' => 'طلب تفعيل كود سنتر', 'body' => 'اشتريت كود ومش عارف أفعّله.',
+                'priority' => 'urgent', 'status' => 'open',
+            ]);
+
+            // payment_receipts (F3/F4) — pending, approved-with-correction, rejected.
+            // Each references its own uploaded receipt image.
+            $receiptStates = [
+                ['status' => 'pending', 'amount' => 15000, 'corrected' => null, 'reason' => null],
+                ['status' => 'approved', 'amount' => 20000, 'corrected' => 18000, 'reason' => null],
+                ['status' => 'rejected', 'amount' => 10000, 'corrected' => null, 'reason' => 'الإيصال غير واضح.'],
+            ];
+            foreach ($receiptStates as $idx => $rs) {
+                $student = $students[$idx % count($students)];
+                $att = Attachment::create([
+                    'attachable_type' => 'payment_receipt', 'attachable_id' => 0,
+                    'kind' => 'image', 'storage_key' => 'seed/receipts/receipt-'.($idx + 1).'.jpg',
+                    'mime' => 'image/jpeg', 'size_bytes' => 62000 + $idx, 'duration_sec' => null,
+                    'uploaded_by' => $student->id,
+                ]);
+                $reviewed = $rs['status'] !== 'pending';
+                PaymentReceipt::create([
+                    'user_id' => $student->id, 'method' => $idx % 2 === 0 ? 'vodafone_cash' : 'instapay',
+                    'amount_minor' => $rs['amount'], 'corrected_amount_minor' => $rs['corrected'],
+                    'currency' => 'EGP', 'attachment_id' => $att->id, 'status' => $rs['status'],
+                    'reviewed_by' => $reviewed ? $teacher->id : null,
+                    'reviewed_at' => $reviewed ? now()->subDays(2) : null,
+                    'reject_reason' => $rs['reason'],
+                ]);
+            }
+        }
+
+        // notification_channel_settings — per-tenant channel kill-switch/config.
+        foreach (['database' => true, 'sms' => false] as $channel => $active) {
+            NotificationChannelSetting::create([
+                'tenant_id' => $tenant->id, 'channel' => $channel,
+                'config' => ['sender' => $tenant->slug], 'is_active' => $active,
+            ]);
+        }
+
+        // notification_preferences — a couple of per-student channel opt-ins.
+        $typeId = NotificationType::query()->value('id');
+        if ($typeId !== null) {
+            foreach (array_slice($students, 0, 2) as $s) {
+                NotificationPreference::create([
+                    'user_id' => $s->id, 'notification_type_id' => $typeId,
+                    'channel' => 'database', 'is_enabled' => true,
+                ]);
+            }
+        }
+
+        // parent_magic_links (F10) — a live passwordless link for one parent.
+        $parentUserId = TenantUser::where('tenant_id', $tenant->id)
+            ->where('role', 'parent')->value('user_id');
+        if ($parentUserId !== null) {
+            ParentMagicLink::create([
+                'parent_user_id' => $parentUserId,
+                'token_hash' => hash('sha256', Str::random(48)),
+                'is_active' => true, 'last_used_at' => now()->subDay(),
+            ]);
+        }
     }
 
     // =====================================================================

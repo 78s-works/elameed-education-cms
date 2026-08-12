@@ -186,53 +186,46 @@ class LandingResolver
         return $payload;
     }
 
-    /** @return array<int, array<string, mixed>> */
+    /**
+     * The landing "courses" section now lists standalone LESSONS (VD §7 — the
+     * course system is retired; content is lessons + parts). Cards carry
+     * `kind:'lesson'` + `lesson_id` so the SPA links them to checkout (lessons
+     * have no public detail page). The `id` is a synthetic `lesson-<id>` string so
+     * it never collides with course-enrollment ids in applyEnrollment().
+     *
+     * @return array<int, array<string, mixed>>
+     */
     private function resolveCourses(int $tenantId, array $config): array
     {
-        $source = $config['source'] ?? 'featured';
         $limit = max(1, min(24, (int) ($config['limit'] ?? 6)));
 
-        $courses = $this->baseCourses($tenantId, $source, $config);
-        if ($courses->isEmpty()) {
+        $lessons = Lesson::withoutGlobalScopes()
+            ->published()
+            ->where('tenant_id', $tenantId)
+            ->where('is_purchasable', true)
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->limit($limit)
+            ->get();
+
+        if ($lessons->isEmpty()) {
             return [];
         }
 
-        $ids = $courses->pluck('id')->all();
-        $students = $this->activeEnrollmentCounts($tenantId, $ids);
-        $lessons = $this->lessonAggregates($tenantId, $ids);
-        $ratings = $this->ratingAverages($tenantId, $ids);
-
-        if ($source === 'featured') {
-            $courses = $courses->sortByDesc(fn ($c) => $students[$c->id] ?? 0)->values();
-        }
-
-        $shown = $courses->take($limit)->values();
-
-        // Card-image fallback chain: course cover → course thumbnail → first
-        // published lesson's video poster. Only queried for courses that have
-        // NEITHER own image, so a coverless course still shows a real thumbnail
-        // instead of a placeholder.
-        $needyIds = $shown
-            ->filter(fn (Course $c) => empty($c->cover_url) && empty($c->thumbnail_url))
-            ->pluck('id')->all();
-        $posters = $needyIds !== [] ? $this->lessonPosters($tenantId, $needyIds) : [];
-
-        return $shown->map(fn (Course $c) => [
-            'id' => $c->id,
-            'uuid' => $c->uuid,
-            'slug' => $c->slug,
-            'title' => $c->title,
-            'cover_url' => $c->cover_url ?: ($c->thumbnail_url ?: ($posters[$c->id] ?? null)),
-            'thumbnail_url' => $c->thumbnail_url,
-            'grade' => $c->category?->grade ?? $c->category?->name,
-            'type' => $c->access_mode === AccessMode::Center ? 'center' : 'online',
-            'price' => ['amount_minor' => (int) $c->price_minor, 'currency' => $c->currency],
-            'is_free' => (bool) $c->is_free,
-            'lessons_count' => (int) ($lessons[$c->id]->c ?? 0),
-            'duration_label' => $this->durationLabel((int) ($lessons[$c->id]->d ?? 0)),
-            'rating' => isset($ratings[$c->id]) ? round((float) $ratings[$c->id], 1) : null,
-            'students_count' => (int) ($students[$c->id] ?? 0),
-            // Viewer-agnostic base; applyEnrollment() flips this per student.
+        return $lessons->map(fn (Lesson $l) => [
+            'id' => 'lesson-'.$l->id,
+            'lesson_id' => $l->id,
+            'kind' => 'lesson',
+            'title' => $l->title,
+            'cover_url' => null,
+            'grade' => null,
+            'type' => $l->access_mode === AccessMode::Center ? 'center' : 'online',
+            'price' => ['amount_minor' => (int) $l->price_minor, 'currency' => $l->currency],
+            'is_free' => (int) $l->price_minor === 0,
+            'lessons_count' => 0,
+            'duration_label' => $this->durationLabel((int) $l->duration_sec),
+            'rating' => null,
+            'students_count' => 0,
             'enrolled' => false,
         ])->all();
     }

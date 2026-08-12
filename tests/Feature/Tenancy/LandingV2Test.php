@@ -65,6 +65,24 @@ class LandingV2Test extends TestCase
         return $c;
     }
 
+    /** A published, individually-purchasable standalone lesson (VD §7 — the
+     *  landing "courses" section now lists these instead of courses). */
+    private function publishedLesson(int $priceMinor = 5000): Lesson
+    {
+        $l = new Lesson([
+            'title' => 'Standalone lesson',
+            'visibility' => ContentVisibility::Visible->value,
+            'is_purchasable' => true,
+            'price_minor' => $priceMinor,
+            'duration_sec' => 600,
+            'sort_order' => 1,
+        ]);
+        $l->tenant_id = $this->tenant->id;
+        $l->save();
+
+        return $l;
+    }
+
     private function sectionOfType(array $sections, string $type): ?array
     {
         foreach ($sections as $s) {
@@ -79,6 +97,7 @@ class LandingV2Test extends TestCase
     public function test_public_landing_resolves_layout_nav_courses_and_reviews(): void
     {
         $course = $this->publishedCourse();
+        $lesson = $this->publishedLesson();
         $student = $this->member(TenantUserRole::Student);
         app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $course, EnrollmentSource::Purchase);
 
@@ -95,17 +114,15 @@ class LandingV2Test extends TestCase
 
         $this->assertNotEmpty($data['nav']['links']);
 
+        // The "courses" section now lists standalone lessons (VD §7).
         $courses = $this->sectionOfType($data['sections'], 'courses');
         $this->assertNotNull($courses);
-        $item = collect($courses['items'])->firstWhere('slug', $course->slug);
+        $item = collect($courses['items'])->firstWhere('lesson_id', $lesson->id);
         $this->assertNotNull($item);
-        $this->assertSame('https://cdn.example.com/thumb.jpg', $item['thumbnail_url']);
-        $this->assertSame(2, $item['lessons_count']);
-        $this->assertSame('25m', $item['duration_label']);
-        $this->assertSame(1, $item['students_count']);
-        $this->assertEquals(5.0, $item['rating']); // JSON serializes 5.0 as 5
+        $this->assertSame('lesson', $item['kind']);
         $this->assertSame('online', $item['type']);
-        $this->assertFalse($item['enrolled']); // unauthenticated
+        $this->assertSame(5000, $item['price']['amount_minor']);
+        $this->assertFalse($item['enrolled']);
 
         $reviews = $this->sectionOfType($data['sections'], 'testimonials');
         $this->assertNotNull($reviews);
@@ -223,63 +240,27 @@ class LandingV2Test extends TestCase
             ->assertJsonStructure(['error' => ['details' => ['sections.0.content.ar.items.0.value']]]);
     }
 
-    public function test_course_card_cover_falls_back_to_first_lesson_video_poster(): void
+    public function test_landing_courses_section_lists_only_published_purchasable_lessons(): void
     {
-        // A course with NO cover and NO thumbnail of its own.
-        $c = new Course(['title' => 'NoImage', 'visibility' => ContentVisibility::Visible->value, 'price_minor' => 0, 'is_free' => true]);
-        $c->tenant_id = $this->tenant->id;
-        $c->slug = 'no-image-'.uniqid();
-        $c->save();
+        // Published + purchasable → shown.
+        $shown = $this->publishedLesson();
 
-        $lesson = new Lesson(['course_id' => $c->id, 'title' => 'L', 'sort_order' => 1, 'visibility' => ContentVisibility::Visible->value]);
-        $lesson->tenant_id = $this->tenant->id;
-        $lesson->save();
+        // Not purchasable → hidden.
+        $notForSale = new Lesson(['title' => 'Internal', 'visibility' => ContentVisibility::Visible->value, 'is_purchasable' => false, 'price_minor' => 0]);
+        $notForSale->tenant_id = $this->tenant->id;
+        $notForSale->save();
 
-        $video = new MediaAsset(['lesson_id' => $lesson->id, 'type' => MediaType::HlsVideo->value, 'status' => 'ready', 'title' => 'v']);
-        $video->tenant_id = $this->tenant->id;
-        $video->thumbnail_url = 'https://cdn.example.com/lesson-poster.jpg';
-        $video->save();
-        $lesson->update(['video_asset_id' => $video->id]);
+        // Hidden visibility → hidden even though purchasable.
+        $hidden = new Lesson(['title' => 'Hidden', 'visibility' => ContentVisibility::Hidden->value, 'is_purchasable' => true, 'price_minor' => 1000]);
+        $hidden->tenant_id = $this->tenant->id;
+        $hidden->save();
 
         $data = $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/tenant/landing')->assertOk()->json('data');
-        $item = collect($this->sectionOfType($data['sections'], 'courses')['items'])->firstWhere('slug', $c->slug);
+        $items = collect($this->sectionOfType($data['sections'], 'courses')['items']);
 
-        $this->assertNotNull($item);
-        // cover_url falls back to the lesson video poster…
-        $this->assertSame('https://cdn.example.com/lesson-poster.jpg', $item['cover_url']);
-        // …while the course's OWN thumbnail stays null.
-        $this->assertNull($item['thumbnail_url']);
-    }
-
-    public function test_course_card_cover_prefers_course_cover_url_over_fallbacks(): void
-    {
-        $c = new Course([
-            'title' => 'HasCover', 'visibility' => ContentVisibility::Visible->value, 'price_minor' => 0, 'is_free' => true,
-            'cover_url' => 'https://cdn.example.com/course-cover.jpg',
-            'thumbnail_url' => 'https://cdn.example.com/course-thumb.jpg',
-        ]);
-        $c->tenant_id = $this->tenant->id;
-        $c->slug = 'has-cover-'.uniqid();
-        $c->save();
-
-        $data = $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/tenant/landing')->assertOk()->json('data');
-        $item = collect($this->sectionOfType($data['sections'], 'courses')['items'])->firstWhere('slug', $c->slug);
-
-        $this->assertSame('https://cdn.example.com/course-cover.jpg', $item['cover_url']);
-    }
-
-    public function test_authenticated_landing_flags_enrolled_courses(): void
-    {
-        $course = $this->publishedCourse();
-        $student = $this->member(TenantUserRole::Student);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $course, EnrollmentSource::Purchase);
-
-        Sanctum::actingAs($student);
-        $data = $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/tenant/landing')->assertOk()->json('data');
-
-        $courses = $this->sectionOfType($data['sections'], 'courses');
-        $item = collect($courses['items'])->firstWhere('slug', $course->slug);
-        $this->assertTrue($item['enrolled']);
+        $this->assertNotNull($items->firstWhere('lesson_id', $shown->id));
+        $this->assertNull($items->firstWhere('lesson_id', $notForSale->id));
+        $this->assertNull($items->firstWhere('lesson_id', $hidden->id));
     }
 
     public function test_only_enrolled_student_can_review_and_review_is_upserted(): void

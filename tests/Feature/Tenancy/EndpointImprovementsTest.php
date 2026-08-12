@@ -4,6 +4,7 @@ namespace Tests\Feature\Tenancy;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
@@ -57,30 +58,37 @@ class EndpointImprovementsTest extends TestCase
         return $c;
     }
 
-    public function test_selected_source_excludes_unpublished_courses_from_public_landing(): void
+    public function test_landing_courses_section_lists_published_purchasable_lessons_only(): void
     {
-        $published = $this->course('Published', ContentVisibility::Visible);
-        $hidden = $this->course('Hidden', ContentVisibility::Hidden);
-
-        $profile = new TeacherProfile([
-            'layout' => 'classic',
-            'landing_sections' => [[
-                'key' => 'courses', 'type' => 'courses', 'visible' => true, 'order' => 1,
-                'content' => ['title' => 'Courses'],
-                'config' => ['source' => 'selected', 'course_ids' => [$published->id, $hidden->id], 'limit' => 6],
-            ]],
-        ]);
-        $profile->tenant_id = $this->tenant->id;
-        $profile->save();
+        // The courses section now surfaces standalone lessons (VD §7). Only
+        // published + purchasable lessons may appear on the public landing.
+        $shown = $this->lesson('For sale', ContentVisibility::Visible, true);
+        $hidden = $this->lesson('Hidden', ContentVisibility::Hidden, true);
+        $internal = $this->lesson('Internal', ContentVisibility::Visible, false);
 
         $data = $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/tenant/landing')
             ->assertOk()->json('data');
 
         $courses = collect($data['sections'])->firstWhere('type', 'courses');
-        $slugs = collect($courses['items'])->pluck('slug');
+        $ids = collect($courses['items'])->pluck('lesson_id');
 
-        $this->assertTrue($slugs->contains($published->slug), 'published course should appear');
-        $this->assertFalse($slugs->contains($hidden->slug), 'unpublished selected course must NOT leak');
+        $this->assertTrue($ids->contains($shown->id), 'published purchasable lesson should appear');
+        $this->assertFalse($ids->contains($hidden->id), 'hidden lesson must NOT leak');
+        $this->assertFalse($ids->contains($internal->id), 'non-purchasable lesson must NOT leak');
+    }
+
+    private function lesson(string $title, ContentVisibility $visibility, bool $purchasable): Lesson
+    {
+        $l = new Lesson([
+            'title' => $title,
+            'visibility' => $visibility->value,
+            'is_purchasable' => $purchasable,
+            'price_minor' => 1000,
+        ]);
+        $l->tenant_id = $this->tenant->id;
+        $l->save();
+
+        return $l;
     }
 
     public function test_media_upload_accepts_png_but_rejects_svg(): void

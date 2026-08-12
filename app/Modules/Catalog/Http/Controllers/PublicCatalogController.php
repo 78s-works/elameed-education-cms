@@ -11,6 +11,7 @@ use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
+use App\Modules\Commerce\Models\Enrollment;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -87,6 +88,7 @@ class PublicCatalogController
             ->when($request->input('q'), fn ($q, $term) => $q->where('title', 'like', '%'.$term.'%'))
             ->tap(fn (Builder $q) => $this->applyAccessMode($q, $request))
             ->tap(fn (Builder $q) => $this->applyAcademicYear($q, $request))
+            ->tap(fn (Builder $q) => $this->applyExcludeOwned($q, $request, 'lesson_id'))
             ->orderBy('sort_order')
             ->orderBy('id')
             ->paginate(20);
@@ -102,6 +104,7 @@ class PublicCatalogController
             ->when($request->input('q'), fn ($q, $term) => $q->where('name', 'like', '%'.$term.'%'))
             ->tap(fn (Builder $q) => $this->applyAccessMode($q, $request))
             ->tap(fn (Builder $q) => $this->applyAcademicYear($q, $request))
+            ->tap(fn (Builder $q) => $this->applyExcludeOwned($q, $request, 'package_id'))
             ->withCount('items')
             ->orderBy('name')
             ->orderBy('id')
@@ -129,6 +132,37 @@ class PublicCatalogController
         );
 
         $query->whereIn('access_mode', $allowed);
+    }
+
+    /**
+     * Optional ?exclude_owned=1 — drop items the calling student already owns, so
+     * the "Explore" surface (VD F13/Item) shows only not-yet-bought content. Auth
+     * is optional on this public route, so the user is resolved via the sanctum
+     * guard from the bearer token; anonymous callers get the full catalogue.
+     * `$column` is the enrollment provenance key: `lesson_id` or `package_id`.
+     */
+    private function applyExcludeOwned(Builder $query, Request $request, string $column): void
+    {
+        if (! $request->boolean('exclude_owned')) {
+            return;
+        }
+
+        $user = $request->user() ?? auth('sanctum')->user();
+        if ($user === null) {
+            return;
+        }
+
+        $ownedIds = Enrollment::query()
+            ->where('user_id', $user->getKey())
+            ->grantsAccess()
+            ->whereNotNull($column)
+            ->pluck($column)
+            ->unique()
+            ->all();
+
+        if ($ownedIds !== []) {
+            $query->whereNotIn('id', $ownedIds);
+        }
     }
 
     /**

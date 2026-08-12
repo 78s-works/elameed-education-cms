@@ -14,6 +14,7 @@ use App\Modules\Billing\Http\Controllers\Teacher\SubscriptionController;
 use App\Modules\Catalog\Http\Controllers\PublicCatalogController;
 use App\Modules\Catalog\Http\Controllers\StudentLessonAccessController;
 use App\Modules\Catalog\Http\Controllers\StudentLessonSectionsController;
+use App\Modules\Catalog\Http\Controllers\StudentLibraryController;
 use App\Modules\Catalog\Http\Controllers\Teacher\AcademicYearController;
 use App\Modules\Catalog\Http\Controllers\Teacher\CategoryController;
 use App\Modules\Catalog\Http\Controllers\Teacher\ContentPackageController;
@@ -313,6 +314,9 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::post('/exams/{exam:uuid}/extension-request', [AttemptController::class, 'requestExtension']);
 
         Route::get('/me/courses', [StudentCoursesController::class, 'index']);
+        // The student's own library (VD F1): purchased standalone lessons + packages.
+        Route::get('/me/lessons', [StudentLibraryController::class, 'lessons']);
+        Route::get('/me/packages', [StudentLibraryController::class, 'packages']);
 
         // Own paper (in-center) exam scores (VD R12). Spans academic years — no
         // X-Academic-Year required; still tenant-scoped.
