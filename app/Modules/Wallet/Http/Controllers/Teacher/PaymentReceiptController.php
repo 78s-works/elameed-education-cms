@@ -2,6 +2,7 @@
 
 namespace App\Modules\Wallet\Http\Controllers\Teacher;
 
+use App\Modules\Wallet\Http\Requests\ApproveReceiptRequest;
 use App\Modules\Wallet\Http\Requests\RejectReceiptRequest;
 use App\Modules\Wallet\Http\Resources\PaymentReceiptResource;
 use App\Modules\Wallet\Models\PaymentReceipt;
@@ -41,9 +42,11 @@ class PaymentReceiptController
         return new PaymentReceiptResource($receipt->load(['user', 'attachment', 'reviewer']));
     }
 
-    public function approve(Request $request, PaymentReceipt $receipt): PaymentReceiptResource
+    public function approve(ApproveReceiptRequest $request, PaymentReceipt $receipt): PaymentReceiptResource
     {
-        $updated = $this->service->approve($receipt, $request->user());
+        $corrected = $request->validated('corrected_amount_minor');
+
+        $updated = $this->service->approve($receipt, $request->user(), $corrected !== null ? (int) $corrected : null);
 
         return new PaymentReceiptResource($updated->load(['user', 'attachment', 'reviewer']));
     }
