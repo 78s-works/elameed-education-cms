@@ -132,6 +132,99 @@ class PaymentReceiptTest extends TestCase
         $this->assertSame($reviewer->id, (int) $receipt->reviewed_by);
     }
 
+    public function test_default_approve_credits_submitted_and_leaves_corrected_null(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $uuid = $this->submit($student, 50000);
+
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+        $this->withHeaders(['X-Tenant' => 'demo'])
+            ->postJson("/api/v1/teacher/payment-receipts/{$uuid}/approve")
+            ->assertOk()
+            ->assertJsonPath('data.amount_minor', 50000)
+            ->assertJsonPath('data.corrected_amount_minor', null);
+
+        $this->assertSame(50000, $this->balanceOf($student));
+
+        $this->assertDatabaseHas('payment_receipts', [
+            'uuid' => $uuid, 'amount_minor' => 50000, 'corrected_amount_minor' => null,
+        ]);
+    }
+
+    public function test_reviewer_corrected_amount_credits_corrected_and_records_original(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $uuid = $this->submit($student, 50000);
+
+        Sanctum::actingAs($this->member(TenantUserRole::Assistant, ['finance']));
+        $this->withHeaders(['X-Tenant' => 'demo'])
+            ->postJson("/api/v1/teacher/payment-receipts/{$uuid}/approve", ['corrected_amount_minor' => 30000])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'approved')
+            ->assertJsonPath('data.amount_minor', 50000)
+            ->assertJsonPath('data.corrected_amount_minor', 30000);
+
+        // Wallet credited the corrected value, not the submitted one.
+        $this->assertSame(30000, $this->balanceOf($student));
+
+        // Original submitted figure preserved as the audit baseline.
+        $this->assertDatabaseHas('payment_receipts', [
+            'uuid' => $uuid, 'amount_minor' => 50000, 'corrected_amount_minor' => 30000,
+        ]);
+
+        // Both ledger legs post the corrected value.
+        $creditLeg = LedgerEntry::withoutGlobalScopes()
+            ->where('ref_type', 'receipt')
+            ->where('account', LedgerEntry::STUDENT_WALLET)
+            ->where('direction', LedgerEntry::CREDIT)
+            ->value('amount_minor');
+        $debitLeg = LedgerEntry::withoutGlobalScopes()
+            ->where('ref_type', 'receipt')
+            ->where('account', LedgerEntry::GATEWAY_CLEARING)
+            ->where('direction', LedgerEntry::DEBIT)
+            ->value('amount_minor');
+        $this->assertSame(30000, (int) $creditLeg);
+        $this->assertSame(30000, (int) $debitLeg);
+    }
+
+    public function test_corrected_approve_is_idempotent_on_double_tap(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $uuid = $this->submit($student, 50000);
+
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+        $h = ['X-Tenant' => 'demo'];
+
+        $this->withHeaders($h)->postJson("/api/v1/teacher/payment-receipts/{$uuid}/approve", ['corrected_amount_minor' => 30000])->assertOk();
+        // Second tap → conflict; corrected credit never doubles.
+        $this->withHeaders($h)->postJson("/api/v1/teacher/payment-receipts/{$uuid}/approve", ['corrected_amount_minor' => 30000])->assertStatus(409);
+
+        $this->assertSame(30000, $this->balanceOf($student));
+
+        $creditLegs = LedgerEntry::withoutGlobalScopes()
+            ->where('ref_type', 'receipt')
+            ->where('account', LedgerEntry::STUDENT_WALLET)
+            ->where('direction', LedgerEntry::CREDIT)
+            ->count();
+        $this->assertSame(1, $creditLegs);
+    }
+
+    public function test_corrected_amount_of_zero_or_less_is_rejected(): void
+    {
+        $student = $this->member(TenantUserRole::Student);
+        $uuid = $this->submit($student, 50000);
+
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+        $h = ['X-Tenant' => 'demo'];
+
+        $this->withHeaders($h)->postJson("/api/v1/teacher/payment-receipts/{$uuid}/approve", ['corrected_amount_minor' => 0])->assertStatus(422);
+        $this->withHeaders($h)->postJson("/api/v1/teacher/payment-receipts/{$uuid}/approve", ['corrected_amount_minor' => -100])->assertStatus(422);
+
+        // Receipt stays pending; nothing credited.
+        $this->assertSame(0, $this->balanceOf($student));
+        $this->assertDatabaseHas('payment_receipts', ['uuid' => $uuid, 'status' => 'pending']);
+    }
+
     public function test_double_approve_returns_409_and_does_not_double_credit(): void
     {
         $student = $this->member(TenantUserRole::Student);
