@@ -34,6 +34,7 @@ class PaymentReceipt extends Model
         'user_id',
         'method',
         'amount_minor',
+        'corrected_amount_minor',
         'currency',
         'attachment_id',
         'status',
@@ -45,8 +46,12 @@ class PaymentReceipt extends Model
 
     protected $casts = [
         'amount_minor' => 'integer',
+        'corrected_amount_minor' => 'integer',
         'reviewed_at' => 'datetime',
     ];
+
+    /** Sane ceiling for a reviewer-corrected top-up (1,000,000 EGP in piastres). */
+    public const MAX_AMOUNT_MINOR = 100_000_000;
 
     protected $attributes = [
         'currency' => 'EGP',
