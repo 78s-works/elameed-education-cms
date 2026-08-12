@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Models\PaymentReceipt;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /**
@@ -40,10 +41,21 @@ class PaymentReceiptService
      * `gateway_clearing` (external cash in), then stamp the review. Guards
      * `status === pending` (else 409). The ledger op key `receipt:{id}` is UNIQUE,
      * so even if the guard were bypassed the credit can never post twice.
+     *
+     * `$correctedAmountMinor` (VD F4 / D13-7) lets the reviewer credit a value that
+     * differs from the student-submitted `amount_minor` — e.g. the student typed the
+     * wrong figure. When given it must be > 0 and within a sane ceiling; the corrected
+     * value funds BOTH ledger legs and is stamped on `corrected_amount_minor`, while
+     * `amount_minor` stays the original submitted figure (the audit baseline). When
+     * omitted, the submitted amount is credited and `corrected_amount_minor` stays NULL.
      */
-    public function approve(PaymentReceipt $receipt, User $reviewer): PaymentReceipt
+    public function approve(PaymentReceipt $receipt, User $reviewer, ?int $correctedAmountMinor = null): PaymentReceipt
     {
-        return DB::transaction(function () use ($receipt, $reviewer): PaymentReceipt {
+        if ($correctedAmountMinor !== null && ($correctedAmountMinor <= 0 || $correctedAmountMinor > PaymentReceipt::MAX_AMOUNT_MINOR)) {
+            throw new InvalidArgumentException('Corrected amount must be greater than 0 and within the allowed ceiling.');
+        }
+
+        return DB::transaction(function () use ($receipt, $reviewer, $correctedAmountMinor): PaymentReceipt {
             $fresh = PaymentReceipt::withoutGlobalScopes()
                 ->whereKey($receipt->getKey())
                 ->lockForUpdate()
@@ -51,12 +63,14 @@ class PaymentReceiptService
 
             $this->guardPending($fresh);
 
+            $creditMinor = $correctedAmountMinor ?? (int) $fresh->amount_minor;
+
             $tenantId = (int) $fresh->tenant_id;
             $wallet = $this->ledger->walletFor($tenantId, (int) $fresh->user_id);
 
             $this->ledger->post($tenantId, "receipt:{$fresh->id}", [
-                ['account' => LedgerEntry::STUDENT_WALLET, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => (int) $fresh->amount_minor, 'wallet_id' => $wallet->id],
-                ['account' => LedgerEntry::GATEWAY_CLEARING, 'direction' => LedgerEntry::DEBIT, 'amount_minor' => (int) $fresh->amount_minor],
+                ['account' => LedgerEntry::STUDENT_WALLET, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $creditMinor, 'wallet_id' => $wallet->id],
+                ['account' => LedgerEntry::GATEWAY_CLEARING, 'direction' => LedgerEntry::DEBIT, 'amount_minor' => $creditMinor],
             ], 'receipt', (int) $fresh->id);
 
             $ledgerEntryId = LedgerEntry::withoutGlobalScopes()
@@ -69,6 +83,7 @@ class PaymentReceiptService
 
             $fresh->forceFill([
                 'status' => PaymentReceipt::STATUS_APPROVED,
+                'corrected_amount_minor' => $correctedAmountMinor,
                 'reviewed_by' => $reviewer->getKey(),
                 'reviewed_at' => now(),
                 'ledger_entry_id' => $ledgerEntryId,
