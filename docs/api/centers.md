@@ -444,7 +444,9 @@ Records created here get `source: "online"` and `marked_by` = the acting teacher
 
 ### Teacher · Center ID-codes (B20)
 
-Mint & list **Center ID-codes** — sequential, grade-encoded, per-center. **Auth** 🧑‍🏫 `role:teacher,assistant` + **`permission:centers`** (the same gate as attendance/codes; a teacher passes implicitly). Sibling of `/teacher/codes`, **not** merged with it — different table (`center_id_codes`), different lifecycle. **Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:centers`.
+Mint & list **Center ID-codes** — sequential, grade-encoded, per-center. **Auth** 🧑‍🏫 `role:teacher,assistant` + **`permission:centers`** (the same gate as attendance/codes; a teacher passes implicitly). Sibling of `/teacher/codes`, **not** merged with it — different table (`center_id_codes`), different lifecycle. **Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:centers`, **`academic-year`**.
+
+> **🔧 Year-scoped since 2026-08-12 (bug fix).** Both routes require the **`X-Academic-Year`** header (422 without it). `index` lists **only the active year's** codes (`BelongsToAcademicYear` global scope — it previously leaked every grade to every year); `batch` auto-stamps the active `academic_year_id` on each minted row. `grade` is unchanged (encoded prefix + per-`(center,grade)` counter + B21 binding). The resource now includes `academic_year_uuid`.
 
 #### `GET /teacher/center-id-codes`
 

@@ -574,8 +574,12 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
 
                 // Center ID-codes (B20) — sequential, grade-encoded student-identity
                 // codes minted per center; a sibling of /codes, NOT the recharge codes.
-                Route::get('/teacher/center-id-codes', [CenterIdCodeController::class, 'index']);
-                Route::post('/teacher/center-id-codes/batch', [CenterIdCodeController::class, 'batch']);
+                // Year-scoped (X-Academic-Year): the panel's year selector filters
+                // the list, and a batch is stamped with the active academic year.
+                Route::middleware('academic-year')->group(function (): void {
+                    Route::get('/teacher/center-id-codes', [CenterIdCodeController::class, 'index']);
+                    Route::post('/teacher/center-id-codes/batch', [CenterIdCodeController::class, 'batch']);
+                });
 
                 // Center paper-exam grade entry (VD R12, doc 13 Phase 15). A grade
                 // belongs to an academic year, so these are year-scoped

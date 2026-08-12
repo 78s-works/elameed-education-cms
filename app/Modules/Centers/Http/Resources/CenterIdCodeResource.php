@@ -18,6 +18,7 @@ class CenterIdCodeResource extends JsonResource
             'sequence' => $this->sequence,
             'center_id' => $this->center_id,
             'center_uuid' => $this->whenLoaded('center', fn () => $this->center->uuid),
+            'academic_year_uuid' => $this->whenLoaded('academicYear', fn () => $this->academicYear->uuid),
             'status' => $this->status->value,
             'batch_id' => $this->batch_id,
             'generated_by' => $this->generated_by,

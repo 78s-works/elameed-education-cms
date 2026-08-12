@@ -16,9 +16,11 @@ use Illuminate\Support\Str;
 
 /**
  * /teacher/center-id-codes (B20) — mint & list Center ID-codes. Sequential,
- * grade-encoded, per-center. Gated role:teacher,assistant + permission:centers.
- * Sibling of, not merged with, /teacher/codes (M12 recharge codes): different
- * table, different lifecycle. Mirrors that controller's batch-generator shape.
+ * grade-encoded, per-center. Gated role:teacher,assistant + permission:centers,
+ * year-scoped by the X-Academic-Year middleware: index only lists the active
+ * year's codes (BelongsToAcademicYear scope) and batch stamps that year onto
+ * every minted row. Sibling of, not merged with, /teacher/codes (M12 recharge
+ * codes): different table, different lifecycle. Mirrors that batch-generator shape.
  */
 class CenterIdCodeController
 {
@@ -33,7 +35,7 @@ class CenterIdCodeController
         $status = $this->normaliseStatus($request->input('filter.status'));
 
         $codes = CenterIdCode::query()
-            ->with('center:id,uuid')
+            ->with(['center:id,uuid', 'academicYear:id,uuid'])
             ->when($status, fn ($q, $s) => $q->where('status', $s))
             ->when($request->input('filter.grade'), fn ($q, $g) => $q->where('grade', (int) $g))
             ->when($request->input('filter.batch_id'), fn ($q, $b) => $q->where('batch_id', $b))

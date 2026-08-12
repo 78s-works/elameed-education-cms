@@ -3,6 +3,7 @@
 namespace Tests\Feature\Centers;
 
 use App\Models\User;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Centers\Models\Center;
 use App\Modules\Centers\Models\CenterIdCode;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -25,6 +26,9 @@ class CenterIdCodeTest extends TestCase
 
     private Tenant $tenant;
 
+    private AcademicYear $year;
+
+    /** Tenant + academic-year headers for the year-scoped id-code routes. */
     private array $h;
 
     protected function setUp(): void
@@ -32,7 +36,17 @@ class CenterIdCodeTest extends TestCase
         parent::setUp();
         Cache::flush();
         $this->tenant = Tenant::create(['slug' => 'demo', 'name' => 'Demo', 'status' => TenantStatus::Active]);
-        $this->h = ['X-Tenant' => 'demo'];
+        $this->year = $this->makeYear('Year A');
+        $this->h = ['X-Tenant' => 'demo', 'X-Academic-Year' => $this->year->uuid];
+    }
+
+    private function makeYear(string $name, int $sort = 0): AcademicYear
+    {
+        $year = new AcademicYear(['name' => $name, 'sort_order' => $sort]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
+
+        return $year;
     }
 
     private function member(TenantUserRole $role, array $permissions = []): User
@@ -138,6 +152,35 @@ class CenterIdCodeTest extends TestCase
             ->assertOk()->assertJsonPath('meta.total', 1);
         $this->withHeaders($this->h)->getJson('/api/v1/teacher/center-id-codes')
             ->assertOk()->assertJsonPath('meta.total', 3);
+    }
+
+    public function test_index_is_scoped_to_the_active_academic_year(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+        $center = $this->center();
+
+        // Mint 3 codes while the active year is Year A.
+        $this->withHeaders($this->h)->postJson('/api/v1/teacher/center-id-codes/batch', [
+            'center' => $center->uuid, 'grade' => 2, 'count' => 3,
+        ])->assertStatus(201);
+
+        // Year A sees its 3 codes; a second year sees none of them.
+        $this->withHeaders($this->h)->getJson('/api/v1/teacher/center-id-codes')
+            ->assertOk()->assertJsonPath('meta.total', 3);
+
+        $yearB = $this->makeYear('Year B', 1);
+        $this->withHeaders(['X-Tenant' => 'demo', 'X-Academic-Year' => $yearB->uuid])
+            ->getJson('/api/v1/teacher/center-id-codes')
+            ->assertOk()->assertJsonPath('meta.total', 0);
+    }
+
+    public function test_requests_without_the_year_header_are_rejected(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson('/api/v1/teacher/center-id-codes')
+            ->assertStatus(422);
     }
 
     public function test_grade_must_be_one_two_or_three(): void
