@@ -3,6 +3,7 @@
 namespace Tests\Feature\Identity;
 
 use App\Models\User;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Centers\Models\Center;
 use App\Modules\Centers\Models\CenterIdCode;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -72,6 +73,18 @@ class AuthTest extends TestCase
 
     private function idCode(Center $center, int $grade = 2, int $sequence = 1, string $status = 'active'): CenterIdCode
     {
+        // center_id_codes are year-scoped now; with no request context in tests we
+        // stamp the tenant's academic year directly (reuse if one already exists).
+        $yearId = AcademicYear::withoutGlobalScopes()
+            ->where('tenant_id', $center->tenant_id)
+            ->value('id');
+        if ($yearId === null) {
+            $year = new AcademicYear(['name' => 'Year A', 'sort_order' => 0]);
+            $year->tenant_id = $center->tenant_id;
+            $year->save();
+            $yearId = $year->id;
+        }
+
         $code = new CenterIdCode([
             'center_id' => $center->id,
             'grade' => $grade,
@@ -81,6 +94,7 @@ class AuthTest extends TestCase
             'batch_id' => (string) Str::uuid(),
         ]);
         $code->tenant_id = $center->tenant_id; // no request context in tests
+        $code->academic_year_id = $yearId;
         $code->save();
 
         return $code;

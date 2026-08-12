@@ -4,6 +4,7 @@ namespace App\Modules\Centers\Models;
 
 use App\Models\User;
 use App\Modules\Centers\Enums\CodeStatus;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -14,9 +15,15 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * Distinct from ActivationCode (M12, random wallet/course recharge): this code
  * is handed to a student and, at sign-up, binds them to `center_id` + `grade`
  * (+ study_mode). Reuses CodeStatus (active=unused, redeemed=used, disabled).
+ *
+ * Year-scoped (BelongsToAcademicYear): listing/minting run inside the
+ * `academic-year` middleware, so the panel's year selector filters codes and a
+ * batch is stamped with the active year. `grade` is unchanged — it still drives
+ * the encoded prefix, the per-center sequence, and the B21 register-time binding.
  */
 class CenterIdCode extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
     use HasUuids;
 
