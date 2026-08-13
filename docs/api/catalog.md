@@ -1,20 +1,31 @@
 # Catalog Module
 
-The Catalog module (`app/Modules/Catalog`, M04) owns the tenant's course library: the public course
-storefront that prospective students browse, and the teacher-facing authoring surface for the
-`course → unit → lesson → attachment` hierarchy plus the course taxonomy (categories) and **packages**
-(bundles that group courses/units into one sellable product). Every route runs inside the `tenant`
-middleware group, so the tenant is resolved from the request host (or the `X-Tenant` dev override) and
-all queries are tenant-isolated by the `BelongsToTenant` global scope. Public listings expose only the
-resolved tenant's **published** content (visible + past `publish_at`); teachers see all of their own
-content regardless of visibility.
+The Catalog module (`app/Modules/Catalog`, M04) owns the tenant's content library. After the VD change
+set (`docs (1)/12` §7, `13`) the authoring model is:
 
-> **Buying a package** grants access to everything inside it. Purchase happens through the
-> [Commerce checkout](commerce.md#packages-bundles) (`item.type = bundle`); on payment, an enrollment
-> is granted for each item in the package. A **course** item unlocks all its lessons + exams; a **unit**
-> item unlocks that chapter's lessons; a **lesson** item (part of a course) unlocks just that one lesson.
-> Access itself always lives in `enrollments` — the single source of truth checked by playback,
-> progress, and exams. Enrolling in a whole course opens every lesson in it.
+```
+academic_year  ─┬─►  standalone lesson  ─►  part (lesson_section)
+                └─►  content package (recursive)  ─►  { lesson | sub-package }
+```
+
+**`courses`** still exist as the **public storefront unit** (and the thing coupons, reviews, and center
+activation-codes scope to), but **teacher course CRUD, units, and bundles were retired** (migration
+`2026_08_04_000010_retire_units_bundles.php` dropped `units`, `bundles`, `bundle_items`,
+`unit_dependencies`). Teachers now author **standalone lessons** (each with typed **parts**) and group
+them into **recursive content packages**, all within an **academic year** context.
+
+Every route runs inside the `tenant` middleware group, so the tenant is resolved from the request host
+(or the `X-Tenant` dev override) and all queries are tenant-isolated by the `BelongsToTenant` global
+scope. The lesson/part/package/package-type authoring routes additionally run under the
+**`academic-year`** middleware (`X-Academic-Year: <year-uuid>`), which binds a `BelongsToAcademicYear`
+scope — content from another year (or tenant) `404`s. Public listings expose only the resolved tenant's
+**published** content; teachers see all of their own content regardless of visibility.
+
+> **Buying a package or a lesson** grants access by writing `enrollments`. A **package** purchase **fans
+> out** into one enrollment per lesson it contains (recursively through sub-packages, idempotent — B15 /
+> LP-D2); a **standalone lesson** purchase grants that one lesson. `enrollments` is the single source of
+> truth checked by playback, progress, and exams. Checkout is handled by
+> [Commerce](commerce.md); this module is authoring + browse only.
 
 ## Conventions (apply to every endpoint)
 
@@ -26,73 +37,79 @@ content regardless of visibility.
 - **Tenancy:** tenant resolved from the `Host` header (dev override: `X-Tenant: <slug>`). Enforced by
   the `tenant` middleware group (`EnsureRegisteredDomain` → `ResolveTenant`), which binds the tenant
   before route-model binding so a bound model can never cross tenants.
+- **Academic-year context:** lessons, parts, content-packages, and package-types are addressed under
+  the `academic-year` middleware — send `X-Academic-Year: <year-uuid>`. There is **no persistent
+  "current year"**; the header is the per-request selector. Academic-years CRUD itself is *not* year-scoped.
 - **Auth:** Sanctum bearer token. Public browse needs no token. Teacher routes require
-  `auth:sanctum` + `active` (active tenant membership) + `role:teacher`.
-- **Route binding keys:** courses and bundles bind by `uuid` on teacher routes and by `slug` on
-  public routes (no id enumeration); nested units and lessons bind by `id` (own tenant data);
-  attachments bind by `uuid`. Nested controllers additionally assert parent ownership
-  (`unit.course_id === course.id`, `lesson.unit_id === unit.id`, `attachment.lesson_id === lesson.id`)
-  and `404` on mismatch.
+  `auth:sanctum` + `active` (active tenant membership) + `role:teacher` (pass-override adds
+  `permission:homework`).
+- **Route binding keys:** courses bind by `slug` (public); academic-years, content-packages(`uuid` field
+  present but bound by **id**), and package-types bind by `uuid`; **lessons, parts, and package items bind
+  by `id`** (own tenant + active-year data — lessons have no uuid). Nested controllers assert parent
+  ownership (`section.lesson_id === lesson.id`, `attachment.lesson_id === lesson.id`) and `404` on mismatch.
 
 ## Models
 
 | Model | Table | One-liner |
 |---|---|---|
+| `AcademicYear` | `academic_years` | Top-level content container (`uuid`, `name`, `sort_order`). Everything a teacher authors belongs to one. Bound by `uuid`; the active year is chosen per-request via `X-Academic-Year`. |
 | `CourseCategory` | `course_categories` | Teacher's taxonomy (name + grade/subject/level/section + sort_order). A course optionally belongs to one. |
-| `Course` | `courses` | The top-level product. Binds by `uuid` (teacher) / `slug` (public). Soft-deletes. Holds pricing, visibility, marketing copy (`learning_outcomes`, `requirements`, `audience`, `parts`). |
-| `Unit` | `units` | A section within a course (`course_id`), ordered by `sort_order`, with its own visibility. |
-| `Lesson` | `lessons` | A leaf under a unit (`unit_id` + inherited `course_id`). Has a video source — an uploaded `video_asset_id` and/or a `youtube_url`, selected by `active_video_source` — plus many attachments and typed **sections**. Carries `duration_sec`, `max_views`, `is_free_preview`, `gating_rule`, and the time-box config `availability_days` / `max_extensions` / `extension_hours` / `self_reopen_limit` (auto self-reopen budget, VD R3/R4). |
+| `Course` | `courses` | The **public storefront** product (`uuid`/`slug`, pricing, visibility, marketing copy, `access_mode`). Soft-deletes. Teacher CRUD retired — read-only picker + public browse only. |
+| `Lesson` | `lessons` | A **standalone** unit of content in an academic year (`academic_year_id`). Sellable on its own (`price_minor`, `is_purchasable`), channel-scoped (`access_mode` `center\|online\|both`). Has a video source (`video_asset_id` and/or `youtube_url`, selected by `active_video_source`), many attachments, typed **parts**, and the time-box config `availability_days` / `max_extensions` / `extension_hours` / `self_reopen_limit`. `unit_id` / `course_id` are **dormant** columns (units retired). |
+| `LessonSection` | `lesson_sections` | A **part** of a lesson (ordered). `type` = `video` / `homework` / `quiz`. A `video` part points at a `media_asset_id` or a `youtube_url`; `homework` / `quiz` parts are backed by an `Exam` row (`exam_id`) holding degree + grading. Carries `access_mode` (⊆ the lesson's), `is_required`, and the gate config `gate_rule` + `max_tries` (part-gating, B10 / LP-11..14). |
+| `Package` | `packages` | A **recursive content package** in an academic year (`uuid`, `name`, `access_mode`, `price_minor`, `is_purchasable`, optional `package_type_id`). Sold as one product; buying it fans out into per-lesson enrollments. |
+| `PackageItem` | `package_items` | One entry in a package — **either a `lesson` or a sub-`package`** (`item_type` + `item_id`, ordered by `sort_order`). Recursive; cycle/ceiling/same-year guarded by `PackageItemService`. |
+| `PackageType` | `package_types` | **(B27)** A teacher-managed content-package category, scoped to tenant + academic year (`uuid`, `name`, `sort_order`, `description`). A package optionally links one; deleting a type nulls `packages.package_type_id` (packages survive). |
 | `LessonAttachment` | *(stored as `media_assets`)* | Not a dedicated model — attachments are `MediaAsset` rows of type `pdf` / `file` / `link` linked by `lesson_id`. The lesson's single `hls_video` asset is **not** an attachment. |
-| `LessonSection` | `lesson_sections` | A typed content section of a lesson (ordered): `lecture_video` / `assignment_video` / `pdf` / `assignment` / `quiz`. Points at one `MediaAsset` (`media_asset_id`) or one `Exam` (`exam_id`); `pdf` sections carry a `pdf_kind`. |
-| `ContentDependency` | `content_dependencies` | An unlock rule: section stays locked until a `trigger` (`submitted`/`passed`/`completed`/`graded`) is met on `depends_on_section_id`. `enforcement` = `mandatory` (blocks) or `optional` (advisory). |
-| `UnitDependency` | `unit_dependencies` | A configurable unit prerequisite (extends R5.3): `unit_id` stays gated until a `trigger` is met on `depends_on_unit_id` (that unit's exam) **or** `depends_on_section_id`. `enforcement` = `mandatory`/`optional`. No rows = previous-unit-exam default. |
-| `ContentAccessOverride` | `content_access_overrides` | A staff manual grant letting one `user_id` open a locked target (one of `lesson_id`/`section_id`/`unit_id`), bypassing dependencies. Active while `revoked_at` is null. |
+| `ContentAccessOverride` | `content_access_overrides` | A staff manual grant letting one `user_id` open a locked target (`lesson_id`/`section_id`), bypassing gates. Active while `revoked_at` is null. |
 | `LessonAccessWindow` | `lesson_access_windows` | A student's time-boxed access window for one lesson (`started_at`, `expires_at`, `locked_at`, `extensions_used`). Opens on first start/play; auto-locks at expiry. |
 | `LessonExtensionRequest` | `lesson_extension_requests` | A student's post-expiry request for more time; staff grant/deny. A grant extends the window by the lesson's `extension_hours`. |
-| `Bundle` | `bundles` | A **package**: a priced group of courses/units/lessons sold as one product. Binds by `uuid` (teacher) / `slug` (public). Soft-deletes. Holds pricing, visibility, and `access_days` (the window granted on purchase). |
-| `BundleItem` | `bundle_items` | One entry in a package — a `course` (`course_id`), a `unit` (`unit_id`), or a `lesson` (`lesson_id`), per `item_type`. Cascades away if the bundle or the referenced content is deleted. |
+| `ContentDependency` | `content_dependencies` | **Dormant/legacy.** The model + `LessonSection::dependencies()` relation still exist, but there are **no authoring routes** and the new part gate uses `gate_rule` instead (see below). Not emitted by any resource. |
 
-**Hierarchy:** `Course` **hasMany** `Unit` **hasMany** `Lesson`. A lesson also stores `course_id`
-directly (copied from its unit on create) so it always agrees with its unit's course. A lesson
-**hasMany** attachments (MediaAsset, type != `hls_video`) and **belongsTo** one `videoAsset`, and
-**hasMany** typed `LessonSection`s (each **hasMany** `ContentDependency` unlock rules).
-A `Bundle` **hasMany** `BundleItem`, each pointing at a `Course`, a `Unit`, or a `Lesson`.
+**Structure:** an `AcademicYear` **hasMany** `Lesson` and **hasMany** `Package`. A `Lesson` **hasMany**
+attachments (MediaAsset, type != `hls_video`), **belongsTo** one `videoAsset`, and **hasMany** typed
+`LessonSection` parts. A `Package` **hasMany** `PackageItem`, each pointing at a `Lesson` **or** another
+`Package` (recursive).
 
 ### Key enums
 
-- **`ContentVisibility`** (`App\Modules\Catalog\Enums`) — applies to course/unit/lesson `visibility`:
-  - `visible` — publicly listed (subject to `publish_at`)
-  - `hidden` — not listed
-  - `scheduled` — becomes visible at `publish_at`
-  - DB/model default: `hidden` for a **course**, `visible` for **units** and **lessons**.
-  - "Published" = `visibility === visible` **AND** (`publish_at` is null OR `publish_at <= now()`).
-    Note: a course with `visibility: scheduled` is **never** published by this rule; scheduling a
-    course means setting `visibility: visible` + a future `publish_at`.
-- **`MediaType`** (`App\Modules\Media\Enums`) — attachment `type`: `pdf`, `file`, `link`
-  (plus `hls_video` for the lesson video, excluded from attachments).
-- **`MediaStatus`** (`App\Modules\Media\Enums`) — attachments are created `ready`; videos move
-  `uploading → transcoding → ready|failed`.
+- **`AccessMode`** (`App\Modules\Catalog\Enums`) — the delivery **channel** of a lesson / part / package /
+  course: `center`, `online`, `both`. Ceiling/subset rule (`isVisibleTo`): a `both` parent admits any
+  child and matches every student; a specific channel admits only itself. A part's `access_mode` must be
+  ⊆ its lesson's; a package's must be ⊆ its items'. Supersedes the retired `is_center` flag (VD doc 12 R2).
+- **`ContentVisibility`** — `visibility`: `visible` (publicly listed, subject to `publish_at`), `hidden`
+  (not listed), `scheduled` (becomes visible at `publish_at`). "Published" = `visible` AND
+  (`publish_at` null OR `publish_at <= now()`).
+- **`VideoSource`** — `active_video_source`: `upload` (protected `hls_video`) or `youtube`. The inactive
+  source stays stored but is never exposed to students. Activating `youtube` requires a valid `youtube_url`.
+- **`LessonSectionType`** — part `type`. **Authoring** values: `video`, `homework`, `quiz`. (Legacy
+  runtime values `lecture_video` / `pdf` / `quiz_solution` / `hw_solution` exist in the enum for older data
+  but are not authorable.)
+- **`SectionDelivery`** / **`GateRule`** / **`ExamGradingMode`** / **`ExamPassMode`** — the homework/quiz
+  part config (delivery channel, unlock gate, auto/manual grading, pass rule). See [Assessment](assessment.md).
+- **`MediaType`** / **`MediaStatus`** (`App\Modules\Media\Enums`) — attachment `type` (`pdf`/`file`/`link`,
+  plus `hls_video` for the lesson video) and lifecycle (`ready`, or `uploading → transcoding → ready|failed`).
 
 ---
 
 ## Endpoints
 
-50 endpoints total: 2 public catalogue + 2 public packages + 21 teacher authoring (4 categories,
-5 courses, 4 units, 4 lessons, 3 attachments; the 21st is the 5th course route `show`) + 5 teacher
-packages + **12 teacher lesson-content** (4 sections, 3 dependencies, 2 availability, 3
-extension-requests) + **3 teacher unit-dependencies** (list, create, delete) + **5 student lesson
-content & access** (sections listing, start, access, **auto reopen**, extension-request).
+53 endpoints: **2 public catalogue** + **51 teacher/student authoring & access** — 5 academic-years,
+4 categories, 1 teacher course list (read-only), 5 lessons, 7 parts (5 CRUD + reorder-in-that-5, 2
+pass-override), 8 content-packages (5 + 3 items), 5 package-types, 3 attachments, 3 lesson availability,
+3 extension-requests, 5 student lesson content & access, 2 student library.
 
-> **Lesson content model (built 2026-07-28).** A lesson is now composed of ordered **typed sections**
-> (`lesson_sections`), gated by **content dependencies** (unlock rules), and optionally **time-boxed**
-> by a per-student availability window with a countdown + extension flow. Playback is blocked once a
-> window is locked/expired (enforced in [Media](media.md)). See the model map in
-> `docs (1)/09_Lesson_Content_Model_Task_Mapping.md`.
+> **Retired surface (do not reintroduce).** There are **no** routes for `/teacher/courses` CRUD,
+> `/teacher/units*`, `/bundles`, `/teacher/bundles`, or `…/dependencies`. Public package browse is
+> `GET /courses?view=packages` (not `/bundles`). Teacher content packages live at
+> `/teacher/content-packages` — **`/teacher/packages` is Billing's subscription plans** (D13-1), a
+> different thing.
 
 ### Public catalogue
 
 #### `GET /v1/courses`
-**Purpose:** List the resolved tenant's published courses (storefront grid).
+**Purpose:** Browse the resolved tenant's published catalogue. `view` switches granularity:
+courses (default), individually-sellable **lessons**, or sellable **content packages**.
 **Auth:** 🔓 Public
 **Middleware:** `tenant` (EnsureRegisteredDomain → ResolveTenant)
 
@@ -106,7 +123,7 @@ content & access** (sections listing, start, access, **auto reopen**, extension-
 **Query params**
 | Param | Type | Description |
 |---|---|---|
-| `view` | enum `lessons\|packages` | **B19.** Switch the catalogue granularity (VD R8 / doc 12 §7 LP-9). Omitted → courses (below). `lessons` → published, individually-`is_purchasable` standalone lessons (`LessonResource`). `packages` → `is_purchasable` recursive content packages (`PackageResource`, with `items_count`). An unknown value → `422`. |
+| `view` | enum `lessons\|packages` | **B19.** Omitted → courses (below). `lessons` → published, individually-`is_purchasable` standalone lessons (`LessonResource`). `packages` → `is_purchasable` recursive content packages (`PackageResource`, with `items_count`). An unknown value → `422`. |
 | `access_mode` | enum `center\|online\|both` | **B19.** Channel filter on all three views. Reuses `AccessMode::isVisibleTo`, so `both` content always matches, `center`→`{center,both}`, `online`→`{online,both}`, and `both`→ every channel. |
 | `academic_year` | uuid | **B19.** `view=lessons\|packages` only — narrow to one academic year. An unknown/foreign uuid yields an empty page (never leaks other years). |
 | `filter[category_id]` | int | Courses view — restrict to one category. |
@@ -120,7 +137,7 @@ The courses view sorts newest-first (`latest()` on `created_at`); `lessons` sort
 
 **Request body:** None
 
-**Response** `200 OK` — collection of `CourseResource`:
+**Response** `200 OK` — collection of `CourseResource` (default view):
 ```json
 {
   "data": [
@@ -145,32 +162,19 @@ The courses view sorts newest-first (`latest()` on `created_at`); `lessons` sort
       "points": 100
     }
   ],
-  "meta": {
-    "current_page": 1,
-    "last_page": 3,
-    "per_page": 20,
-    "from": 1,
-    "to": 20,
-    "total": 47
-  }
+  "meta": { "current_page": 1, "last_page": 3, "per_page": 20, "from": 1, "to": 20, "total": 47 }
 }
 ```
-**Errors:** `403` unregistered/suspended host (domain gate).
+For `view=lessons` the items are `LessonResource` (see [Teacher · Lessons](#teacher--lessons)); for
+`view=packages` they are `PackageResource` with `items_count` (see [Teacher · Content packages](#teacher--content-packages)).
+**Errors:** `403` unregistered/suspended host (domain gate); `422` unknown `view`.
 
 ---
 
 #### `GET /v1/courses/{course:slug}`
-**Purpose:** Public course detail — the outline a prospective student sees (marketing copy + published
-units/lessons with preview flags only; playback is gated elsewhere).
+**Purpose:** Public course detail — marketing copy for the storefront course page.
 **Auth:** 🔓 Public
 **Middleware:** `tenant`
-
-**Request headers**
-| Header | Required | Example |
-|---|---|---|
-| Host | yes | `academy.elameed.app` |
-| Accept | yes | `application/json` |
-| X-Tenant | dev only | `academy` |
 
 **Path params**
 | Param | Type | Description |
@@ -179,8 +183,7 @@ units/lessons with preview flags only; playback is gated elsewhere).
 
 **Request body:** None
 
-**Response** `200 OK` — `CourseDetailResource` (only `published()` units, each with only `published()`
-lessons, both ordered by `sort_order`):
+**Response** `200 OK` — `CourseDetailResource` (marketing copy fields):
 ```json
 {
   "data": {
@@ -192,9 +195,7 @@ lessons, both ordered by `sort_order`):
     "learning_outcomes": ["Solve kinematics problems", "Understand electromagnetism"],
     "requirements": ["Basic algebra"],
     "audience": ["Grade 12 science students"],
-    "parts": [
-      { "title": "Mechanics", "lessons_count": 12, "duration_min": 480 }
-    ],
+    "parts": [ { "title": "Mechanics", "lessons_count": 12, "duration_min": 480 } ],
     "cover_url": "https://cdn.example.com/course-cover.jpg",
     "thumbnail_url": "https://cdn.example.com/course-thumb.jpg",
     "promo_video_url": "https://youtube.com/watch?v=abc123",
@@ -202,103 +203,22 @@ lessons, both ordered by `sort_order`):
     "currency": "EGP",
     "is_free": false,
     "access_days": 365,
-    "category": { "id": 1, "name": "Grade 12 · Physics" },
-    "units": [
-      {
-        "id": 10,
-        "title": "Kinematics",
-        "sort_order": 1,
-        "lessons": [
-          {
-            "id": 101,
-            "title": "Displacement & Velocity",
-            "duration_sec": 720,
-            "is_free_preview": true,
-            "has_video": true
-          }
-        ]
-      }
-    ]
+    "category": { "id": 1, "name": "Grade 12 · Physics" }
   }
 }
 ```
+> The `parts` array here is the course's marketing **outline copy** (free-text titles + counts), not the
+> lesson-`parts` authoring model. Course detail no longer nests `units`/`lessons` (units retired).
+
 **Errors:** `404` slug not found in tenant, or course not published.
 
 ---
 
-### Public · Packages
+### Teacher · Academic years
 
-#### `GET /v1/bundles`
-**Purpose:** List the resolved tenant's published, purchasable packages (newest first, 20/page).
-**Auth:** 🌐 Public (no token)
-**Middleware:** tenant
-
-**Query params**
-| Param | Type | Description |
-|---|---|---|
-| `page` | int | Page number (20 per page, fixed). |
-
-**Response** `200 OK` — collection of `BundleResource` + `meta`. Each item:
-```json
-{
-  "uuid": "7a2d…-bundle-uuid",
-  "title": "Term 1 Package",
-  "subtitle": "Chapters 1–3 + quizzes",
-  "slug": "term-1-package",
-  "description": "Everything for term one.",
-  "price_minor": 20000,
-  "currency": "EGP",
-  "access_days": 180,
-  "visibility": "visible",
-  "publish_at": null,
-  "is_free": false,
-  "purchase_enabled": true,
-  "cover_url": null,
-  "thumbnail_url": null,
-  "items_count": 4
-}
-```
-
----
-
-#### `GET /v1/bundles/{bundle:slug}`
-**Purpose:** Show one published package with its items (each item's course/unit summary).
-**Auth:** 🌐 Public (no token)
-**Middleware:** tenant
-
-**Path params**
-| Param | Type | Description |
-|---|---|---|
-| `bundle` | slug | Package slug (tenant-scoped; unpublished/cross-tenant `404`s). |
-
-**Response** `200 OK` — `BundleResource` with an `items` array:
-```json
-{
-  "data": {
-    "uuid": "7a2d…-bundle-uuid",
-    "title": "Term 1 Package",
-    "slug": "term-1-package",
-    "price_minor": 20000,
-    "currency": "EGP",
-    "access_days": 180,
-    "is_free": false,
-    "purchase_enabled": true,
-    "items": [
-      { "type": "course", "sort_order": 0, "course": { "uuid": "…", "title": "Course A", "slug": "course-a" } },
-      { "type": "unit", "sort_order": 1, "unit": { "id": 12, "title": "Chapter B1", "course_id": 5 } },
-      { "type": "lesson", "sort_order": 2, "lesson": { "id": 88, "title": "Lesson 3", "unit_id": 13, "course_id": 5 } }
-    ]
-  }
-}
-```
-**Errors:** `404` slug not found in tenant, or package not published.
-
-To buy, send the `uuid` to `POST /v1/checkout/quote|order` as
-`{ "type": "bundle", "bundle": "<uuid>" }` — see [Commerce › Packages](commerce.md#packages-bundles).
-
----
-
-### Teacher · Categories
+Top-level content containers (VD change set). Every lesson / part / package / package-type belongs to one
+academic year. Bind by `uuid`; **not** behind the `academic-year` middleware (this is where years are
+managed, so no year context is needed).
 
 Common headers for every teacher endpoint:
 
@@ -308,323 +228,108 @@ Common headers for every teacher endpoint:
 | Accept | yes | `application/json` |
 | Authorization | yes | `Bearer <sanctum-token>` |
 | X-Tenant | dev only | `academy` |
+| X-Academic-Year | year-scoped routes only | `<year-uuid>` |
 | Content-Type | JSON bodies | `application/json` |
 
-All teacher routes share middleware: **`tenant` + `auth:sanctum` + `active` + `role:teacher`**.
+All teacher routes share middleware **`tenant` + `auth:sanctum` + `active` + `role:teacher`** (year-scoped
+groups add `academic-year`).
 
-#### `GET /v1/teacher/categories`
-**Purpose:** List the teacher's categories (ordered by `sort_order`, then `name`).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Request body:** None (not paginated)
-
-**Response** `200 OK` — collection of `CategoryResource`:
+#### `GET /v1/teacher/academic-years`
+List the teacher's academic years (ordered `sort_order`, then `id`; 20/page).
+**Response** `200 OK` — collection of `AcademicYearResource` + `meta`:
 ```json
-{
-  "data": [
-    {
-      "id": 1,
-      "name": "Grade 12 · Physics",
-      "grade": "12",
-      "subject": "Physics",
-      "level": "Secondary",
-      "section": "Science",
-      "sort_order": 1
-    }
-  ]
-}
+{ "data": [ { "id": "3f7c…-year-uuid", "name": "2026 / 2027", "sort_order": 0, "created_at": "2026-08-01T09:00:00+00:00" } ] }
 ```
+> Note: the resource's `id` field **is the uuid** (the public route key); the internal bigint id is not exposed.
 
----
-
-#### `POST /v1/teacher/categories`
-**Purpose:** Create a category.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Request body** (`CategoryRequest`):
-```json
-{
-  "name": "Grade 12 · Physics",
-  "grade": "12",
-  "subject": "Physics",
-  "level": "Secondary",
-  "section": "Science",
-  "sort_order": 1
-}
-```
+#### `POST /v1/teacher/academic-years`
+**Request body** (`AcademicYearRequest`):
 | Field | Rules |
 |---|---|
 | `name` | required, string, max 255 |
-| `grade` | nullable, string, max 100 |
-| `subject` | nullable, string, max 100 |
-| `level` | nullable, string, max 100 |
-| `section` | nullable, string, max 100 |
 | `sort_order` | nullable, integer, min 0 |
 
-**Response** `201 Created` — `CategoryResource` (same shape as list item).
-**Errors:** `422` validation.
+**Response** `201 Created` — `AcademicYearResource`. **Errors:** `422` validation.
+
+#### `GET /v1/teacher/academic-years/{academicYear:uuid}`
+Show one year. **Response** `200 OK` — `AcademicYearResource`. **Errors:** `404` not in tenant.
+
+#### `PUT /v1/teacher/academic-years/{academicYear:uuid}`
+Update (same rules as create). **Response** `200 OK` — `AcademicYearResource`.
+
+#### `DELETE /v1/teacher/academic-years/{academicYear:uuid}`
+**Guarded delete** — the body must confirm the name.
+| Field | Rules |
+|---|---|
+| `confirm_name` | required, must **exactly equal** the year's `name` |
+
+Runs in a transaction (cascades the year's content). **Response** `204 No Content`.
+**Errors:** `422` `confirm_name` mismatch; `404` not in tenant.
 
 ---
 
-#### `PUT /v1/teacher/categories/{category}`
-**Purpose:** Update a category.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
+### Teacher · Categories
 
-**Path params**
-| Param | Type | Description |
-|---|---|---|
-| `category` | id | Category id (tenant-scoped). |
+Course taxonomy (grade/subject/level/section). Not year-scoped. Bind by `id`.
 
-**Request body:** same fields/rules as create (`CategoryRequest`).
+#### `GET /v1/teacher/categories`
+List the teacher's categories (ordered by `sort_order`, then `name`; not paginated).
+**Response** `200 OK` — collection of `CategoryResource`:
+```json
+{ "data": [ { "id": 1, "name": "Grade 12 · Physics", "grade": "12", "subject": "Physics", "level": "Secondary", "section": "Science", "sort_order": 1 } ] }
+```
 
-**Response** `200 OK` — `CategoryResource`.
-**Errors:** `404` not found in tenant; `422` validation.
+#### `POST /v1/teacher/categories`
+**Request body** (`CategoryRequest`):
+| Field | Rules |
+|---|---|
+| `name` | required, string, max 255 |
+| `grade` / `subject` / `level` / `section` | nullable, string, max 100 |
+| `sort_order` | nullable, integer, min 0 |
 
----
+**Response** `201 Created` — `CategoryResource`. **Errors:** `422` validation.
 
-#### `DELETE /v1/teacher/categories/{category}`
-**Purpose:** Delete a category.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params:** `category` (id).
-**Request body:** None
-**Response** `204 No Content`.
-**Errors:** `404` not found in tenant.
+#### `PUT /v1/teacher/categories/{category}` · `DELETE /v1/teacher/categories/{category}`
+Update / delete a category (`category` = id, tenant-scoped). Update body = create rules.
+**Response** `200 OK` `CategoryResource` / `204 No Content`. **Errors:** `404` not in tenant; `422` validation.
 
 ---
 
 ### Teacher · Courses
 
+Teacher course **CRUD is retired** — only the read-only lister survives, as the picker source for the
+features that still scope to a course (coupons, reviews, center activation-codes).
+
 #### `GET /v1/teacher/courses`
-**Purpose:** List all of the teacher's courses (any visibility), newest first, paginated (20/page).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Query params**
-| Param | Type | Description |
-|---|---|---|
-| `page` | int | Page number (20 per page, fixed). |
-
-**Request body:** None
-
+List all of the teacher's courses (any visibility), newest first (20/page).
 **Response** `200 OK` — collection of `CourseResource` + `meta` (same item shape as `GET /v1/courses`).
-
----
-
-#### `POST /v1/teacher/courses`
-**Purpose:** Create a course. Slug is auto-generated unique-within-tenant from the title (falls back
-to a random stem for non-ASCII/Arabic titles); `tenant_id` is filled automatically.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Request body** (`CourseRequest`):
-```json
-{
-  "title": "Complete Physics - Grade 12",
-  "subtitle": "Mechanics to Modern Physics",
-  "description": "Full year coverage with solved problems.",
-  "learning_outcomes": ["Solve kinematics problems", "Understand electromagnetism"],
-  "requirements": ["Basic algebra"],
-  "audience": ["Grade 12 science students"],
-  "parts": [
-    { "title": "Mechanics", "lessons_count": 12, "duration_min": 480 }
-  ],
-  "category_id": 1,
-  "price_minor": 50000,
-  "currency": "EGP",
-  "access_days": 365,
-  "visibility": "visible",
-  "publish_at": "2026-08-01T09:00:00Z",
-  "is_free": false,
-  "purchase_enabled": true,
-  "access_mode": "both",
-  "cover_url": "https://cdn.example.com/course-cover.jpg",
-  "thumbnail_url": "https://cdn.example.com/course-thumb.jpg",
-  "promo_video_url": "https://youtube.com/watch?v=abc123",
-  "points": 100
-}
-```
-| Field | Rules |
-|---|---|
-| `title` | required, string, max 255 (slug derived from this) |
-| `subtitle` | nullable, string, max 255 |
-| `description` | nullable, string |
-| `learning_outcomes` | nullable array (max 30); each string max 300 |
-| `requirements` | nullable array (max 30); each string max 300 |
-| `audience` | nullable array (max 30); each string max 300 |
-| `parts` | nullable array (max 50); each `{ title* (max 255), lessons_count (int ≥0), duration_min (int ≥0) }` |
-| `category_id` | nullable; must be a `course_categories.id` **in this tenant** |
-| `price_minor` | nullable, integer, min 0 (minor units) |
-| `currency` | nullable, string, exactly 3 chars |
-| `access_days` | nullable, integer, min 1 |
-| `visibility` | nullable, enum `visible\|hidden\|scheduled` (default `hidden`) |
-| `publish_at` | nullable, date |
-| `is_free` | boolean |
-| `purchase_enabled` | boolean |
-| `access_mode` | enum `center\|online\|both` (default `both`) — folds in the retired `is_center` (VD doc 12 R2) |
-| `cover_url` | nullable, url, max 2048 (wide hero banner) |
-| `thumbnail_url` | nullable, url, max 2048 (small card/grid preview) |
-| `promo_video_url` | nullable, url, max 2048 (public teaser) |
-| `points` | nullable, integer, min 0 |
-
-Note: `slug` is server-generated and **not** accepted in the body.
-
-**Response** `201 Created` — `CourseResource`.
-**Errors:** `422` validation (e.g. `category_id` in another tenant).
-
----
-
-#### `GET /v1/teacher/courses/{course:uuid}`
-**Purpose:** Show one of the teacher's courses (any visibility), with its category.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params**
-| Param | Type | Description |
-|---|---|---|
-| `course` | uuid | Course uuid (tenant-scoped; cross-tenant uuid `404`s). |
-
-**Response** `200 OK` — `CourseResource`.
-**Errors:** `404` not found in tenant.
-
----
-
-#### `PUT /v1/teacher/courses/{course:uuid}`
-**Purpose:** Update a course. The slug stays stable across updates so public URLs don't break.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params:** `course` (uuid).
-**Request body:** same fields/rules as create (`CourseRequest`). `slug` is never changed here.
-
-**Response** `200 OK` — `CourseResource`.
-**Errors:** `404` not found; `422` validation.
-
----
-
-#### `DELETE /v1/teacher/courses/{course:uuid}`
-**Purpose:** Soft-delete a course.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params:** `course` (uuid).
-**Request body:** None
-**Response** `204 No Content` (soft delete — row retained with `deleted_at`).
-**Errors:** `404` not found in tenant.
-
----
-
-### Teacher · Units
-
-#### `GET /v1/teacher/courses/{course:uuid}/units`
-**Purpose:** List a course's units, ordered by `sort_order`.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params:** `course` (uuid).
-**Request body:** None (not paginated)
-
-**Response** `200 OK` — collection of `UnitResource` (`lessons` omitted here — not eager-loaded):
-```json
-{
-  "data": [
-    {
-      "id": 10,
-      "course_id": "9b1f2c34-5d6e-4a7b-8c90-1112a3b4c5d6",
-      "title": "Kinematics",
-      "sort_order": 1,
-      "visibility": "visible",
-      "publish_at": null
-    }
-  ]
-}
-```
-Note: `course_id` on the unit is the internal numeric course id; the path uses the course uuid.
-
----
-
-#### `POST /v1/teacher/courses/{course:uuid}/units`
-**Purpose:** Create a unit under a course.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params:** `course` (uuid).
-
-**Request body** (`UnitRequest`):
-```json
-{
-  "title": "Kinematics",
-  "sort_order": 1,
-  "visibility": "visible",
-  "publish_at": null
-}
-```
-| Field | Rules |
-|---|---|
-| `title` | required, string, max 255 |
-| `sort_order` | nullable, integer, min 0 |
-| `visibility` | nullable, enum `visible\|hidden\|scheduled` (default `visible`) |
-| `publish_at` | nullable, date |
-
-**Response** `201 Created` — `UnitResource`.
-**Errors:** `404` course not found; `422` validation.
-
----
-
-#### `PUT /v1/teacher/courses/{course:uuid}/units/{unit}`
-**Purpose:** Update a unit.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params**
-| Param | Type | Description |
-|---|---|---|
-| `course` | uuid | Owning course. |
-| `unit` | id | Unit id; must belong to `course` or `404`. |
-
-**Request body:** same as create (`UnitRequest`).
-
-**Response** `200 OK` — `UnitResource`.
-**Errors:** `404` course/unit not found or unit not in course; `422` validation.
-
----
-
-#### `DELETE /v1/teacher/courses/{course:uuid}/units/{unit}`
-**Purpose:** Delete a unit.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params:** `course` (uuid), `unit` (id, must belong to course).
-**Request body:** None
-**Response** `204 No Content`.
-**Errors:** `404` not found or unit not in course.
+There is **no** create/show/update/delete here.
 
 ---
 
 ### Teacher · Lessons
 
-Lessons are addressed under their **unit** (not the course). On create, the lesson inherits
-`course_id` from the unit.
+**Standalone** lessons within the active academic year. Year-scoped: every request carries
+`X-Academic-Year`; `{lesson}` binds by **id** within that year (a lesson from another year/tenant `404`s).
+`academic_year_id` is taken from the header context, never the body (LP-10).
 
-> **Dual video source:** a lesson can carry **both** a protected uploaded video
-> (`video_asset_id` → `hls_video`) and a YouTube link (`youtube_url`).
-> `active_video_source` (`upload`|`youtube`, default `upload`) is the teacher
-> toggle deciding which one students receive; the inactive source stays stored but
-> is never exposed to students. Activating `youtube` requires a valid `youtube_url`
-> (else `422`). See [`../design/lesson-video-sources.md`](../design/lesson-video-sources.md)
-> and the playback contract in [`../api/media.md`](../api/media.md).
+> **Dual video source:** a lesson can carry **both** a protected uploaded video (`video_asset_id` →
+> `hls_video`) and a YouTube link (`youtube_url`). `active_video_source` (`upload`|`youtube`, default
+> `upload`) is the teacher toggle deciding which one students receive; the inactive source stays stored but
+> is never exposed. Activating `youtube` requires a valid `youtube_url` (else `422`). See
+> [`../design/lesson-video-sources.md`](../design/lesson-video-sources.md) and the playback contract in
+> [`media.md`](media.md).
 
-#### `GET /v1/teacher/units/{unit}/lessons`
-**Purpose:** List a unit's lessons (with video asset + attachments eager-loaded), ordered by `sort_order`.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
+#### `GET /v1/teacher/lessons`
+List the active year's lessons (with video asset + attachments), ordered by `sort_order` then `id`.
+**Not paginated.**
+**Middleware:** `…role:teacher`, `academic-year`
 
-**Path params:** `unit` (id, tenant-scoped).
-**Request body:** None (not paginated)
+**Query params**
+| Param | Type | Description |
+|---|---|---|
+| `access_mode` | enum `center\|online\|both` | Filter by channel (`isVisibleTo`). |
+| `search` | string | Case-insensitive `LIKE` on `title`. |
 
 **Response** `200 OK` — collection of `LessonResource`:
 ```json
@@ -632,9 +337,13 @@ Lessons are addressed under their **unit** (not the course). On create, the less
   "data": [
     {
       "id": 101,
-      "unit_id": 10,
-      "course_id": 5,
+      "name": "Displacement & Velocity",
       "title": "Displacement & Velocity",
+      "access_mode": "both",
+      "price_minor": 5000,
+      "currency": "EGP",
+      "is_purchasable": true,
+      "academic_year_id": "3f7c…-year-uuid",
       "description": "Intro to 1-D motion.",
       "sort_order": 1,
       "duration_sec": 720,
@@ -645,159 +354,249 @@ Lessons are addressed under their **unit** (not the course). On create, the less
       "youtube_url": null,
       "visibility": "visible",
       "publish_at": null,
-      "video": {
-        "uuid": "af23...",
-        "type": "hls_video",
-        "status": "ready",
-        "title": "Lesson 1 video",
-        "url": null,
-        "thumbnail_url": "https://cdn.example.com/thumb.jpg",
-        "downloadable": false,
-        "duration_sec": 720
-      },
-      "attachments": [
-        {
-          "uuid": "b7c8...",
-          "type": "pdf",
-          "status": "ready",
-          "title": "Worksheet 1",
-          "url": "https://cdn.example.com/storage/attachments/abc.pdf",
-          "thumbnail_url": null,
-          "downloadable": true,
-          "duration_sec": null
-        }
-      ]
+      "availability_days": 7,
+      "max_extensions": 1,
+      "extension_hours": 24,
+      "self_reopen_limit": 2,
+      "unit_id": null,
+      "course_id": null,
+      "video": { "uuid": "af23…", "type": "hls_video", "status": "ready", "downloadable": false, "duration_sec": 720 },
+      "attachments": [ { "uuid": "b7c8…", "type": "pdf", "status": "ready", "title": "Worksheet 1", "url": "https://…/abc.pdf", "downloadable": true } ]
     }
   ]
 }
 ```
-Notes: `has_video` is **source-aware** — true when the *active* source is populated
-(`active_video_source: upload` → `video_asset_id` set; `youtube` → a valid `youtube_url`).
-`active_video_source` + `youtube_url` are teacher-facing (both slots are shown so the teacher can
-toggle); students never receive the inactive source. `video` (the uploaded asset) and `attachments`
-(MediaAsset, type != `hls_video`) both use `MediaAssetResource`.
+Notes: `name` and `title` are the same value (the request field is `name`, the column is `title`).
+`has_video` is **source-aware** (true when the *active* source is populated). `unit_id` / `course_id` are
+**dormant** (units retired) and usually null. `sections` (parts) are included when eager-loaded.
 
----
-
-#### `POST /v1/teacher/units/{unit}/lessons`
-**Purpose:** Create a lesson under a unit (`course_id` copied from the unit automatically).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params:** `unit` (id).
-
+#### `POST /v1/teacher/lessons`
+Create a standalone lesson in the active year.
 **Request body** (`LessonRequest`):
-```json
-{
-  "title": "Displacement & Velocity",
-  "description": "Intro to 1-D motion.",
-  "sort_order": 1,
-  "duration_sec": 720,
-  "max_views": 3,
-  "is_free_preview": true,
-  "visibility": "visible",
-  "publish_at": null
-}
-```
 | Field | Rules |
 |---|---|
-| `title` | required, string, max 255 |
+| `name` | required, string, max 255 (stored as `title`) |
+| `access_mode` | required, enum `center\|online\|both` |
+| `price_minor` | nullable, integer, min 0 |
+| `currency` | nullable, string, exactly 3 chars |
+| `is_purchasable` | boolean |
+| `availability_days` | nullable, integer 0–3650 (0/null = unlimited) |
 | `description` | nullable, string |
+| `is_free_preview` | boolean |
 | `sort_order` | nullable, integer, min 0 |
 | `duration_sec` | nullable, integer, min 0 |
 | `max_views` | nullable, integer, min 1 (per-student playback cap) |
-| `is_free_preview` | boolean (free/preview lesson) |
-| `youtube_url` | nullable, string ≤2048; must be a valid YouTube link (`youtu.be` / `watch?v=` / `embed` / `shorts` / `live`) |
-| `active_video_source` | nullable, enum `upload\|youtube` (default `upload`) |
-| `visibility` | nullable, enum `visible\|hidden\|scheduled` (default `visible`) |
+| `visibility` | nullable, enum `visible\|hidden\|scheduled` |
 | `publish_at` | nullable, date |
+| `youtube_url` | nullable, string ≤2048; must be a valid YouTube link |
+| `active_video_source` | nullable, enum `upload\|youtube` (default `upload`) |
 
-Note: `video_asset_id` (the protected upload) is assigned by the Media step, not accepted here;
-`course_id` and `unit_id` are derived server-side, not from the body. Setting
-`active_video_source: youtube` requires an effective `youtube_url` (in this request or already
-stored) — otherwise `422`. Selecting `upload` is always allowed (playback simply reports "no ready
-video" until one is uploaded).
+Notes: `video_asset_id` is assigned by the [Media](media.md) upload step, not accepted here.
+`academic_year_id` comes from `X-Academic-Year`. Setting `active_video_source: youtube` requires an
+effective `youtube_url` (body or stored), else `422`.
 
-**Response** `201 Created` — `LessonResource` (with `video` + `attachments` loaded).
-**Errors:** `404` unit not found; `422` validation.
+**Response** `201 Created` — `LessonResource`. **Errors:** `422` validation.
 
----
-
-#### `PUT /v1/teacher/units/{unit}/lessons/{lesson}`
-**Purpose:** Update a lesson.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params**
-| Param | Type | Description |
-|---|---|---|
-| `unit` | id | Owning unit. |
-| `lesson` | id | Lesson id; must belong to `unit` or `404`. |
-
-**Request body:** same as create (`LessonRequest`).
-
-**Response** `200 OK` — `LessonResource`.
-**Errors:** `404` unit/lesson not found or lesson not in unit; `422` validation.
+#### `GET /v1/teacher/lessons/{lesson}` · `PUT` · `DELETE`
+Show / update / delete one lesson (id, in the active year). Update body = create rules (`name` and
+`access_mode` become `sometimes`); **narrowing `access_mode`** is rejected if it would orphan a wider part
+(`LessonAccessModeGuard`). **Response** `200 OK` `LessonResource` / `204 No Content`.
+**Errors:** `404` not in tenant/year; `422` validation.
 
 ---
 
-#### `DELETE /v1/teacher/units/{unit}/lessons/{lesson}`
-**Purpose:** Delete a lesson.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
+### Teacher · Lesson parts
 
-**Path params:** `unit` (id), `lesson` (id, must belong to unit).
-**Request body:** None
-**Response** `204 No Content`.
-**Errors:** `404` not found or lesson not in unit.
+Ordered **parts** of a lesson (`lesson_sections`; FR-M04-01). Year-scoped; bind `{section}` by `id` and
+assert `section.lesson_id === lesson.id`. `reorder` is registered **before** `{section}` so the literal
+path isn't captured as an id. A `video` part references a `media_asset_id` or `youtube_url`; a `homework` /
+`quiz` part is backed by an `Exam` row the controller creates/updates (holds degree + grading). Each part's
+`access_mode` must be ⊆ its lesson's.
+
+#### `GET /v1/teacher/lessons/{lesson}/sections`
+List a lesson's parts (ordered by `sort_order`).
+**Response** `200 OK` — collection of `LessonSectionResource`:
+```json
+{
+  "data": [
+    { "id": 5, "lesson_id": 101, "type": "video", "name": "Lecture", "title": "Lecture",
+      "access_mode": "both", "delivery": null, "gate_rule": null, "max_tries": null,
+      "sort_order": 1, "media_asset_id": 88, "youtube_url": null, "pdf_kind": null, "is_required": true },
+    { "id": 6, "lesson_id": 101, "type": "quiz", "name": "Checkpoint", "title": "Checkpoint",
+      "access_mode": "online", "delivery": "bubble_sheet", "gate_rule": "must_pass", "max_tries": 2,
+      "sort_order": 2, "media_asset_id": null, "youtube_url": null, "pdf_kind": null, "is_required": true,
+      "exam": { "id": "e1a2…-exam-uuid", "type": "quiz", "grading_mode": "auto", "pass_mode": "percent", "pass_value": 50, "total_marks": null, "duration_min": 15, "is_published": true } }
+  ]
+}
+```
+> The resource no longer emits `dependencies` (the old content-dependency CRUD is retired). On the
+> **student** listing (`GET /lessons/{lesson}/sections`) the same resource adds a computed `locked` flag
+> (from `gate_rule`) and a per-part `result`.
+
+#### `POST /v1/teacher/lessons/{lesson}/sections`
+Create a part.
+**Request body** (`LessonSectionRequest`):
+| Field | Rules |
+|---|---|
+| `type` | required, enum `video\|homework\|quiz` |
+| `name` | nullable, string, max 255 (stored as `title`) |
+| `access_mode` | required, enum `center\|online\|both` (⊆ the lesson's) |
+| `is_required` | boolean (DB default true) |
+| `sort_order` | nullable, integer, min 0 |
+| `media_asset_id` | nullable, integer ≥1 (a `video` part may use this or `youtube_url`) |
+| `youtube_url` | nullable, string ≤2048, YouTube-valid |
+| `delivery` | nullable, enum `SectionDelivery` — **required if** `type` ∈ {homework, quiz} |
+| `grading_mode` | nullable, enum — required if homework/quiz (`auto` ⇒ `delivery=bubble_sheet`) |
+| `pass_mode` | nullable, enum `percent\|marks` — required if homework/quiz |
+| `pass_value` | nullable, numeric, min 0 — required if homework/quiz (`percent` ⇒ 0–100; `marks` ⇒ ≤ `total_marks`) |
+| `total_marks` | nullable, numeric, min 0 — required if `pass_mode=marks` |
+| `gate_rule` | nullable, enum `GateRule` — required if homework/quiz (the unlock rule for the next part) |
+| `max_tries` | nullable, integer, min 1 (retake cap; enforced by [Assessment](assessment.md) attempts) |
+| `duration_min` | nullable, integer, min 1 (quiz time cap) |
+
+Notes: a `video` part needs an asset **or** a `youtube_url`; `video_upload` delivery can't back a
+quiz/homework. `exam_id` is set by the controller from the homework/quiz fields, not the body.
+
+**Response** `201 Created` — `LessonSectionResource`. **Errors:** `422` validation (missing payload for
+the type, part `access_mode` wider than the lesson's).
+
+#### `PUT /v1/teacher/lessons/{lesson}/sections/{section}` · `DELETE …/sections/{section}`
+Update / delete a part (same body/rules as create). **Response** `200 OK` `LessonSectionResource` /
+`204 No Content`. **Errors:** `404` part not in lesson; `422` validation.
+
+#### `PUT /v1/teacher/lessons/{lesson}/sections/reorder`
+Re-sort the lesson's parts.
+**Request body:** `{ "order": [6, 5, 8] }` — `order` required array (min 1) of part ids that belong to the
+lesson (a foreign id → `422`); `sort_order` is set to the array position (partial reorder allowed).
+**Response** `200 OK` — the reordered `LessonSectionResource` collection.
+
+#### `POST /v1/teacher/lessons/{lesson}/sections/{section}/pass-override` · `DELETE …/pass-override/{user:uuid}`
+**(LP-D3, `permission:homework`.)** Manually mark one student as having passed a `must_pass` part,
+unblocking the gate without a real attempt. Year-scoped.
+- **store body:** `user_id` required (a **student uuid**); `note` nullable, string, max 1000. Duplicate → `409`.
+  **Response** `201 Created` — `PartPassOverrideResource`.
+- **destroy:** idempotent — `204 No Content` even if no override existed. `{user}` binds by uuid,
+  resolved independently of `{section}` (`withoutScopedBindings`).
+
+---
+
+### Teacher · Content packages
+
+**Recursive** packages within the active academic year (VD §8.4, doc 13 Phase 5). Base path
+**`content-packages`** — `/teacher/packages` is [Billing](billing.md)'s subscription plans (D13-1), do not
+confuse. Year-scoped; `{package}` / `{item}` bind by **id** in the active year. `items/reorder` is
+registered before `{item}`.
+
+#### `GET /v1/teacher/content-packages`
+List the year's packages (`items_count` included; 20/page).
+**Query params:** `access_mode` (channel filter), `search` (name `LIKE`).
+**Response** `200 OK` — collection of `PackageResource` + `meta`.
+
+#### `POST /v1/teacher/content-packages`
+Create a package.
+**Request body** (`PackageRequest`):
+| Field | Rules |
+|---|---|
+| `name` | required, string, max 255 |
+| `access_mode` | required, enum `center\|online\|both` |
+| `price_minor` | nullable, integer, min 0 |
+| `currency` | nullable, string, exactly 3 chars |
+| `is_purchasable` | boolean |
+| `package_type_id` | nullable, integer — must be a [PackageType](#teacher--package-types) in this tenant + active year, else `422` |
+
+`academic_year_id` comes from `X-Academic-Year`, not the body. **Response** `201 Created` — `PackageResource`:
+```json
+{
+  "data": {
+    "id": 12, "uuid": "7a2d…-package-uuid", "name": "Term 1 Package",
+    "access_mode": "both", "price_minor": 20000, "currency": "EGP", "is_purchasable": true,
+    "type": { "id": 3, "uuid": "9c…-type-uuid", "name": "Terms" },
+    "academic_year_id": "3f7c…-year-uuid", "items_count": 4,
+    "created_at": "2026-08-10T09:00:00+00:00"
+  }
+}
+```
+`type` is present only when `package_type_id` is set.
+
+#### `GET /v1/teacher/content-packages/{package}` · `PUT` · `DELETE`
+Show / update / delete one package (id, active year). Update body = create rules (`name` / `access_mode`
+`sometimes`); narrowing `access_mode` re-checked against items. **Response** `200 OK` `PackageResource`
+(with `items`) / `204 No Content`. **Errors:** `404` not in tenant/year; `422` validation.
+
+#### `POST /v1/teacher/content-packages/{package}/items`
+Add an item — a **lesson** or a **sub-package** (recursive).
+**Request body:**
+| Field | Rules |
+|---|---|
+| `item_type` | required, `lesson` \| `package` |
+| `item_id` | required, integer — the target's **internal id** (lessons have no uuid) |
+
+Attach goes through `PackageItemService` (enforces the access-mode ceiling, cycle prevention, and
+same-year guards). **Response** `201 Created` — `PackageItemResource`:
+```json
+{ "data": { "id": 30, "item_type": "lesson", "item_id": 101, "sort_order": 0,
+  "item": { "id": 101, "type": "lesson", "name": "Displacement & Velocity", "access_mode": "both", "price_minor": 5000, "currency": "EGP", "is_purchasable": true } } }
+```
+**Errors:** `422` cycle, cross-year, or a channel wider than the package's.
+
+#### `PUT /v1/teacher/content-packages/{package}/items/reorder`
+`{ "order": [30, 31] }` — `order` required array (min 1) of the package's item ids.
+**Response** `200 OK` — the reordered `PackageItemResource` collection.
+
+#### `DELETE /v1/teacher/content-packages/{package}/items/{item}`
+Remove one item (id). **Response** `204 No Content`.
+
+---
+
+### Teacher · Package types
+
+**(B27)** Teacher-managed content-package categories, scoped to tenant + active academic year. Year-scoped;
+bind `{packageType}` by `uuid`. A [package](#teacher--content-packages) optionally links one via
+`package_type_id`; deleting a type **nulls** that reference (packages survive — `nullOnDelete`). Not
+available to assistants (this block is `role:teacher`).
+
+#### `GET /v1/teacher/package-types`
+List the year's package types (ordered `sort_order`, then `id`; 20/page).
+**Response** `200 OK` — collection of `PackageTypeResource` + `meta`:
+```json
+{ "data": [ { "id": 3, "uuid": "9c…-type-uuid", "name": "Terms", "sort_order": 0, "description": "Termly bundles", "created_at": "2026-08-13T09:00:00+00:00" } ] }
+```
+> `id` is the internal bigint used as `package_type_id`; `uuid` is the public route handle.
+
+#### `POST /v1/teacher/package-types`
+**Request body** (`PackageTypeRequest`):
+| Field | Rules |
+|---|---|
+| `name` | required, string, max 255 — **unique within tenant + academic year** |
+| `sort_order` | nullable, integer, min 0 |
+| `description` | nullable, string, max 2000 |
+
+**Response** `201 Created` — `PackageTypeResource`. **Errors:** `422` validation (duplicate name → "A
+package type with this name already exists for this academic year.").
+
+#### `GET /v1/teacher/package-types/{packageType:uuid}` · `PUT` · `DELETE`
+Show / update / delete one type. Update: `name` becomes `sometimes` (uniqueness ignores self).
+**Response** `200 OK` `PackageTypeResource` / `204 No Content`. **Errors:** `404` not in tenant/year; `422` validation.
 
 ---
 
 ### Teacher · Attachments
 
-Lesson materials are `MediaAsset` rows of type `pdf` / `file` / `link` (the video is separate).
-Phase 1 stores uploaded files on the default `public` disk.
+Lesson materials are `MediaAsset` rows of type `pdf` / `file` / `link` (the video is separate). Not
+year-scoped in the route path; `{lesson}` binds by id, `{attachment}` by uuid.
 
 #### `GET /v1/teacher/lessons/{lesson}/attachments`
-**Purpose:** List a lesson's attachments (type != `hls_video`), ordered by `sort_order`.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params:** `lesson` (id).
-**Request body:** None (not paginated)
-
+List a lesson's attachments (type != `hls_video`), ordered by `sort_order` (not paginated).
 **Response** `200 OK` — collection of `MediaAssetResource`:
 ```json
-{
-  "data": [
-    {
-      "uuid": "b7c8d9e0-1234-4a56-9bcd-ef0123456789",
-      "type": "pdf",
-      "status": "ready",
-      "title": "Worksheet 1",
-      "url": "https://cdn.example.com/storage/attachments/abc.pdf",
-      "thumbnail_url": null,
-      "downloadable": true,
-      "duration_sec": null
-    }
-  ]
-}
+{ "data": [ { "uuid": "b7c8…", "type": "pdf", "status": "ready", "title": "Worksheet 1", "url": "https://…/abc.pdf", "thumbnail_url": null, "downloadable": true, "duration_sec": null } ] }
 ```
 
----
-
 #### `POST /v1/teacher/lessons/{lesson}/attachments`
-**Purpose:** Add an attachment (uploaded PDF/file, or an external link). Files are stored on the
-`public` disk; the asset is created with `status: ready`.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Request headers:** `Content-Type: multipart/form-data` for `pdf`/`file` (uploads a `file` part).
-A `link` may be sent as JSON or multipart.
-
-**Path params:** `lesson` (id).
-
-**Request body** (`AttachmentRequest`) — multipart form fields:
+Add an attachment (uploaded PDF/file, or an external link). Files store on the `public` disk; the asset is
+created `ready`.
+**Request headers:** `Content-Type: multipart/form-data` for `pdf`/`file`; a `link` may be JSON or multipart.
+**Request body** (`AttachmentRequest`):
 | Field | Rules |
 |---|---|
 | `type` | required, one of `pdf`, `file`, `link` |
@@ -806,185 +605,19 @@ A `link` may be sent as JSON or multipart.
 | `file` | nullable, uploaded file, max 20480 KB (20 MB) — **required if `type=pdf` or `type=file`** |
 | `downloadable` | boolean (default false) |
 
-Behavior: for `type=link` the given `url` is stored; for `pdf`/`file` the upload is stored under
-`attachments/` on the `public` disk and `url` is set to its public URL (`source_key` holds the path).
-
-Example (link, JSON):
-```json
-{ "type": "link", "title": "Reference sheet", "url": "https://example.com/ref.pdf", "downloadable": true }
-```
-
-**Response** `201 Created` — `MediaAssetResource`:
-```json
-{
-  "data": {
-    "uuid": "b7c8d9e0-1234-4a56-9bcd-ef0123456789",
-    "type": "pdf",
-    "status": "ready",
-    "title": "Worksheet 1",
-    "url": "https://cdn.example.com/storage/attachments/abc.pdf",
-    "thumbnail_url": null,
-    "downloadable": true,
-    "duration_sec": null
-  }
-}
-```
-**Errors:** `404` lesson not found; `422` validation (missing `file` for pdf/file, missing `url` for link, file > 20 MB).
-
----
+**Response** `201 Created` — `MediaAssetResource`. **Errors:** `404` lesson not found; `422` validation
+(missing `file`/`url`, file > 20 MB).
 
 #### `DELETE /v1/teacher/lessons/{lesson}/attachments/{attachment:uuid}`
-**Purpose:** Delete a lesson attachment (also removes the stored file from the `public` disk when it
-was an upload).
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params**
-| Param | Type | Description |
-|---|---|---|
-| `lesson` | id | Owning lesson. |
-| `attachment` | uuid | MediaAsset uuid; must belong to `lesson` or `404`. |
-
-**Request body:** None
-**Response** `204 No Content`.
-**Errors:** `404` lesson/attachment not found, attachment not on lesson, or the target is the lesson's
-`hls_video` (the video is not deletable via the attachments endpoint).
-
----
-
-### Teacher · Lesson content sections
-
-Typed content sections of a lesson (FR-M04-01). A lesson holds an ordered list of sections, each with
-one payload per `type`: media types (`lecture_video`, `assignment_video`, `pdf`) reference a
-`media_asset_id`; exam types (`assignment`, `quiz`) reference an `exam_id`; only `pdf` accepts a
-`pdf_kind`. Sections bind by `id` and assert `section.lesson_id === lesson.id`.
-
-#### `GET /v1/teacher/lessons/{lesson}/sections`
-**Purpose:** List a lesson's sections (media + dependencies eager-loaded), ordered by `sort_order`.
-**Auth:** 🧑‍🏫 role:teacher · **Middleware:** tenant, auth:sanctum, active, role:teacher
-**Response** `200 OK` — collection of `LessonSectionResource`:
-```json
-{
-  "data": [
-    {
-      "id": 5, "lesson_id": 101, "type": "quiz", "title": "Checkpoint",
-      "sort_order": 1, "media_asset_id": null, "exam_id": 42, "pdf_kind": null,
-      "dependencies": []
-    },
-    {
-      "id": 6, "lesson_id": 101, "type": "pdf", "title": "Answer sheet",
-      "sort_order": 2, "media_asset_id": 88, "exam_id": null, "pdf_kind": "exam_answer_sheet",
-      "dependencies": [
-        { "id": 1, "section_id": 6, "depends_on_section_id": 5, "trigger": "submitted", "enforcement": "mandatory" }
-      ]
-    }
-  ]
-}
-```
-
-#### `POST /v1/teacher/lessons/{lesson}/sections`
-**Purpose:** Create a typed section.
-**Auth:** 🧑‍🏫 role:teacher · **Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Request body** (`LessonSectionRequest`):
-```json
-{ "type": "pdf", "title": "Answer sheet", "media_asset_id": 88, "pdf_kind": "exam_answer_sheet", "sort_order": 2 }
-```
-| Field | Rules |
-|---|---|
-| `type` | required, enum `lecture_video\|assignment_video\|pdf\|assignment\|quiz` |
-| `title` | nullable, string, max 255 |
-| `sort_order` | nullable, integer, min 0 |
-| `media_asset_id` | nullable, integer — **required for media types** (`lecture_video`/`assignment_video`/`pdf`) |
-| `exam_id` | nullable, integer — **required for exam types** (`assignment`/`quiz`) |
-| `pdf_kind` | nullable, enum `lecture_notes\|assignment_answer_sheet\|exam_answer_sheet` — **only valid on a `pdf` section** |
-
-**Response** `201 Created` — `LessonSectionResource`.
-**Errors:** `404` lesson not found; `422` validation (missing payload for the type, `pdf_kind` on non-pdf).
-
-#### `PUT /v1/teacher/lessons/{lesson}/sections/{section}` · `DELETE …/sections/{section}`
-Update / delete a section (same body/rules as create). **Response** `200 OK` `LessonSectionResource` / `204 No Content`. **Errors:** `404` section not in lesson; `422` validation.
-
----
-
-### Teacher · Content dependencies (unlock rules)
-
-Gate one section behind another. Only `mandatory` rules lock the dependent section; `optional` ones are
-advisory. The prerequisite must be a **sibling section of the same lesson**; a section cannot depend on
-itself; the `(section, depends_on)` pair is unique.
-
-#### `GET /v1/teacher/lessons/{lesson}/sections/{section}/dependencies`
-List the rules gating `section`. **Response** `200 OK` — collection of `ContentDependencyResource`.
-
-#### `POST /v1/teacher/lessons/{lesson}/sections/{section}/dependencies`
-**Request body** (`ContentDependencyRequest`):
-```json
-{ "depends_on_section_id": 5, "trigger": "submitted", "enforcement": "mandatory" }
-```
-| Field | Rules |
-|---|---|
-| `depends_on_section_id` | required, integer — a sibling section id of the same lesson |
-| `trigger` | required, enum `submitted\|passed\|completed` |
-| `enforcement` | required, enum `mandatory\|optional` |
-
-Trigger evaluation: exam/assignment sections check `exam_attempts` (`submitted` = any submitted attempt;
-`passed` = score ≥ the exam's `pass_percent`); video sections check `lesson_progress.completed_at`;
-PDFs have no completion signal and never gate.
-
-**Response** `201 Created` — `ContentDependencyResource`.
-**Errors:** `404` section not in lesson; `422` self-dependency, prerequisite not in the lesson, or duplicate pair.
-
-#### `DELETE /v1/teacher/lessons/{lesson}/sections/{section}/dependencies/{dependency}`
-Remove a rule. **Response** `204 No Content`. **Errors:** `404` not found / not on section.
-
----
-
-### Teacher · Unit dependencies (configurable prerequisites)
-
-Configurable, **non-sequential** unit gating (generalises R5.3). By default the first lesson of a
-unit is gated on the *immediately previous* unit's published exam; a `unit_dependency` overrides that
-with explicit prerequisites — "Unit 5 depends on Unit 2" (another unit's exam) or "Unit 5 depends on a
-specific section inside Unit 2". Only **mandatory** rules block; a unit with **no** rules keeps the
-previous-unit-exam default (so existing data/tests are unchanged). Units bind by `id`.
-
-Each row targets exactly **one** of `depends_on_unit_id` (evaluated against that unit's published
-exam) or `depends_on_section_id` (evaluated against that section's completion — same trigger semantics
-as content dependencies). When the referenced unit has no published exam the rule is treated as
-satisfied. An unmet prerequisite locks the unit's first lesson with reason `unit_prerequisite_unmet`
-(`423`).
-
-#### `GET /v1/teacher/units/{unit}/dependencies`
-List the unit's prerequisite rules (ordered by `id`). **Response** `200 OK` — collection of `UnitDependencyResource`.
-
-#### `POST /v1/teacher/units/{unit}/dependencies`
-**Request body** (`UnitDependencyRequest`):
-```json
-{ "depends_on_unit_id": 12, "trigger": "passed", "enforcement": "mandatory" }
-```
-| Field | Rules |
-|---|---|
-| `depends_on_unit_id` | integer, `required_without` `depends_on_section_id`; a unit id in this tenant; not the unit itself |
-| `depends_on_section_id` | integer, `required_without` `depends_on_unit_id`; a section id in this tenant |
-| `trigger` | required, enum `submitted\|passed\|completed\|graded` |
-| `enforcement` | required, enum `mandatory\|optional` |
-
-Set **one** target, not both (`422` if both). **Response** `201 Created` — `UnitDependencyResource`.
-**Errors:** `422` both/neither target, self-dependency, target not in tenant, or duplicate rule.
-
-#### `DELETE /v1/teacher/units/{unit}/dependencies/{dependency}`
-Remove a rule. **Response** `204 No Content`. **Errors:** `404` not found / not on unit.
-
-> **Manual access overrides.** A teacher/assistant can also bypass all of the above gates for one
-> student on one target via the student-scoped override endpoints (`/teacher/students/{student}/content-overrides`,
-> documented in [Identity](identity.md)). An active override on a lesson/section/unit short-circuits
-> both `ContentUnlockService` (section gate) and `LessonProgressionService` (lesson/unit gate) to
-> unlocked; a unit override covers every section/lesson under it.
+Delete a lesson attachment (also removes an uploaded file). **Response** `204 No Content`.
+**Errors:** `404` not on lesson, or the target is the lesson's `hls_video` (not deletable here).
 
 ---
 
 ### Teacher · Lesson availability (time-box)
 
-Configure the per-lesson access window. `availability_days: null` = unlimited (no window).
+Configure the per-lesson access window. `availability_days: null` = unlimited (no window). `{lesson}`
+binds by id.
 
 #### `GET /v1/teacher/lessons/{lesson}/availability`
 **Response** `200 OK`:
@@ -1003,6 +636,11 @@ Configure the per-lesson access window. `availability_days: null` = unlimited (n
 
 **Response** `200 OK` — same payload as `GET`.
 
+#### `POST /v1/teacher/lessons/{lesson}/reopen`
+**(doc 11 R4.)** Staff manually opens one lesson for one student for a custom number of hours.
+**Request body:** the target `user` + `hours` (staff-chosen extension). **Response** `200 OK` — the
+refreshed window. **Errors:** `404` lesson/student not in tenant.
+
 ---
 
 ### Teacher · Extension requests
@@ -1010,11 +648,12 @@ Configure the per-lesson access window. `availability_days: null` = unlimited (n
 Staff review of student window-extension requests.
 
 #### `GET /v1/teacher/extension-requests`
-List **pending** requests across the academy's lessons (newest first). **Response** `200 OK` — collection of `LessonExtensionRequestResource`.
+List **pending** requests across the academy's lessons (newest first).
+**Response** `200 OK` — collection of `LessonExtensionRequestResource`.
 
 #### `POST /v1/teacher/extension-requests/{extensionRequest}/grant` · `…/deny`
-Decide a pending request. **Grant** pushes the window's `expires_at` out by the lesson's `extension_hours`
-(from now if already expired, else from current expiry), clears the lock, and consumes one extension.
+Decide a pending request. **Grant** pushes `expires_at` out by the lesson's `extension_hours`, clears the
+lock, and consumes one extension.
 **Response** `200 OK`:
 ```json
 { "data": { "id": 3, "access_window_id": 9, "user_id": 51, "lesson_id": 101, "status": "granted", "requested_at": "…", "decided_at": "…" } }
@@ -1025,20 +664,20 @@ Decide a pending request. **Grant** pushes the window's `expires_at` out by the 
 
 ### Student · Lesson content & access
 
-Student-facing views of the content model. Auth: `auth:sanctum` + `active` membership (any role);
-lesson access is checked (free-preview lessons are open, otherwise an enrollment is required).
+Student-facing views of the content model. Auth: `auth:sanctum` + `active` membership (any role); lesson
+access is checked (free-preview lessons are open, otherwise an enrollment is required).
 
 #### `GET /v1/lessons/{lesson}/sections`
-**Purpose:** The student's ordered sections, each with a computed `locked` flag from the **mandatory**
-dependencies (optional rules never lock).
-**Auth:** 👤 student · **Middleware:** tenant, auth:sanctum, active
-**Response** `200 OK` — collection of `LessonSectionResource`, each including `"locked": true|false`.
+The student's ordered parts, each with a computed **`locked`** flag from the part `gate_rule`
+(part-gating, LP-13/14) and a per-part `result`. Also filtered by the student's `study_mode` vs each
+part's `access_mode` (B12/LP-6: a `both` part is visible to either channel).
+**Response** `200 OK` — collection of `LessonSectionResource`, each with `"locked": true|false`.
 **Errors:** `403` no lesson access.
 
 #### `POST /v1/lessons/{lesson}/start`
-**Purpose:** Confirm + open the access window (starts the countdown). Idempotent — returns the running
-window if already started. No-op window for unlimited lessons.
-**Auth:** 👤 student · **Response** `200 OK`:
+Confirm + open the access window (starts the countdown). Idempotent — returns the running window if
+already started; no-op for unlimited lessons.
+**Response** `200 OK`:
 ```json
 {
   "data": {
@@ -1053,131 +692,38 @@ window if already started. No-op window for unlimited lessons.
 **Errors:** `403` no lesson access.
 
 #### `GET /v1/lessons/{lesson}/access`
-**Purpose:** Countdown state for the timer (same payload shape as `start`; `started:false` + null window
-fields when not yet started). `remaining_sec` is server-computed — the client must not trust its own clock.
-**Auth:** 👤 student · **Response** `200 OK`.
+Countdown state for the timer (same payload shape as `start`; `started:false` + null window fields when not
+yet started). `remaining_sec` is server-computed. **Response** `200 OK`.
 
 #### `POST /v1/lessons/{lesson}/reopen`
-**Purpose:** **Auto self-reopen (VD R3/R4).** Instantly, with no staff approval, extend the student's own
-**expired/locked** window by `extension_hours` (24h) from now, clear the lock, and consume one from the
-shared `extensions_used` counter — while `extensions_used < self_reopen_limit`. The counter is
-**server-authoritative** (any client-sent count/limit is ignored). No request body.
-**Auth:** 👤 student · **Response** `200 OK` — same payload as `/access` (with the refreshed
-`expires_at`, `extensions_used`, `self_reopens_remaining`, `can_self_reopen`).
-**Errors:** `403` no lesson access; `409` window not started, still open (not expired/locked), or
-**`reopen_limit_reached`** (auto budget spent — fall back to `extension-request` below).
+**Auto self-reopen (VD R3/R4).** Instantly, with no staff approval, extend the student's own
+**expired/locked** window by `extension_hours` from now and consume one from the shared `extensions_used`
+counter — while `extensions_used < self_reopen_limit`. Server-authoritative (client-sent counts ignored).
+No body. **Response** `200 OK` — same payload as `/access`.
+**Errors:** `403` no lesson access; `409` window not started, still open, or **`reopen_limit_reached`**
+(fall back to `extension-request`).
 
 #### `POST /v1/lessons/{lesson}/extension-request`
-**Purpose:** Request more time from staff — the **after-limit fallback** once auto self-reopen is spent.
-Requires a started window, `max_extensions > 0`, remaining allowance, and no already-pending request.
-**Auth:** 👤 student · **Response** `201 Created` — `LessonExtensionRequestResource`.
-**Errors:** `403` no lesson access; `409` not started / extensions disabled / none remaining / already pending.
+Request more time from staff — the after-limit fallback once auto self-reopen is spent. Requires a started
+window, `max_extensions > 0`, remaining allowance, and no pending request.
+**Response** `201 Created` — `LessonExtensionRequestResource`.
+**Errors:** `403` no lesson access; `409` not started / disabled / none remaining / already pending.
 
 ---
 
-### Teacher · Packages
+### Student · Library (VD F1)
 
-Bundle **packages** of courses, units, and/or lessons into one sellable product. A package's items are
-set inline in the create/update body as an `items` array (the whole set is re-synced on each write).
-Buying a package is handled by [Commerce](commerce.md#packages-bundles); this section is authoring only.
+The student's purchased content — standalone lessons and packages they own (access from `enrollments`).
 
-#### `GET /v1/teacher/bundles`
-**Purpose:** List all of the teacher's packages (any visibility), newest first, paginated (20/page).
-Each item includes `items_count`.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
+#### `GET /v1/me/lessons`
+The student's purchased standalone lessons (distinct `lesson_id`s from access-granting enrollments;
+ordered `sort_order`, `id`). **Not** paginated; a hand-built `{ "data": [...] }` (not `LessonResource`).
+Each row: `id`, `name` (=title), `title`, `access_mode`, `price_minor`, `currency`, `course_id`,
+`course_slug`, `course_title`, `completed` (from `lesson_progress.completed_at`).
+**Auth:** 👤 active member.
 
-**Response** `200 OK` — collection of `BundleResource` + `meta`.
-
----
-
-#### `POST /v1/teacher/bundles`
-**Purpose:** Create a package. Slug is auto-generated unique-within-tenant from the title;
-`tenant_id` is filled automatically. At least one item is required.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Request body** (`BundleRequest`):
-```json
-{
-  "title": "Term 1 Package",
-  "subtitle": "Chapters 1–3 + quizzes",
-  "description": "Everything for term one.",
-  "price_minor": 20000,
-  "currency": "EGP",
-  "access_days": 180,
-  "visibility": "visible",
-  "publish_at": null,
-  "is_free": false,
-  "purchase_enabled": true,
-  "cover_url": "https://cdn.example.com/pkg-cover.jpg",
-  "thumbnail_url": "https://cdn.example.com/pkg-thumb.jpg",
-  "items": [
-    { "type": "course", "course": "9f1c…-course-uuid", "sort_order": 0 },
-    { "type": "unit", "unit": 12, "sort_order": 1 },
-    { "type": "lesson", "lesson": 88, "sort_order": 2 }
-  ]
-}
-```
-| Field | Rules |
-|---|---|
-| `title` | required, string, max 255 (slug derived from this) |
-| `subtitle` | nullable, string, max 255 |
-| `description` | nullable, string |
-| `price_minor` | nullable, integer, min 0 (minor units) |
-| `currency` | nullable, string, exactly 3 chars |
-| `access_days` | nullable, integer, min 1 (access window granted on purchase; omit = lifetime) |
-| `visibility` | nullable, enum `visible\|hidden\|scheduled` (default `hidden`) |
-| `publish_at` | nullable, date |
-| `is_free` | boolean |
-| `purchase_enabled` | boolean |
-| `cover_url` / `thumbnail_url` | nullable, url, max 2048 |
-| `items` | **required on create** (min 1), optional on update; array, max 100 |
-| `items[].type` | required, `course`, `unit`, or `lesson` |
-| `items[].course` | required if `type=course`; a course **uuid in this tenant** |
-| `items[].unit` | required if `type=unit`; a unit **id in this tenant** |
-| `items[].lesson` | required if `type=lesson`; a lesson **id in this tenant** |
-| `items[].sort_order` | nullable, integer, min 0 |
-
-Note: `slug` is server-generated and **not** accepted in the body.
-
-**Response** `201 Created` — `BundleResource` (with `items`).
-**Errors:** `422` validation (e.g. a course/unit/lesson that isn't in this tenant, or no items on create).
-
----
-
-#### `GET /v1/teacher/bundles/{bundle:uuid}`
-**Purpose:** Show one of the teacher's packages (any visibility), with its items.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params:** `bundle` (uuid; tenant-scoped; cross-tenant uuid `404`s).
-**Response** `200 OK` — `BundleResource` (with `items`).
-**Errors:** `404` not found in tenant.
-
----
-
-#### `PUT /v1/teacher/bundles/{bundle:uuid}`
-**Purpose:** Update a package. The slug stays stable. If `items` is present it **replaces** the whole
-item set; omit `items` to leave the contents unchanged.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params:** `bundle` (uuid).
-**Request body:** same fields/rules as create (`BundleRequest`); `items` optional here.
-
-**Response** `200 OK` — `BundleResource`.
-**Errors:** `404` not found; `422` validation.
-
----
-
-#### `DELETE /v1/teacher/bundles/{bundle:uuid}`
-**Purpose:** Soft-delete (retire) a package. It leaves the catalogue, but enrollments already granted
-from it keep working.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** tenant, auth:sanctum, active, role:teacher
-
-**Path params:** `bundle` (uuid).
-**Request body:** None
-**Response** `204 No Content` (soft delete — row retained with `deleted_at`).
-**Errors:** `404` not found in tenant.
+#### `GET /v1/me/packages`
+The student's purchased packages (distinct `package_id`s from access-granting enrollments — package-buy
+provenance; ordered `name`, `id`; 20/page). **Response** `200 OK` — paginated `PackageResource` collection
+(with `items_count`).
+**Auth:** 👤 active member.

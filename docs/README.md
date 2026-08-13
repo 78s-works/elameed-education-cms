@@ -28,19 +28,19 @@ Postman collection in [`postman/`](../postman).
 | Module | Endpoints | Reference |
 |---|--:|---|
 | Tenancy | 21 | [`api/tenancy.md`](api/tenancy.md) |
-| Identity | 34 | [`api/identity.md`](api/identity.md) |
-| Catalog | 39 | [`api/catalog.md`](api/catalog.md) |
-| Media | 20 | [`api/media.md`](api/media.md) |
-| Commerce | 10 | [`api/commerce.md`](api/commerce.md) |
-| Wallet | 2 | [`api/wallet.md`](api/wallet.md) |
-| Centers | 11 | [`api/centers.md`](api/centers.md) |
-| Assessment | 13 | [`api/assessment.md`](api/assessment.md) |
-| Engagement | 28 | [`api/engagement.md`](api/engagement.md) |
-| Notifications | 2 | [`api/notifications.md`](api/notifications.md) |
-| Reporting | 4 | [`api/reporting.md`](api/reporting.md) |
-| Platform Admin | 6 | [`api/platform-admin.md`](api/platform-admin.md) |
-| Billing | 8 | [`api/billing.md`](api/billing.md) |
-| **Total** | **198** | |
+| Identity | 47 | [`api/identity.md`](api/identity.md) |
+| Catalog | 53 | [`api/catalog.md`](api/catalog.md) |
+| Media | 21 | [`api/media.md`](api/media.md) |
+| Commerce | 13 | [`api/commerce.md`](api/commerce.md) |
+| Wallet | 8 | [`api/wallet.md`](api/wallet.md) |
+| Centers | 18 | [`api/centers.md`](api/centers.md) |
+| Assessment | 25 | [`api/assessment.md`](api/assessment.md) |
+| Engagement | 35 | [`api/engagement.md`](api/engagement.md) |
+| Notifications | 24 | [`api/notifications.md`](api/notifications.md) |
+| Reporting | 6 | [`api/reporting.md`](api/reporting.md) |
+| Platform Admin | 5 | [`api/platform-admin.md`](api/platform-admin.md) |
+| Billing | 9 | [`api/billing.md`](api/billing.md) |
+| **Total** | **285** | |
 
 > These docs describe the **implemented** behaviour. Where it diverges from the
 > design-time spec in [`../docs (1)/04_API_Specification.md`](../../docs%20(1)/04_API_Specification.md),
