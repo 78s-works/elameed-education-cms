@@ -205,6 +205,7 @@ Notes: the owner is created with `firstOrCreate` on `phone` (existing users reus
     "branding": {
       "logo_url": "https://…/logo.png",
       "cover_url": "https://…/cover.png",
+      "favicon_url": "https://…/favicon.png",
       "primary_color": "#1D4ED8",
       "secondary_color": "#9333EA",
       "bio": "…",
@@ -226,7 +227,7 @@ Notes: the owner is created with `firstOrCreate` on `phone` (existing users reus
     "usage": {
       "max_students":   { "limit": 2000,  "used": 412, "remaining": 1588 },
       "max_courses":    { "limit": 30,    "used": 12,  "remaining": 18 },
-      "storage_mb":     { "limit": 50000, "used": 0,   "remaining": 50000 },
+      "storage_mb":     { "limit": 50000, "used": 1840, "remaining": 48160 },
       "max_assistants": { "limit": 3,     "used": 1,   "remaining": 2 }
     },
     "stats": {
@@ -244,7 +245,7 @@ Notes: the owner is created with `firstOrCreate` on `phone` (existing users reus
 
 Notes:
 - `owner`, `branding`, and `subscription` are each `null` when absent (no owner assigned / no profile yet / no plan).
-- `usage` mirrors the Billing teacher view: `used` counts **active** student/assistant memberships and non-deleted courses; a `null` `limit` = unlimited (`remaining` `null`); `storage_mb.used` is `0` (deferred).
+- `usage` mirrors the Billing teacher view: `used` counts **active** student/assistant memberships and non-deleted courses; a `null` `limit` = unlimited (`remaining` `null`); `storage_mb.used` is the **real** sum of `media_assets.size_bytes` (whole MB) on the as-built MySQL — same code path as [billing.md](billing.md). It reads `0` only under Postgres RLS (see the RLS note below). `max_courses` is display-only (teacher course CRUD retired — never enforced).
 - `stats.gross_earnings_minor` = sum of this tenant's `teacher_earnings` credit ledger entries (integer minor units, EGP).
 - All counts are computed cross-tenant with an explicit `tenant_id` filter (admin runs outside the tenant scope).
 

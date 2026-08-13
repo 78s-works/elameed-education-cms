@@ -5,7 +5,7 @@
 ## Models
 
 - **`Center`** — A physical teaching branch. Tenant-scoped, `HasUuids`, route key `uuid`. Fillable: `name`, `address`, `phone`, `is_active` (bool). `hasMany` attendance records.
-- **`ActivationCode`** — A one-time recharge/activation code. Tenant-scoped, `HasUuids`, route key `uuid`. Fillable: `code` (the redeemable string), `type` (`CodeType`), `amount_minor` (int, wallet codes), `course_id` (course codes), `center_id` (optional origin branch), `batch` (optional label), `status` (`CodeStatus`), `redeemed_by`, `redeemed_at`, `expires_at`. `isRedeemable()` = status is `active` **and** (`expires_at` is null or in the future). `belongsTo` Course.
+- **`ActivationCode`** — A one-time recharge/activation code. Tenant-scoped, `HasUuids`, route key `uuid`. Fillable: `code` (the redeemable `XXXX-XXXX-XXXX` string), `type` (`CodeType`), `amount_minor` (int, wallet codes), `course_id` (course codes), `center_id` (optional origin branch), `batch` (optional label), `status` (`CodeStatus`), `generated_by` (B22 — the staff user who minted it), `redeemed_by`, `redeemed_at`, `expires_at`. `isRedeemable()` = status is `active` **and** (`expires_at` is null or in the future); `isExpired()` = active but past `expires_at` (surfaced as the derived `is_expired` on the resource). A `type=wallet` code **is** the B22 payment scratch code (denominated, single-use, wallet-crediting). `belongsTo` Course.
 - **`CenterIdCode`** (B20) — A **sequential, grade-encoded** student-identity code minted per center. Tenant-scoped, `HasUuids`, route key `uuid`. Fillable: `center_id`, `grade` (1|2|3 = 1st/2nd/3rd secondary; also the code's leading digit), `sequence` (running counter within `(center_id, grade)`), `code` (`"{grade}-{centerId}-{seq:06d}"`), `status` (reuses `CodeStatus`: `active`=unused, `redeemed`=used, `disabled`), `batch_id` (uuid grouping one generate call), `generated_by`, `used_by`, `used_at`. `isUnused()` = status `active`. Relations: `center()`, `generatedBy()`, `usedBy()`. **Distinct from `ActivationCode`** (random one-time wallet/course recharge): this code carries identity, not a grant — at sign-up it binds a student to `center_id` + `grade` (+ study_mode). Unique `(tenant_id, code)` and `(tenant_id, center_id, grade, sequence)`; register-time consumption is a follow-up (`used_by`/`used_at` exist so used/unused is queryable now).
 - **`AttendanceRecord`** — One student's attendance at a center on one day. Tenant-scoped (integer `id` key — **no** uuid). Fillable: `center_id`, `user_id`, `course_id`, `attended_on` (date), `status`, `marked_by` (teacher user id), `source` (`online` \| `offline`), `external_ref` (client idempotency key from sync), `note`. `belongsTo` Center; `student()` → `User` on `user_id`. A DB unique key on (`tenant_id`, `center_id`, `user_id`, `attended_on`) enforces one record per student/center/day.
 - **`CenterExamGrade`** (VD R12, doc 13 P15) — A paper (offline, in-center) exam score against a student. Tenant-scoped **and year-scoped** (`BelongsToTenant` + `BelongsToAcademicYear`), `HasUuids`, route key `uuid`. Fillable: `center_id`, `student_user_id`, `title` (paper-exam label), `total_marks` (decimal), `score` (decimal), `sat_on` (date), `entered_by` (staff user id, nullable), `note`. Casts `total_marks`/`score` → `decimal:2`, `sat_on` → `date`. Relations: `center()`, `student()` → `User` on `student_user_id`, `enteredBy()` → `User`. Lightweight by design (decision D13-9) — no questions/attempts; just the typed result. Index `(tenant_id, student_user_id)`.
@@ -64,7 +64,7 @@ All routes are under the base prefix `/api/v1` and run through the `tenant` midd
 
 ```json
 {
-  "code": "ABC123XYZ789"
+  "code": "ABCD-EFGH-JKLM"
 }
 ```
 
@@ -77,7 +77,7 @@ All routes are under the base prefix `/api/v1` and run through the `tenant` midd
 ```json
 {
   "data": {
-    "code": "ABC123XYZ789",
+    "code": "ABCD-EFGH-JKLM",
     "type": "wallet",
     "amount_minor": 10000
   }
@@ -89,7 +89,7 @@ All routes are under the base prefix `/api/v1` and run through the `tenant` midd
 ```json
 {
   "data": {
-    "code": "ABC123XYZ789",
+    "code": "ABCD-EFGH-JKLM",
     "type": "course",
     "course_id": 12
   }
@@ -102,7 +102,7 @@ All routes are under the base prefix `/api/v1` and run through the `tenant` midd
 
 ### Teacher · Centers
 
-All teacher endpoints share: **Auth** 🧑‍🏫 role:teacher; **Middleware** `tenant`, `auth:sanctum`, `active`, `role:teacher`. Headers are the same as above (Bearer required; `Content-Type: application/json` on requests with a JSON body).
+All teacher endpoints below (Centers CRUD, sync, attendance, activation/recharge codes, center-id-codes, center-exam-grades) share: **Auth** 🧑‍🏫/assistant; **Middleware** `tenant`, `auth:sanctum`, `active`, **`role:teacher,assistant`**, **`permission:centers`**. A teacher passes the permission gate implicitly; an **assistant** reaches these only if granted the `centers` permission (else `403`). The per-endpoint "Auth: role:teacher" lines below are shorthand for this shared gate. Headers are the same as above (Bearer required; `Content-Type: application/json` on requests with a JSON body). *(center-id-codes and center-exam-grades additionally run under the `academic-year` middleware — `X-Academic-Year` required.)*
 
 #### `GET /teacher/centers`
 
@@ -194,7 +194,7 @@ All teacher endpoints share: **Auth** 🧑‍🏫 role:teacher; **Middleware** `
       "kind": "redeem",
       "external_ref": "device-001-evt-1002",
       "student_phone": "+201112223334",
-      "code": "ABC123XYZ789"
+      "code": "ABCD-EFGH-JKLM"
     }
   ]
 }
@@ -229,7 +229,7 @@ Student resolution: `student_uuid` is tried first, then `student_phone`; the res
       "kind": "redeem",
       "status": "applied",
       "grant": {
-        "code": "ABC123XYZ789",
+        "code": "ABCD-EFGH-JKLM",
         "type": "wallet",
         "amount_minor": 10000
       }
@@ -341,7 +341,7 @@ Records created here get `source: "online"` and `marked_by` = the acting teacher
 
 | Param | Example | Notes |
 |---|---|---|
-| `filter[status]` | `active` | `active` \| `redeemed` \| `disabled` |
+| `filter[status]` | `active` | `active` \| `redeemed` \| `disabled`, plus the B22 scratch-code buckets `unused` (= active & not past `expires_at`), `used` (= redeemed), `expired` (= active but past `expires_at`, a derived state) |
 | `filter[type]` | `wallet` | `wallet` \| `course` |
 | `filter[batch]` | `SUMMER-2026` | exact batch label |
 
@@ -352,12 +352,14 @@ Records created here get `source: "online"` and `marked_by` = the acting teacher
   "data": [
     {
       "uuid": "3a1c9e77-4b2d-4c8e-9f10-77aa22bb33cc",
-      "code": "ABC123XYZ789",
+      "code": "ABCD-EFGH-JKLM",
       "type": "wallet",
       "amount_minor": 10000,
       "course_id": null,
       "batch": "SUMMER-2026",
       "status": "active",
+      "is_expired": false,
+      "generated_by": 7,
       "redeemed_by": null,
       "redeemed_at": null,
       "expires_at": "2026-12-31T23:59:59+00:00"
@@ -378,8 +380,8 @@ Records created here get `source: "online"` and `marked_by` = the acting teacher
 
 #### `POST /teacher/codes/batch`
 
-**Purpose:** Generate N codes at once (unique random 12-char uppercase strings, all `active`). `wallet` codes require `amount_minor`; `course` codes require a `course_id` owned by this tenant.
-**Auth:** 🧑‍🏫 role:teacher
+**Purpose:** Generate N codes at once, all `active`. Codes are 12 chars in a printable **`XXXX-XXXX-XXXX`** form from an unambiguous alphabet `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no `0/O/1/I`). `wallet` codes require `amount_minor` (they double as **B22 payment scratch codes** — a denominated single-use wallet-crediting code); `course` codes require a `course_id` owned by this tenant. The minting staff user is recorded on `generated_by`.
+**Auth:** 🧑‍🏫/assistant · `permission:centers`
 
 **Request body**
 
@@ -413,12 +415,14 @@ Records created here get `source: "online"` and `marked_by` = the acting teacher
   "data": [
     {
       "uuid": "3a1c9e77-4b2d-4c8e-9f10-77aa22bb33cc",
-      "code": "K7QF2M9XZ1AB",
+      "code": "ABCD-EFGH-JKLM",
       "type": "wallet",
       "amount_minor": 10000,
       "course_id": null,
       "batch": "SUMMER-2026",
       "status": "active",
+      "is_expired": false,
+      "generated_by": 7,
       "redeemed_by": null,
       "redeemed_at": null,
       "expires_at": "2026-12-31T23:59:59+00:00"

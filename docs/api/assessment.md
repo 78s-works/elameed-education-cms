@@ -1,10 +1,10 @@
 # Assessment Module
 
-> The Assessment module (M08) covers **exams, quizzes and assignments** — the same `Exam` model backs all three via a `type`/`mode` pair. It has two surfaces. **Students** discover published, in-window exams for courses they are enrolled in, start (or resume) a timed attempt, submit answers, and read their result. **Teachers** author exams under a course, manage the question bank per exam (including the hidden answer key), list submissions, and hand-grade the subjective questions. Objective questions (MCQ, true/false) are graded automatically on submit by `GradingService`; subjective ones (short answer, essay, file) flip the attempt into a `needs_manual_grade` state until a teacher scores them. A passing attempt awards gamification points once (idempotent per exam). The answer key is never leaked to students during an attempt — it is only ever echoed back in a post-submission review, and only when the teacher enabled `show_answers`.
+> The Assessment module (M08) covers **exams, quizzes and assignments** — the same `Exam` model backs all three via a `type`/`mode` pair. It has two surfaces. **Students** discover published, in-window exams for courses they are enrolled in, start (or resume) a timed attempt, submit answers, and read their result. **Teachers** author exams from the sidebar (top-level, `type`-gated to a lesson/unit/none — not course-nested), manage the question bank per exam (including the hidden answer key), list submissions, and hand-grade the subjective questions. Objective questions (MCQ, true/false) are graded automatically on submit by `GradingService`; subjective ones (short answer, essay, file) flip the attempt into a `needs_manual_grade` state until a teacher scores them. A passing attempt awards gamification points once (idempotent per exam). The answer key is never leaked to students during an attempt — it is only ever echoed back in a post-submission review, and only when the teacher enabled `show_answers`.
 
 ## Models
 
-- **`Exam`** — An exam/assignment under a course (`course_id`, optional `lesson_id`). Tenant-scoped (`BelongsToTenant`), `HasUuids` (route key is `uuid`), soft-deletes (delete keeps attempt history). Config columns: `title`, `type`, `mode`, `pass_percent`, `duration_min`, `attempts_allowed` (0 = unlimited), `question_order` (`fixed`|`random`), `scoring` (`best`|`last`|`first`), `starts_at`, `ends_at`, `result_visibility`, `show_answers`, `depends_on_exam_id` (prerequisite exam), `is_published`. `isOpen()` = published AND within the optional `starts_at`/`ends_at` window.
+- **`Exam`** — An exam/quiz/homework. Tenant-scoped (`BelongsToTenant`), `HasUuids` (route key is `uuid`), soft-deletes (delete keeps attempt history). **Convention-gating link** (all nullable, auto-derived from `type`): `course_id`, `lesson_id`, `unit_id` (`unit_id` dormant — units retired). Config columns: `title`, `type`, `mode`, `pass_percent`, `duration_min`, `attempts_allowed` (0 = unlimited), `question_order` (`fixed`|`random`), `scoring` (`best`|`last`|`first`), `starts_at`, `ends_at`, `result_visibility`, `show_answers`, `max_time_extensions` (0 = none), `is_published`. **Degree-of-success (2026-08-04):** `pass_mode` (`percent`|`marks`), `pass_value` (decimal), `total_marks` (decimal), `grading_mode` (`manual`|`auto`) — set via the bubble-sheet builder; `Exam::passed(score,max)` prefers `pass_mode`/`pass_value`, falling back to `pass_percent`. `depends_on_exam_id` is a **dormant** column (exam→exam gating retired). `isOpen()` = published AND within the optional `starts_at`/`ends_at` window.
 - **`Question`** — A question attached to an exam (`exam_id`) — or a reusable bank item when `exam_id` is null (bank is not exposed by these routes). Tenant-scoped. Casts `options`, `correct`, `book_ref` to arrays; `points` to int. **`correct` is in the model's `$hidden`** so it never serialises by default; the teacher `QuestionResource` re-adds it explicitly. `body` may be null for bubble-sheet MCQ. `book_ref` holds `{ book, page, qno }` for printed-book (bubble-sheet) questions.
 - **`ExamAttempt`** — One student attempt (`exam_id`, `user_id`, `attempt_number`). Tenant-scoped, bound in routes by `id`. Holds `started_at`, `submitted_at`, `score`, `max_score`, `status`, `answers` (JSON map `question_id => { answer, awarded, is_correct }`), `needs_manual_grade`, and (for graded upload homework) `feedback` (text) + `corrected_file` (JSON `{ path, name, size, mime }` pointer into the private `assignments/` disk). No UUID — attempt ids are only reachable through an exam the student/teacher already owns.
 
@@ -14,7 +14,7 @@
 - Auto-graded on submit (`isAutoGraded()`): `mcq`, `true_false`.
 - Manual (teacher-graded): `short`, `essay`, `file` — these set `needs_manual_grade = true`.
 
-**`ExamType`** (`type`): `exam`, `assignment` (defaults to `exam`).
+**`ExamType`** (`type`): `lesson_quiz`, `homework`, `unit_exam`, `free_exam` (defaults to `free_exam`). **Convention-gating** — the type fixes the content link and how the exam participates in lesson progression: `lesson_quiz`/`homework` → a lesson (`lesson_id` required), `unit_exam` → a unit (`unit_id`, dormant), `free_exam` → nothing. The `course_id`/`lesson_id`/`unit_id` links are **auto-derived server-side** from `type` + the chosen link, never client-set. One `lesson_quiz` and one `homework` per lesson, one `unit_exam` per unit (else `409`).
 
 **`ExamMode`** (`mode`): `standard` (questions shown on screen), `bubble_sheet` (questions live in a printed book; the app shows only the `book_ref` + choice letters). Defaults to `standard`.
 
@@ -56,33 +56,40 @@ All routes sit under the `/api/v1` prefix and the `tenant` middleware group (hos
 
 **Request body:** None
 
-**Response 200** — `ExamResource` collection (no `questions_count`, no answer data):
+**Response 200** — `ExamResource` collection (no answer data). Full `ExamResource` key set: `id`, `uuid`, `course_id`, `unit_id`, `lesson_id`, `title`, `type`, `mode`, `pass_percent`, `pass_mode`, `pass_value`, `total_marks`, `grading_mode`, `duration_min`, `attempts_allowed`, `question_order`, `scoring`, `starts_at`, `ends_at`, `result_visibility`, `show_answers`, `is_published`, `questions_count`:
 
 ```json
 {
   "data": [
     {
+      "id": 42,
       "uuid": "9d2a7c14-3b6e-4f0a-8b21-2c9f1d5e7a10",
       "course_id": 12,
-      "lesson_id": null,
-      "title": "Midterm Exam - Mechanics",
-      "type": "exam",
+      "unit_id": null,
+      "lesson_id": 101,
+      "title": "Lesson 3 Quiz",
+      "type": "lesson_quiz",
       "mode": "standard",
       "pass_percent": 60,
-      "duration_min": 90,
+      "pass_mode": "percent",
+      "pass_value": 60,
+      "total_marks": null,
+      "grading_mode": "manual",
+      "duration_min": 15,
       "attempts_allowed": 2,
       "question_order": "fixed",
       "scoring": "best",
-      "starts_at": "2026-09-01T09:00:00+00:00",
-      "ends_at": "2026-09-01T12:00:00+00:00",
+      "starts_at": null,
+      "ends_at": null,
       "result_visibility": "immediate",
       "show_answers": true,
-      "depends_on_exam_id": null,
-      "is_published": true
+      "is_published": true,
+      "questions_count": 10
     }
   ]
 }
 ```
+(`depends_on_exam_id` is **no longer emitted** — exam→exam gating retired.)
 
 **Errors:** `401 unauthenticated`, `403 forbidden` (suspended membership, via `active`).
 
@@ -123,10 +130,11 @@ All routes sit under the `/api/v1` prefix and the `tenant` middleware group (hos
 
 **Errors:**
 - `409` (code `error`, message `"This exam is not open."`) — not published or outside its `starts_at`/`ends_at` window.
-- `409` (code `error`, message `"No attempts remaining for this exam."`) — attempts made ≥ `attempts_allowed` (only enforced when `attempts_allowed > 0`; an in-progress attempt is resumed rather than blocked).
-- `403 forbidden` (`"You do not have access to this exam."`) — no active enrollment in the exam's course.
-- `403 forbidden` (`"Complete the prerequisite exam first."`) — `depends_on_exam_id` set and not yet passed.
+- `409` (code `error`, message `"No attempts remaining for this exam."`) — attempts made ≥ the cap (only enforced when the cap `> 0`; an in-progress attempt is resumed rather than blocked). The cap is the exam's `attempts_allowed`, **overridden by the backing lesson part's `max_tries`** when this exam backs a part (VD LP-14); both `0` = unlimited.
+- `403 forbidden` (`"You do not have access to this exam."`) — no active enrollment in the exam's course/lesson. A **`free_exam`** bypasses the enrollment check entirely (`hasExamAccess`).
 - `404 not_found` — unknown/cross-tenant exam.
+
+> The old `"Complete the prerequisite exam first."` error is **retired** — `depends_on_exam_id` is dormant and `assertPlayable` no longer checks it (part-gating is now `gate_rule` on the lesson part, enforced in [Catalog](catalog.md)/`ContentUnlockService`).
 
 ---
 
@@ -238,108 +246,136 @@ All routes sit under the `/api/v1` prefix and the `tenant` middleware group (hos
 
 ---
 
-### Teacher · Exams
+#### `POST /v1/exams/{exam:uuid}/attempts/{attempt}/files`
 
-All teacher routes add `role:teacher`. `Exam` and `Course` bind by `uuid`; cross-tenant ids resolve to 404.
+**Purpose:** Upload a file answer for a `file`-type question on an **in-progress** attempt. Stored on the private `assignments/{tenant}/{attempt}` disk; sets `needs_manual_grade = true`.
+**Auth:** 👤 Authenticated (student, must own the attempt)
+**Middleware:** `tenant`, `auth:sanctum`, `active`
+**Request headers:** `Content-Type: multipart/form-data`, `Authorization: Bearer <token>`.
 
-#### `GET /v1/teacher/courses/{course:uuid}/exams`
+**Request body** (`UploadAttemptFileRequest`, multipart)
+| Field | Rules |
+|---|---|
+| `question_id` | required, integer — a `file`-type question on this exam |
+| `file` | required, file, `max:` config `assessment.upload_max_kb` (default 20480 KB), `mimes:pdf,doc,docx,ppt,pptx,xls,xlsx,txt,png,jpg,jpeg,zip` |
 
-**Purpose:** List all exams of one course (newest first), with a question count.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
-
-**Request headers:** Host, Accept, `Authorization: Bearer <token>`.
-
-**Path params**
-
-| Param | In | Type | Notes |
-|---|---|---|---|
-| `course` | path | uuid | Bound by `uuid` |
-
-**Response 200** — `ExamResource` collection, each with `questions_count`:
-
+**Response 200**
 ```json
-{
-  "data": [
-    {
-      "uuid": "9d2a7c14-3b6e-4f0a-8b21-2c9f1d5e7a10",
-      "course_id": 12,
-      "lesson_id": null,
-      "title": "Midterm Exam - Mechanics",
-      "type": "exam",
-      "mode": "standard",
-      "pass_percent": 60,
-      "duration_min": 90,
-      "attempts_allowed": 2,
-      "question_order": "fixed",
-      "scoring": "best",
-      "starts_at": "2026-09-01T09:00:00+00:00",
-      "ends_at": "2026-09-01T12:00:00+00:00",
-      "result_visibility": "immediate",
-      "show_answers": true,
-      "depends_on_exam_id": null,
-      "is_published": true,
-      "questions_count": 3
-    }
-  ]
-}
+{ "data": { "question_id": 104, "name": "essay.pdf", "size": 12345 } }
 ```
-
-**Errors:** `403 forbidden` (not a teacher), `404 not_found` (course).
+**Errors:** `404` question not on exam; `409` `"This question does not accept a file answer."`; `409` `"This attempt has already been submitted."`; `422` validation.
 
 ---
 
-#### `POST /v1/teacher/courses/{course:uuid}/exams`
+#### `POST /v1/exams/{exam:uuid}/extension-request`
 
-**Purpose:** Create an exam under a course. `tenant_id` is auto-filled.
+**Purpose:** Student asks for extra time on this exam/quiz (doc 11 R6). Guarded by the same open + access checks as start.
+**Auth:** 👤 Authenticated (student) · **Middleware:** `tenant`, `auth:sanctum`, `active`
+
+**Request body**
+| Field | Rules |
+|---|---|
+| `minutes` | nullable, integer — requested extra minutes |
+
+**Response 201**
+```json
+{ "data": { "id": 7, "status": "pending", "requested_minutes": 15 } }
+```
+Staff review these at `/teacher/exam-extension-requests` (below). A grant adds `granted_minutes` to the exam's `duration_min` for that student, capped by `exams.max_time_extensions`.
+
+---
+
+### Teacher · Exams
+
+Teacher exam authoring is **top-level** (managed from the sidebar), **not** course-nested — the old `/teacher/courses/{course}/exams` routes are retired. All teacher routes add `role:teacher`. `Exam` binds by `uuid`; cross-tenant ids resolve to 404.
+
+#### `GET /v1/teacher/exams`
+
+**Purpose:** List the academy's exams (newest first), each with `questions_count`. Filterable.
 **Auth:** 🧑‍🏫 role:teacher
 **Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
 
-**Request headers:** Host, Accept, `Content-Type: application/json`, `Authorization: Bearer <token>`.
+**Query params** (all optional)
+| Param | Notes |
+|---|---|
+| `type` | `lesson_quiz` \| `homework` \| `unit_exam` \| `free_exam` |
+| `course_id` | filter to one course |
+| `unit_id` | filter to one unit (dormant) |
+| `lesson_id` | filter to one lesson |
+
+**Response 200** — `ExamResource` collection (full field set per [Student · Attempts `GET /v1/exams`](#student--attempts)), each with `questions_count`.
+
+**Errors:** `403 forbidden` (not a teacher).
+
+---
+
+#### `GET /v1/teacher/exam-link/lessons`
+
+**Purpose:** Lesson picker for the exam editor's link-target dropdown.
+**Auth:** 🧑‍🏫 role:teacher
+
+**Response 200**
+```json
+{ "data": [ { "id": 101, "title": "Displacement & Velocity", "unit_id": null, "course_id": 12, "course_title": "Grade 12 Physics" } ] }
+```
+
+---
+
+#### `POST /v1/teacher/exams`
+
+**Purpose:** Create an exam. The `type` + its link drive everything: `course_id`/`unit_id`/`lesson_id` are **auto-derived server-side**, never client-set. `tenant_id` is auto-filled.
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
 
 **Request body** (`ExamRequest`):
 
 ```json
 {
-  "title": "Midterm Exam - Mechanics",
-  "lesson_id": null,
-  "type": "exam",
+  "title": "Lesson 3 Quiz",
+  "type": "lesson_quiz",
+  "lesson_id": 101,
   "pass_percent": 60,
-  "duration_min": 90,
+  "duration_min": 15,
   "attempts_allowed": 2,
   "question_order": "fixed",
   "scoring": "best",
-  "starts_at": "2026-09-01T09:00:00Z",
-  "ends_at": "2026-09-01T12:00:00Z",
+  "starts_at": null,
+  "ends_at": null,
   "result_visibility": "immediate",
   "show_answers": true,
-  "depends_on_exam_id": null,
+  "max_time_extensions": 0,
   "mode": "standard",
-  "is_published": true
+  "is_published": false
 }
 ```
 
 | Field | Type | Required | Rules |
 |---|---|---|---|
 | `title` | string | yes | max 255 |
-| `lesson_id` | int | no | must exist in this tenant |
-| `type` | enum | no | `exam` \| `assignment` (default `exam`) |
+| `type` | enum | no | `lesson_quiz` \| `homework` \| `unit_exam` \| `free_exam` (default `free_exam`) |
+| `lesson_id` | int | `required_if:type,lesson_quiz,homework` | must exist in this tenant |
+| `unit_id` | int | `required_if:type,unit_exam` | dormant passthrough (no table validation — units retired) |
 | `pass_percent` | int | no | 0–100 |
 | `duration_min` | int | no | ≥ 1 |
 | `attempts_allowed` | int | no | ≥ 0 (0 = unlimited) |
+| `max_time_extensions` | int | no | ≥ 0 (per-student time-extension cap) |
 | `question_order` | enum | no | `fixed` \| `random` |
 | `scoring` | enum | no | `best` \| `last` \| `first` |
 | `starts_at` | date | no | — |
 | `ends_at` | date | no | `after_or_equal:starts_at` |
 | `result_visibility` | enum | no | `immediate` \| `after_close` \| `manual` |
 | `show_answers` | bool | no | — |
-| `depends_on_exam_id` | int | no | must exist in this tenant |
 | `mode` | enum | no | `standard` \| `bubble_sheet` (default `standard`) |
 | `is_published` | bool | no | — |
 
-**Response 201** — `ExamResource` (no `questions_count` on the create response). Same field set as the list example above, minus `questions_count`.
+Note: `depends_on_exam_id` is **not** accepted (exam→exam gating retired). The degree-of-success fields (`pass_mode`/`pass_value`/`total_marks`/`grading_mode`) are set via the [bubble-sheet builder](#teacher--bubble-sheet-builder), not `ExamRequest`.
 
-**Errors:** `422 validation_error` (e.g. `ends_at` before `starts_at`, unknown `lesson_id`/`depends_on_exam_id`), `403 forbidden`, `404 not_found` (course).
+**Response 201** — `ExamResource`.
+
+**Errors:**
+- `409 ConflictHttpException` — a convention is already taken: `"This lesson already has a quiz."` / `"…a homework."` / `"This unit already has an exam."`; or publishing with zero questions → `"Add questions before publishing this exam."`
+- `422 validation_error` — e.g. `ends_at` before `starts_at`, missing `lesson_id` for a `lesson_quiz`/`homework`.
+- `403 forbidden`.
 
 ---
 
@@ -371,10 +407,10 @@ All teacher routes add `role:teacher`. `Exam` and `Course` bind by `uuid`; cross
 
 ```json
 {
-  "title": "Midterm Exam - Mechanics (v2)",
-  "type": "exam",
+  "title": "Lesson 3 Quiz (v2)",
+  "type": "lesson_quiz",
   "pass_percent": 65,
-  "duration_min": 120,
+  "duration_min": 20,
   "attempts_allowed": 1,
   "is_published": true
 }
@@ -382,7 +418,7 @@ All teacher routes add `role:teacher`. `Exam` and `Course` bind by `uuid`; cross
 
 **Response 200** — updated `ExamResource` with `questions_count`.
 
-**Errors:** `422 validation_error`, `404 not_found`, `403 forbidden`.
+**Errors:** `409` (convention taken / publish with zero questions), `422 validation_error`, `404 not_found`, `403 forbidden`.
 
 ---
 
@@ -605,11 +641,13 @@ Auto-grading is driven by the backing exam's `grading_mode`: when it is `auto`, 
 
 ### Teacher · Grading
 
+All three grading routes are gated **`role:teacher,assistant` + `permission:homework`** — a teacher passes implicitly; an assistant needs the `homework` grant.
+
 #### `GET /v1/teacher/exams/{exam:uuid}/submissions`
 
 **Purpose:** List submitted/graded attempts for an exam (newest submission first), optionally filtered to those still needing manual grading. Includes basic student identity.
-**Auth:** 🧑‍🏫 role:teacher
-**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher`
+**Auth:** 🧑‍🏫/assistant · `permission:homework`
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:homework`
 
 **Request headers:** Host, Accept, `Authorization: Bearer <token>`.
 
@@ -640,6 +678,19 @@ Auto-grading is driven by the backing exam's `grading_mode`: when it is `auto`, 
 ```
 
 **Errors:** `404 not_found`, `403 forbidden`.
+
+---
+
+#### `GET /v1/teacher/exams/{exam:uuid}/attempts/{attempt}/files/{question}`
+
+**Purpose:** Download the file a student submitted for a `file`-type question (to grade upload homework). Streamed from the private `assignments/` disk; path-traversal guarded (`assignments/` prefix only).
+**Auth:** 🧑‍🏫/assistant · `permission:homework`
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:homework`
+
+**Path params:** `exam` (uuid), `attempt` (int id, must be on `exam`), `question` (int id).
+
+**Response 200** — the file as a binary download.
+**Errors:** `404 not_found` — attempt not on exam, or no file for that question.
 
 ---
 
@@ -693,3 +744,25 @@ Only keys present in the attempt's stored `answers` are applied; unknown questio
 `corrected_file` is `null` when none is attached. The stored file path is never exposed; the student downloads it via `GET /v1/exams/{exam}/attempts/{attempt}/corrected-file`.
 
 **Errors:** `404 not_found` (attempt not on this exam), `422 validation_error` (empty `grades`, negative points, oversize/rejected file), `403 forbidden`.
+
+---
+
+### Teacher · Exam extension requests
+
+Staff review of student exam/quiz time-extension requests (doc 11 R6; the student side is `POST /exams/{exam}/extension-request`). `{examExtension}` binds by id, tenant-scoped (cross-tenant → 404). All `role:teacher`.
+
+#### `GET /v1/teacher/exam-extension-requests`
+List **pending** requests (newest first).
+**Response 200**
+```json
+{ "data": [ { "id": 7, "exam": { "uuid": "…", "title": "…" }, "student": { "uuid": "…", "name": "…", "phone": "…" }, "requested_minutes": 15, "status": "pending", "requested_at": "…+00:00" } ] }
+```
+
+#### `POST /v1/teacher/exam-extension-requests/{examExtension}/grant` · `…/deny`
+Decide a pending request. **Grant** body `{ "minutes": 15 }` (optional — null falls back to the requested amount); the granted minutes are added to the exam's `duration_min` for that student when the attempt timer computes effective duration (capped by `exams.max_time_extensions`). **Deny** takes no body.
+**Response 200**
+```json
+{ "data": { "id": 7, "status": "granted", "granted_minutes": 15 } }
+```
+(`deny` → `"status": "denied"`, `granted_minutes` null.)
+**Errors:** `404` not in tenant; `409` already decided.

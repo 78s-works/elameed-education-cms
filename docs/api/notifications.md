@@ -1,10 +1,12 @@
 # Notifications Module
 
-> The Notifications module owns the platform's per-user, in-app notification feed and the outbound SMS abstraction. Notifications are tenant-scoped rows created server-side on key events (e.g. a completed purchase — FR-M14) via `NotificationService`; each carries a `type`, a free-form JSON `payload`, and a `read_at` marker. The public API surface is small: the current user lists their own in-app items and marks one read.
+> The Notifications module owns the platform's per-user notification feed(s), the **notification engine** (M10), and the outbound SMS abstraction. **Two feeds coexist:** the **legacy simple feed** (`notifications` table, `NotificationService::inApp`, surfaced at `/me/notifications`) and the **engine** (doc 10 — a 9-table type/template/translation/dispatch model with `database` in-app messages surfaced at `/me/inbox`, admin-authored system templates, and per-tenant copy-on-write overrides). Each row carries a `type`, a `payload`, and a `read_at` marker.
+>
+> **Engine business-event wiring (as-built 2026-08-13).** The engine's first live business events are the **support tickets** ones — `support.ticket.created` (→ staff holding the `support` permission) and `support.ticket.replied` (→ the ticket owner), dispatched by [Engagement](engagement.md) via `NotificationEngineService::dispatch`. More business events (purchase, enrollment, …) are still to be wired.
 >
 > **SMS is per-tenant and self-service (WE Business SMS / Connekio).** There is no platform-wide aggregator account — each academy stores **its own** WE credentials (`username`, `password`, `account_id`, `sender`) via `PUT /teacher/sms-settings` and turns SMS on. Until a tenant does that, SMS is simply off for that tenant (OTP falls back to the log driver, notification SMS records a failure) with no effect on any other tenant. Credentials are stored encrypted at rest; the driver activates when the deploy sets `SMS_DRIVER=connekio`. Delivery reports (DLR), batch send, and balance are deferred.
 
-Both endpoints run inside the `tenant` middleware group, so the tenant is resolved from the `Host` header (dev override `X-Tenant: <slug>`) before any query, and the feed is naturally scoped to the current academy via `BelongsToTenant`.
+The legacy-feed and SMS-settings endpoints run inside the `tenant` middleware group, so the tenant is resolved from the `Host` header (dev override `X-Tenant: <slug>`) before any query, and the feed is naturally scoped to the current academy via `BelongsToTenant`. The engine surface (admin catalog + teacher overrides + student inbox) is enumerated in [Notification engine surface](#notification-engine-surface) below.
 
 ## Models
 
@@ -130,6 +132,48 @@ Notes: `payload` is an arbitrary JSON object whose shape depends on `type`; it i
 - `404` — the notification does not exist, belongs to another user, or belongs to another tenant (ownership is asserted with `abort_unless($notification->user_id === $userId, 404)`; cross-tenant rows are already invisible via `BelongsToTenant`).
 - `401 unauthenticated` — missing/invalid bearer token.
 - `403` — not an active member of the resolved tenant.
+
+---
+
+## Notification engine surface
+
+The engine's routes (doc 10). This section **enumerates** the surface — the full
+per-endpoint request/response contract lives in `docs (1)/10_Notification_Engine_Mapping.md`
+and `docs (1)/NotificationEngine.md`. Types bind by **`key`** (dotted `module.entity.event`,
+e.g. `support.ticket.created`); templates are addressed by `{type}/{channel}`.
+
+### Admin · type & template catalog (system scope)
+Served on the **central/admin host** (`central` + `auth:sanctum` + `admin`) — *not* tenant-scoped. Authors the system catalog + audits dispatched events.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` / `POST` | `/admin/notifications/types` | List / create notification types |
+| `GET` / `PUT` / `DELETE` | `/admin/notifications/types/{type:key}` | Show / update / delete a type |
+| `GET` / `POST` | `/admin/notifications/types/{type:key}/templates` | List / create a type's channel templates |
+| `PUT` | `/admin/notifications/types/{type:key}/templates/{channel}/translations` | Upsert a template's per-language copy |
+| `DELETE` | `/admin/notifications/types/{type:key}/templates/{channel}/translations/{language}` | Remove one language |
+| `GET` | `/admin/notifications/events` · `/admin/notifications/events/{event}` | Audit dispatched events |
+
+### Teacher · tenant overrides (copy-on-write)
+`tenant` + `auth:sanctum` + `active` + `role:teacher`. A teacher overrides a `ready` **system** template for their academy; the first edit materialises a copy-on-write tenant template. Teachers can't author types from scratch.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/teacher/notifications` | List overridable types + this tenant's override state |
+| `GET` | `/teacher/notifications/{type:key}` | Show one type's effective (system/override) config |
+| `PUT` | `/teacher/notifications/{type:key}/channels` | Toggle/override a channel for this tenant |
+| `PUT` | `/teacher/notifications/{type:key}/channels/{channel}/translations` | Upsert the tenant's channel copy |
+| `DELETE` | `/teacher/notifications/{type:key}/channels/{channel}` | Reset a channel back to the system default |
+
+### Student · engine inbox (`database` channel)
+`tenant` + `auth:sanctum` + `active`. The engine's in-app messages (`new_notifications`), separate from the legacy `/me/notifications` feed above.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/me/inbox` | List engine in-app messages |
+| `GET` | `/me/inbox/unread-count` | Unread badge count |
+| `POST` | `/me/inbox/read-all` | Mark all read |
+| `POST` | `/me/inbox/{message}/read` | Mark one read |
 
 ---
 

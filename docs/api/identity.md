@@ -35,12 +35,12 @@ Identity is deliberately built around the distinction between a **global user id
 
 ### Auth & OTP
 
-Registration is student self-signup into the current academy: it creates the global user + a **pending** student membership and issues a `register` OTP; the membership activates on OTP verify. Teacher/admin accounts are provisioned by the platform admin (self-signup is P1.5). Login is password-first; if `otp.login_required` is enabled it returns `otp_required` instead of a token and the client finishes via `otp/verify`. Bad credentials and unknown identifiers always return generic messages (no account enumeration).
+Registration is student self-signup into the current academy: it creates the global user + a student membership + profile. The membership's activation depends on the academy's **`registration_verification_mode`** (`teacher_profiles`, default **`auto`**): `auto` → the membership is created **active + phone-verified immediately** (`201`); `otp` → a **pending** membership + a `register` OTP that must be verified to activate (`202`). A phone that already belongs to a user in **another** academy is **reused** (cross-tenant self-join), not rejected. Teacher/admin accounts are provisioned by the platform admin. Login is password-first; if `otp.login_required` is enabled it returns `otp_required` instead of a token and the client finishes via `otp/verify`. Bad credentials and unknown identifiers always return generic messages (no account enumeration).
 
 ---
 
 #### `POST /v1/auth/register`
-**Purpose:** Student self-registration into the current tenant. Creates the user + a pending membership + student profile and sends a registration OTP.
+**Purpose:** Student self-registration into the current tenant. Creates the user + membership + student profile; activates immediately (`auto`) or issues a registration OTP (`otp`) per the academy's `registration_verification_mode`.
 **Auth:** 🔓 Public
 **Middleware:** `tenant`, `throttle:otp`
 
@@ -89,19 +89,20 @@ Registration is student self-signup into the current academy: it creates the glo
 | `guardian_phone` | nullable, string, max 30, regex `^[0-9+]{6,30}$` (non-unique — siblings share) |
 | `study_mode` | nullable, one of `center` \| `online` \| `both` (defaults `online`) — VD R6/R7 |
 | `center` | center **uuid** (not the numeric id); **required when `study_mode` ∈ {center, both}**; must belong to the current tenant; resolved to `student_profiles.center_id` |
+| `id_code` | nullable, string, max 40 — a **Center ID-code** (B21). `prohibits:center,study_mode,academic_year` (sending it alongside any of those → `422`). When present it is the **single source of truth**: the code is validated + consumed under `lockForUpdate` inside the register transaction, then sets `center_id` = the code's center, `study_mode = center` (hard-coded — `both` isn't encodable via a code), and `academic_year` = the code's decoded grade label. See [Centers](centers.md). |
 
-**Response** `202 Accepted`
+**Response** — depends on the academy's `registration_verification_mode`:
+
+`auto` (default) → `201 Created` — membership created **active + phone-verified**:
 ```json
-{
-  "data": {
-    "message": "A verification code has been sent.",
-    "identifier": "+201112223334",
-    "requires_otp": true
-  }
-}
+{ "data": { "message": "Registration completed. Your account is verified.", "user": { "…": "UserResource" } } }
+```
+`otp` → `202 Accepted` — pending membership + a registration OTP to verify:
+```json
+{ "data": { "message": "A verification code has been sent.", "identifier": "+201112223334", "requires_otp": true } }
 ```
 
-**Errors:** `422` validation (`phone` is returned as `An account with these details already exists. Please log in.` when the phone/email already exists globally — P1 keeps phone globally unique); `422` `tenant` when not called from an academy site; `403 forbidden` (`Registration is currently closed for this academy.`) when the teacher has disabled self-registration (`registration_enabled=false`, see `PUT /teacher/access` in the Tenancy module); `429` throttled.
+**Errors:** `422` validation — `email` returns `An account with these details already exists. Please log in.` when the email is owned by a **different** identity; `phone` returns `You already have an account in this academy. Please log in.` when the phone is already a member of **this** academy (a phone in *another* academy is reused, not rejected). `id_code` (all `422`): `Invalid ID code.` (unknown/other-tenant), `This ID code has already been used.`, `This ID code has been disabled.`, or the `prohibits` conflict when `center`/`study_mode`/`academic_year` is sent with it. `422` `tenant` when not called from an academy site; `403 forbidden` (`Registration is currently closed for this academy.`) when self-registration is disabled (`registration_enabled=false`, see `PUT /teacher/access` in Tenancy); `429` throttled.
 
 ---
 
@@ -1504,6 +1505,32 @@ Manage the parents linked to one of the teacher's students (M13). Linking provis
 ```
 
 **Errors:** `404` not a student here; `401`/`403`.
+
+---
+
+#### `POST /v1/teacher/students/{student:uuid}/parents/{parent:uuid}/reset-password`
+**Purpose:** Re-issue a linked guardian's password. Revokes the parent's existing tokens; audit `parent.password_reset`. Supply a password, or omit it to have the server generate a 10-char one (returned **once**).
+**Auth:** 🧑‍🏫 role:teacher (or assistant with `students`)
+**Middleware:** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:students` (`parent` resolved independently of `student` — `withoutScopedBindings`)
+
+**Path params**
+| Param | In | Description |
+|---|---|---|
+| `student` | path | Student **uuid** |
+| `parent` | path | Parent **uuid** (must be linked to the student) |
+
+**Request body**
+| Field | Rules |
+|---|---|
+| `password` | nullable, string, min 8, max 72 — omit to auto-generate |
+
+**Response** `200` (nulls stripped):
+```json
+{ "data": { "uuid": "<parent uuid>", "temporary_password": "aB3xK9mQ2p" } }
+```
+`temporary_password` is present **only when the server generated it**; when the caller supplied `password`, the body is just `{ "data": { "uuid": "…" } }`.
+
+**Errors:** `404` `Parent is not linked to this student.` (or student not in this academy); `422` validation; `401`/`403`.
 
 ---
 

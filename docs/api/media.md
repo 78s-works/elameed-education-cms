@@ -354,7 +354,7 @@ Async example: `{ "lesson_id": 42, "title": "Lesson 1 Video", "filename": "lesso
 }
 ```
 Direct upload returns `"upload": null` and `media.status: "ready"`. Client always reads the id at `data.media.uuid`.
-**Errors:** `422` validation / lesson not in tenant.
+**Errors:** `422` validation / lesson not in tenant · **`403 plan_limit_reached`** — the **direct-upload path** checks `storage_mb` against the plan quota before writing the file (envelope `code: plan_limit_reached`, `details: { key, limit, used }`); the async/no-file path is not size-checked. See [billing.md](billing.md).
 
 ---
 

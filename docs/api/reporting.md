@@ -155,6 +155,56 @@ Notes:
 
 ---
 
+#### `GET /v1/teacher/reports/overview`
+
+**Purpose:** The teacher dashboard's single aggregate call — headline student / course / sales counts, a 12-month time series, top courses, and the most recent sales. All figures tenant-scoped to the caller's academy.
+
+**Auth:** 🧑‍🏫 role:teacher
+**Middleware:** `tenant` group -> `auth:sanctum` -> `active` -> `role:teacher`
+
+**Path / Query params:** None. The window is fixed server-side: the `series` is the current month + the prior 11 (12 buckets); "this month" figures use the current calendar month.
+
+**Request body:** None
+
+**Response 200**
+
+```json
+{
+  "data": {
+    "students_total": 342,
+    "students_active": 315,
+    "students_new_month": 28,
+    "courses_total": 11,
+    "courses_published": 9,
+    "enrollments_total": 1204,
+    "sales_this_month_minor": 480000,
+    "sales_total_minor": 4820000,
+    "orders_paid": 128,
+    "avg_order_minor": 37656,
+    "series": [
+      { "key": "2025-09", "label": "Sep", "revenue_minor": 210000, "enrollments": 60, "students": 22 }
+    ],
+    "top_courses": [
+      { "title": "فيزياء الصف الثالث الثانوي", "enrollments": 210, "revenue_minor": 1050000 }
+    ],
+    "recent_sales": [
+      { "student": "أحمد علي", "course": "فيزياء الصف الثالث الثانوي", "amount_minor": 50000, "at": "2026-08-12T18:03:22+00:00" }
+    ]
+  }
+}
+```
+
+Notes:
+- Monetary values are integer minor units (EGP). `sales_*_minor` and `series[].revenue_minor` derive from `LedgerEntry` **credits** on the `teacher_earnings` account; `orders_paid` counts `paid` orders and `avg_order_minor` is `intdiv(gross, orders_paid)` (0 when there are no paid orders).
+- `series` is always 12 objects (`key` = `Y-m`, `label` = short month). `top_courses` is up to 5 (by enrollment count; missing title → `"—"`); `recent_sales` is up to 8 (last paid orders; `student` / `course` may be `null`).
+- Companion endpoints `GET /teacher/reports/sales` and `.../students` above return the same figures in smaller slices.
+
+**Errors:**
+- `403` — caller lacks the `teacher` role in the current tenant.
+- `401 unauthenticated` — missing/invalid bearer token.
+
+---
+
 ### Teacher · Audit log
 
 #### `GET /v1/teacher/audit-logs`

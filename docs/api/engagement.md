@@ -1,6 +1,6 @@
 # Engagement Module
 
-> The Engagement module owns the learner's post-enrollment relationship with the academy: **course reviews** (a gated 1–5 rating + comment, upserted one-per-student-per-course and surfaced on the landing `testimonials` section), **lesson progress** tracking (watch %/seconds/position, feeding "continue watching" resume and an activity feed), **Q&A comments + a teacher forum** (M09: threaded lesson questions with polymorphic image/voice/file attachments, moderation, and an academy-wide forum aggregate), **favorites** (a student's saved-courses shortlist), and **gamification** (append-only points, threshold-awarded badges, and a leaderboard). Teachers manage their own badge catalog, moderate the forum, and hold a single leaderboard-visibility toggle. Every model is tenant-scoped via `BelongsToTenant`; points and badges are tallied with `withoutGlobalScopes()` inside `PointsService` and re-filtered by `tenant_id` explicitly.
+> The Engagement module owns the learner's post-enrollment relationship with the academy: **course reviews** (a gated 1–5 rating + comment, upserted one-per-student-per-course and surfaced on the landing `testimonials` section), **lesson progress** tracking (watch %/seconds/position, feeding "continue watching" resume and an activity feed), **Q&A comments + a teacher forum** (M09: threaded lesson questions with polymorphic image/voice/file attachments, moderation, and an academy-wide forum aggregate), **favorites** (a student's saved-courses shortlist), **gamification** (append-only points, threshold-awarded badges, and a leaderboard), and **support tickets** (M09/VD Item 11: a student opens a private thread to staff — subject + body + attachments + priority — and staff with the `support` permission list, reply, and move status). Teachers manage their own badge catalog, moderate the forum, and hold a single leaderboard-visibility toggle. Every model is tenant-scoped via `BelongsToTenant`; points and badges are tallied with `withoutGlobalScopes()` inside `PointsService` and re-filtered by `tenant_id` explicitly.
 
 ## Models
 
@@ -11,7 +11,9 @@
 - **`Badge`** — A teacher-defined award. Fields: `name`, `description`, `icon`, `points_threshold` (integer, nullable). A non-null threshold auto-awards the badge when a student's total crosses it.
 - **`StudentBadge`** — Join row recording a badge earned by a student (`user_id`, `badge_id`, `awarded_at`). No timestamps (`CREATED_AT`/`UPDATED_AT` both null); uses `awarded_at` instead.
 - **`Comment`** (M09) — A lesson question/comment (`uuid`, `lesson_id`, `user_id`, `body`, `status`, `is_hidden`, soft-deletes), or a **reply** when `parent_id` is set. Tenant-scoped, UUID route key. `topLevel()` / `visible()` scopes; `replies()`, `parent()`, and a **polymorphic `attachments()`** (`morphMany`). **Naming caveat:** this `Comment::attachments()` (user uploads) is distinct from `Lesson::attachments()` (media materials).
-- **`Attachment`** (M09) — A **polymorphic** user upload — image, voice note, or file (`uuid`, `attachable_type`/`attachable_id` nullable until linked, `kind` (`image`/`audio`/`file`), `storage_key`, `mime`, `size_bytes`, `duration_sec`, `uploaded_by`). Uploaded standalone, then linked to a comment via its `attachment_ids`. Tenant-scoped, UUID route key; `url()` serves from the attachments disk.
+- **`Attachment`** (M09) — A **polymorphic** user upload — image, voice note, or file (`uuid`, `attachable_type`/`attachable_id` nullable until linked, `kind` (`image`/`audio`/`file`), `storage_key`, `mime`, `size_bytes`, `duration_sec`, `uploaded_by`). Uploaded standalone, then linked to a comment/ticket/reply via its `attachment_ids`. Tenant-scoped, UUID route key; `url()` serves from the attachments disk.
+- **`SupportTicket`** (M09, B24) — A student's private thread to staff (`uuid`, `user_id` owner, `subject`, `body`, `priority` (`normal`/`urgent`), `status` (`open`/`in_progress`/`closed`), `assigned_to` (nullable staff owner — **dormant**, not yet set by any endpoint)). Tenant-scoped, UUID route key. `hasMany` `replies`; polymorphic `attachments`.
+- **`TicketReply`** (M09, B25) — One message on a ticket (`uuid`, `ticket_id`, `user_id` author — student **or** staff, `body`). Tenant-scoped, UUID route key; polymorphic `attachments`.
 
 ## Services / Support
 
@@ -25,13 +27,15 @@
 - **Completion threshold**: `watch_percent >= 95` sets `completed_at` and (on first crossing only) awards points.
 - **Points `reason`**: e.g. `lesson.completed` (this module). Exams award elsewhere with `exam_points`.
 - **`CommentStatus`** (M09): `new` · `answered` · `closed` — the lifecycle of a lesson question. A staff reply flips a `new` question to `answered`.
-- The rating/completion values are literal constraints in FormRequests / controllers; `CommentStatus` is the module's one formal PHP enum.
+- **`TicketPriority`** (M09): `normal` · `urgent` (support-ticket priority; default `normal`).
+- **`TicketStatus`** (M09): `open` · `in_progress` · `closed` (support-ticket lifecycle; default `open`; moved by staff).
+- The rating/completion values are literal constraints in FormRequests / controllers; `CommentStatus`, `TicketPriority`, and `TicketStatus` are the module's formal PHP enums.
 
 ---
 
 ## Endpoints
 
-28 endpoints: Reviews (2), Reviews · Teacher (5), Progress (3), Q&A · Comments & Attachments (4), Favorites (3), Gamification · Student (3), Gamification · Teacher (5), Q&A · Teacher Forum (3). All sit under the `tenant` middleware group (Host resolution or `X-Tenant` override). Success envelopes are `{ "data": ... }` (paginated lists add `"meta"`); errors are `{ "error": { code, message, details } }`. Timestamps are ISO-8601 UTC.
+35 endpoints: Reviews (2), Reviews · Teacher (5), Progress (3), Q&A · Comments & Attachments (4), Favorites (3), Gamification · Student (3), Gamification · Teacher (5), Q&A · Teacher Forum (3), Support tickets · Student (3), Support tickets · Staff (4). All sit under the `tenant` middleware group (Host resolution or `X-Tenant` override). Success envelopes are `{ "data": ... }` (paginated lists add `"meta"`); errors are `{ "error": { code, message, details } }`. Timestamps are ISO-8601 UTC.
 
 ### Reviews
 
@@ -837,3 +841,122 @@ The academy-wide forum + moderation (M09). The **"forum" (FR-M09-02) is not a se
 **Response 204** — no content.
 
 **Errors:** `404` — unknown/cross-tenant; `401` / `403`.
+
+---
+
+### Support tickets · Student
+
+A student (any **active** tenant member — no role gate; ownership enforced in-controller) opens a private thread to staff, lists their own, and reads one thread with replies. `{ticket}` binds by **uuid** and is scoped to the caller (`ticket.user_id === caller`, else `404`). Attachments are the module's polymorphic uploads (`POST /attachments` first, then pass the uuids). **Middleware (all three):** `tenant`, `auth:sanctum`, `active`.
+
+#### `GET /v1/support/tickets`
+
+**Purpose:** The caller's own tickets, newest first (20/page), each with `attachments` and a `replies_count`.
+
+**Response 200** — `SupportTicketResource` collection + `meta`.
+
+**Errors:** `401` / `403`.
+
+---
+
+#### `POST /v1/support/tickets`
+
+**Purpose:** Open a ticket (`status` starts `open`). Fires the **`support.ticket.created`** notification to staff (teacher + assistants holding the `support` permission) via the M10 engine.
+
+**Request body** (`StoreSupportTicketRequest`)
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `subject` | string | yes | max 200 |
+| `body` | string | yes | max 5000 |
+| `priority` | string | no | `normal` \| `urgent` (default `normal`) |
+| `attachment_ids` | array | no | max 10; uuids of the caller's **own still-unlinked** uploads |
+| `attachment_ids.*` | string | — | attachment uuid |
+
+**Response 201** — `SupportTicketResource` (with `attachments`).
+
+**Errors:** `422` — validation; `401` / `403`.
+
+---
+
+#### `GET /v1/support/tickets/{ticket}`
+
+**Purpose:** Read one of the caller's own tickets with its `attachments` and full `replies` thread (each reply with author + attachments, ordered oldest-first).
+
+**Path params:** `ticket` — a ticket **uuid** (caller-owned, else `404`).
+
+**Response 200** — `SupportTicketResource` including nested `replies` (`TicketReplyResource[]`).
+
+**Errors:** `404` — unknown / not the caller's; `401` / `403`.
+
+---
+
+### Support tickets · Staff
+
+Teacher, or an assistant granted the **`support`** permission, works the academy-wide queue. **No owner check** — staff see every ticket in the tenant (`BelongsToTenant` scope only). Not year-scoped. `{ticket}` binds by **uuid**. **Middleware (all four):** `tenant`, `auth:sanctum`, `active`, `role:teacher,assistant`, `permission:support`. Student side: `/support/tickets` above.
+
+#### `GET /v1/teacher/support/tickets`
+
+**Purpose:** Every ticket in the academy, newest first (20/page), each with its `user`, `attachments`, and `replies_count`.
+
+**Query params**
+| Param | Type | Required | Notes |
+|---|---|---|---|
+| `status` | string | no | filter `open` \| `in_progress` \| `closed` |
+| `priority` | string | no | filter `normal` \| `urgent` |
+
+**Response 200** — `SupportTicketResource` collection + `meta`.
+
+**Errors:** `422` — invalid filter; `401` / `403`.
+
+---
+
+#### `GET /v1/teacher/support/tickets/{ticket}`
+
+**Purpose:** Read a full ticket thread (attachments + ordered `replies`).
+
+**Path params:** `ticket` — a ticket **uuid** (tenant-scoped).
+
+**Response 200** — `SupportTicketResource` (with `replies`).
+
+**Errors:** `404` — unknown/cross-tenant; `401` / `403`.
+
+---
+
+#### `POST /v1/teacher/support/tickets/{ticket}/replies`
+
+**Purpose:** Staff reply on a ticket. Fires the **`support.ticket.replied`** notification to the ticket owner (`user_id`) via the M10 engine.
+
+**Request body** (`StoreTicketReplyRequest`)
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `body` | string | yes | max 5000 |
+| `attachment_ids` | array | no | max 10; caller's own unlinked uploads |
+| `attachment_ids.*` | string | — | attachment uuid |
+
+**Response 201** — a **`TicketReplyResource`** (the new reply, not the whole ticket).
+
+**Errors:** `404` — unknown/cross-tenant; `422` — validation; `401` / `403`.
+
+---
+
+#### `PATCH /v1/teacher/support/tickets/{ticket}/status`
+
+**Purpose:** Move a ticket's status. Audit-logged (`support_ticket.status_changed`); no notification.
+
+**Request body** (`ChangeTicketStatusRequest`)
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `status` | string | yes | `open` \| `in_progress` \| `closed` |
+
+**Response 200** — the refreshed `SupportTicketResource`.
+
+**Errors:** `404` — unknown/cross-tenant; `422` — validation; `401` / `403`.
+
+---
+
+### Support-ticket resources
+
+**`SupportTicketResource`:** `uuid`, `subject`, `body`, `priority`, `status`, `attachments` (whenLoaded), `replies` (whenLoaded — `TicketReplyResource[]`), `replies_count` (whenCounted), `created_at`, `updated_at`. The owner/user is **not** surfaced by the resource, even on the staff side.
+
+**`TicketReplyResource`:** `uuid`, `body`, `author` `{ uuid, name }`, `attachments` (whenLoaded), `created_at`.
+
+**`AttachmentResource`** (nested in both): `uuid`, `kind`, `url`, `mime`, `size_bytes`, `duration_sec`, `created_at`.

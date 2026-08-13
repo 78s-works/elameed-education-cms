@@ -29,9 +29,10 @@ quote  →  order  →  pay  ──(wallet)──▶ fulfil immediately
 
 **Fulfilment** (`FulfillOrderService`) is idempotent and shared by both the wallet
 path and the (possibly replayed) webhook: it posts a balanced ledger operation
-(`order:{id}:fulfill`), grants access (course enrollments for `course` items; a
-per-item enrollment for every course/unit inside a purchased `bundle` — see
-[Packages](#packages-bundles) below), flips the order to `paid`, issues a
+(`order:{id}:fulfill`), grants access (a course enrollment for a `course` item, a
+lesson enrollment for a `lesson` item, and a per-lesson fan-out for every lesson
+inside a purchased `package` — see [Packages & lessons](#packages--lessons) below),
+flips the order to `paid`, issues a
 gap-free invoice, and renders that invoice to a PDF on a private disk (best-effort,
 outside the money transaction — see [Invoices](#invoices)). Content revenue (courses **and** packages,
 **net of any coupon discount**) is split into `teacher_earnings` and
@@ -39,22 +40,23 @@ outside the money transaction — see [Invoices](#invoices)). Content revenue (c
 0 by default) — so the teacher absorbs the coupon reduction. When the order carries
 a `coupon_id`, its `used_count` is incremented once inside this transaction.
 
-### Packages (bundles)
+### Packages & lessons
 
-A **package** (`Bundle`, authored under `/teacher/bundles` — see
-[Catalog › Packages](catalog.md)) groups whole courses, units, and/or individual
-lessons into one sellable product. Buying a package (`item.type = bundle`) grants,
-in a single transaction, an enrollment for **each** item it contains:
+Since the VD change set (B15/LP-D2), the sellable content units are the **recursive
+content package** (`Package`, authored under `/teacher/content-packages` — see
+[Catalog](catalog.md)) and the **standalone lesson**. Units and the old `Bundle`
+were retired.
 
-- a **course** item → a whole-course enrollment (unlocks its units, lessons, and
-  exams — exam access is course-enrollment-based);
-- a **unit** item → a unit-level enrollment (unlocks that chapter's lessons);
-- a **lesson** item → a lesson-level enrollment (unlocks just that one lesson).
+- Buying a **`lesson`** (`item.type = lesson`) grants a single lesson enrollment.
+- Buying a **`package`** (`item.type = package`) **fans out** into one lesson
+  enrollment for **each lesson the package contains**, recursing through
+  sub-packages, in a single transaction. Every grant records the originating
+  **`package_id`** (buy provenance).
+- Buying a **`course`** (`item.type = course`) still grants a whole-course
+  enrollment (unlocks its lessons + exams — exam access is course-enrollment-based).
 
-Exams stay tied to a full-course enrollment, so unit/lesson grants don't open them.
-Every grant records the originating `bundle_id` and uses the package's own
-`access_days` as its access window (null = lifetime). Granting is idempotent, so a
-replayed webhook or repeat purchase never stacks duplicate enrollments.
+Granting is **idempotent** (unique on `(user, lesson/course)`), so a replayed webhook
+or repeat purchase never stacks duplicate enrollments.
 
 > **Paymob is a P1 stub.** The merchant account is not live yet, so
 > `PaymobGateway::createCharge()` returns a placeholder hosted-payment URL
@@ -67,10 +69,10 @@ replayed webhook or repeat purchase never stacks duplicate enrollments.
 | Model | Purpose |
 |---|---|
 | `Order` | A checkout order (`uuid`, `subtotal_minor`, `discount_minor`, `total_minor`, `currency`, `status`, `coupon_id`). Tenant-scoped, UUID route key. Has many `items`/`payments`, one `invoice`, one `coupon`. |
-| `OrderItem` | A priced cart line (`item_type`, `item_id`, `price_minor`, `title`). Types: `course`, `bundle` (package), `wallet_topup`, `book` (`book` unused in P1). |
+| `OrderItem` | A priced cart line (`item_type`, `item_id`, `price_minor`, `title`). Types: `course`, `package` (recursive content package), `lesson`, `wallet_topup` (`bundle` retired). |
 | `Coupon` | A discount code (M21): `uuid`, `code` (unique per tenant), `type` (`percent`/`fixed`), `value`, `course_id` (nullable = cart-wide), `min_subtotal_minor`, `usage_limit`, `used_count`, `starts_at`/`expires_at`, `is_active`. Tenant-scoped, soft-deletes, UUID route key. `isRedeemable()` + `discountFor()`. |
 | `Payment` | A payment attempt against an order (`gateway`, `gateway_txn_id`, `amount_minor`, `status`, `reference_number`, `raw_payload`, `processed_at`). |
-| `Enrollment` | Grants a student access to a **course** (`course_id`), a **unit** (`unit_id`), or a single **lesson** (`lesson_id`, the last two from a package) — single source of truth for access (`bundle_id`, `source`, `starts_at`, `expires_at`, `status`). |
+| `Enrollment` | Grants a student access to a **course** (`course_id`) or a single **lesson** (`lesson_id`) — the single source of truth for access (`package_id` = originating package when the grant came from a package buy, `source`, `starts_at`, `expires_at`, `status`). `unit_id` is a dormant column (units retired). |
 | `Invoice` | Internal invoice with a gap-free sequential `number` per tenant (`uuid` route key, `pdf_url` = private-disk path to the rendered PDF, `eta_receipt_uuid`, `issued_at`). |
 
 Supporting services: `CheckoutService` (pricing + order creation),
@@ -126,7 +128,8 @@ return line items and total. Nothing is persisted.
 {
   "items": [
     { "type": "course", "course": "9f1c…-course-uuid" },
-    { "type": "bundle", "bundle": "7a2d…-bundle-uuid" },
+    { "type": "package", "package": "7a2d…-package-uuid" },
+    { "type": "lesson", "lesson": 101 },
     { "type": "wallet_topup", "amount_minor": 5000 }
   ],
   "coupon": "SUMMER25"
@@ -136,11 +139,12 @@ return line items and total. Nothing is persisted.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `items` | array | Yes | 1–50 items |
-| `items[].type` | string | Yes | `course`, `bundle`, or `wallet_topup` |
+| `items[].type` | string | Yes | `course`, `package`, `lesson`, or `wallet_topup` |
 | `items[].course` | string | If `type=course` | Course UUID |
-| `items[].bundle` | string | If `type=bundle` | Package (bundle) UUID; must be `purchase_enabled` |
+| `items[].package` | string | If `type=package` | Content-package UUID; must be `is_purchasable` |
+| `items[].lesson` | integer | If `type=lesson` | Lesson id; must be `is_purchasable` |
 | `items[].amount_minor` | integer | If `type=wallet_topup` | Min 1; must also meet `min_topup_minor` (default 1000) |
-| `coupon` | string | No | Optional promo code (M21), max 64. Validated + priced server-side; only discounts **content** lines (courses/bundles) — never wallet top-ups. |
+| `coupon` | string | No | Optional promo code (M21), max 64. Validated + priced server-side; only discounts **content** lines (courses/lessons/packages) — never wallet top-ups. |
 
 **Response** — `200 OK`
 ```json
@@ -153,7 +157,8 @@ return line items and total. Nothing is persisted.
     "coupon": "SUMMER25",
     "lines": [
       { "type": "course", "title": "Grade 10 Physics", "price_minor": 15000 },
-      { "type": "bundle", "title": "Term 1 Package", "price_minor": 20000 },
+      { "type": "package", "title": "Term 1 Package", "price_minor": 20000 },
+      { "type": "lesson", "title": "Displacement & Velocity", "price_minor": 5000 },
       { "type": "wallet_topup", "title": "Wallet top-up", "price_minor": 5000 }
     ]
   }
