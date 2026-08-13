@@ -30,6 +30,7 @@ class ContentPackageController
     public function index(Request $request): AnonymousResourceCollection
     {
         $packages = Package::query()
+            ->with('packageType')
             ->withCount('items')
             ->when(
                 $request->filled('access_mode'),
@@ -51,13 +52,13 @@ class ContentPackageController
         // tenant_id + academic_year_id are auto-filled by the model traits.
         $package = Package::create($request->validated());
 
-        return (new PackageResource($package->fresh()->load('items')))
+        return (new PackageResource($package->fresh()->load('items', 'packageType')))
             ->response()->setStatusCode(201);
     }
 
     public function show(Package $package): PackageResource
     {
-        return new PackageResource($package->load('items'));
+        return new PackageResource($package->load('items', 'packageType'));
     }
 
     public function update(PackageRequest $request, Package $package): PackageResource
@@ -71,7 +72,7 @@ class ContentPackageController
 
         $package->update($data);
 
-        return new PackageResource($package->load('items'));
+        return new PackageResource($package->load('items', 'packageType'));
     }
 
     public function destroy(Package $package): Response

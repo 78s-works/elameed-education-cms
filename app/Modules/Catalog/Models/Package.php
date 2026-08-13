@@ -7,6 +7,7 @@ use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
@@ -38,6 +39,7 @@ class Package extends Model
         'price_minor',
         'currency',
         'is_purchasable',
+        'package_type_id',
     ];
 
     protected $casts = [
@@ -65,6 +67,12 @@ class Package extends Model
                 ->where('item_id', $package->id)
                 ->delete();
         });
+    }
+
+    /** The teacher-defined type/category (B27), optional; nulls if the type is deleted. */
+    public function packageType(): BelongsTo
+    {
+        return $this->belongsTo(PackageType::class);
     }
 
     /** Ordered contents — lessons and sub-packages. */

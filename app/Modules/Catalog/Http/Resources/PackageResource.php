@@ -26,6 +26,11 @@ class PackageResource extends JsonResource
             'price_minor' => $this->price_minor,
             'currency' => $this->currency,
             'is_purchasable' => (bool) $this->is_purchasable,
+            'type' => $this->when($this->package_type_id !== null, fn () => [
+                'id' => $this->packageType?->id,
+                'uuid' => $this->packageType?->uuid,
+                'name' => $this->packageType?->name,
+            ]),
             'academic_year_id' => $this->whenLoaded('academicYear', fn () => $this->academicYear?->uuid),
             'items_count' => $this->whenCounted('items'),
             'items' => PackageItemResource::collection($this->whenLoaded('items')),

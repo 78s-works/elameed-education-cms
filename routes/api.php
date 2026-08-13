@@ -24,6 +24,7 @@ use App\Modules\Catalog\Http\Controllers\Teacher\LessonAttachmentController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonAvailabilityController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonSectionController;
+use App\Modules\Catalog\Http\Controllers\Teacher\PackageTypeController;
 use App\Modules\Centers\Http\Controllers\RedeemCodeController;
 use App\Modules\Centers\Http\Controllers\StudentCenterExamGradeController;
 use App\Modules\Centers\Http\Controllers\Teacher\ActivationCodeController;
@@ -444,6 +445,16 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
                 Route::post('/teacher/content-packages/{package}/items', [ContentPackageController::class, 'storeItem']);
                 Route::put('/teacher/content-packages/{package}/items/reorder', [ContentPackageController::class, 'reorderItems']);
                 Route::delete('/teacher/content-packages/{package}/items/{item}', [ContentPackageController::class, 'destroyItem']);
+
+                // Package types (B27) — teacher-managed content-package categories,
+                // scoped to the active year. Bind by uuid within that year (a type
+                // from another year/tenant 404s). Packages link one via
+                // package_type_id on create/update.
+                Route::get('/teacher/package-types', [PackageTypeController::class, 'index']);
+                Route::post('/teacher/package-types', [PackageTypeController::class, 'store']);
+                Route::get('/teacher/package-types/{packageType:uuid}', [PackageTypeController::class, 'show']);
+                Route::put('/teacher/package-types/{packageType:uuid}', [PackageTypeController::class, 'update']);
+                Route::delete('/teacher/package-types/{packageType:uuid}', [PackageTypeController::class, 'destroy']);
             });
 
             Route::get('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'index']);
