@@ -10,7 +10,7 @@
 
 - **`Tenant`** — A teacher academy; the **global** tenant-registry row (NOT tenant-scoped, no `BelongsToTenant`/RLS). Has `uuid`, `slug`, `name`, `status` (enum), soft-deletes, and relations to `domains`, `teacherProfile`, and `owner`.
 - **`TenantDomain`** — Host → tenant mapping row. **Global** (read during resolution, before any tenant scope exists). Holds a public `uuid` (now `HasUuids`, route key `uuid`), `host`, `type` (subdomain|custom), `is_primary`, and Cloudflare-for-SaaS SSL fields (`cf_custom_hostname_id`, `ssl_status`, `verified_at`). Because it is global, the teacher domain API resolves `{domain}` **scoped-by-tenant in the controller**, not via implicit route-model binding.
-- **`TeacherProfile`** — Per-tenant branding + landing configuration; one row per tenant and the **first** tenant-scoped model (`BelongsToTenant` filters every query and auto-fills `tenant_id`). Stores `logo_url`, `favicon_url` (browser-tab icon), `cover_url`, `primary_color`, `secondary_color`, `bio`, `contact` (json), `socials` (json), `layout`, `landing_sections` (json, per-locale content), `locales` (json list of enabled languages), `primary_locale` (string), `hide_ranking`, the access switches `login_enabled` / `registration_enabled` (both default `true`; see `GET/PUT /teacher/access`), and `custom_landing_enabled` (default `false`; the landing-mode switch — see `GET/PUT /teacher/custom-landing`).
+- **`TeacherProfile`** — Per-tenant branding + landing configuration; one row per tenant and the **first** tenant-scoped model (`BelongsToTenant` filters every query and auto-fills `tenant_id`). Stores `logo_url`, `favicon_url` (browser-tab icon), `cover_url`, `primary_color`, `secondary_color`, `bio`, `contact` (json), `socials` (json), `layout`, `landing_sections` (json, per-locale content), `locales` (json list of enabled languages), `primary_locale` (string), `hide_ranking`, the access switches `login_enabled` / `registration_enabled` (both default `true`; see `GET/PUT /teacher/access`), `registration_verification_mode` (`auto` \| `otp`, default `auto`; self-registration verification switch), and `custom_landing_enabled` (default `false`; the landing-mode switch — see `GET/PUT /teacher/custom-landing`).
 - **`TeacherMeta`** — A single key/value metadata entry the teacher manages from the panel (SEO tags, custom head data, …); **many rows per tenant** in the `teacher_meta` table, tenant-scoped by `BelongsToTenant`. Columns: `group` (namespace, default `general`), `key`, `value` (nullable text), `sort_order` (default `0`). Unique per `(tenant_id, group, key)` — no duplicate key within a group. Powers the `/teacher/meta` CRUD endpoints; unrelated to the `teacher_profiles` row.
 
 ## Enums
@@ -118,7 +118,8 @@ The teacher may add, remove, reorder, and **duplicate** sections — restricted 
     },
     "auth": {
       "login_enabled": true,
-      "registration_enabled": true
+      "registration_enabled": true,
+      "registration_verification_mode": "auto"
     },
     "landing": {
       "custom_enabled": false
@@ -128,7 +129,7 @@ The teacher may add, remove, reorder, and **duplicate** sections — restricted 
 }
 ```
 
-Notes: `branding` fields are `null` until the teacher sets them; `socials` is an empty object `{}` when unset. `branding.favicon_url` is the academy's browser-tab icon — the SPA sets it as `<link rel="icon">` on boot (falling back to the platform default when `null`). `status` is one of `active`, `suspended`, `under_review`, `expired`. `features` is currently always `[]` (per-tenant flags TODO). `locale.default` is the tenant's `primary_locale` and `locale.supported` is its **enabled** languages (primary first); a tenant that has enabled none falls back to `[<default_locale>]` (e.g. `["ar"]`), not the full platform set. `auth` mirrors the teacher's per-academy access switches (`PUT /teacher/access`): the SPA hides the sign-in / sign-up forms when a flag is `false`, and the API enforces the same at `POST /auth/login` and `POST /auth/register`. Both default to `true`. `landing.custom_enabled` is the landing-mode switch (`PUT /teacher/custom-landing`, default `false`): when `true` the SPA renders **its own bundled `custom/<slug>/` page** (the folder keyed by this tenant's `data.slug`) instead of fetching `GET /tenant/landing`; when `false` it loads the CMS-built landing sections as usual.
+Notes: `branding` fields are `null` until the teacher sets them; `socials` is an empty object `{}` when unset. `branding.favicon_url` is the academy's browser-tab icon — the SPA sets it as `<link rel="icon">` on boot (falling back to the platform default when `null`). `status` is one of `active`, `suspended`, `under_review`, `expired`. `features` is currently always `[]` (per-tenant flags TODO). `locale.default` is the tenant's `primary_locale` and `locale.supported` is its **enabled** languages (primary first); a tenant that has enabled none falls back to `[<default_locale>]` (e.g. `["ar"]`), not the full platform set. `auth` mirrors the teacher's per-academy access switches (`PUT /teacher/access`): the SPA hides the sign-in / sign-up forms when a flag is `false`, and the API enforces the same at `POST /auth/login` and `POST /auth/register`. `login_enabled`/`registration_enabled` default to `true`; `registration_verification_mode` (`auto` \| `otp`, default `auto`) tells the SPA whether self-registration completes immediately or needs an OTP step. `landing.custom_enabled` is the landing-mode switch (`PUT /teacher/custom-landing`, default `false`): when `true` the SPA renders **its own bundled `custom/<slug>/` page** (the folder keyed by this tenant's `data.slug`) instead of fetching `GET /tenant/landing`; when `false` it loads the CMS-built landing sections as usual.
 
 **Caching:** the response carries an `ETag` (derived from the tenant's identity/status + branding version) and `Cache-Control: public, max-age=<context_cache_ttl>` (default 60s). A conditional request whose `If-None-Match` equals the current `ETag` gets a bodyless **`304 Not Modified`**. `Vary: X-Tenant` guards a shared cache against the dev `X-Tenant` override.
 
@@ -388,10 +389,12 @@ Notes: `meta` is an object keyed by the entry's `group` (`seo`, `og`, `general`,
     "socials": {
       "facebook": "https://facebook.com/mrkhaled",
       "youtube": "https://youtube.com/@mrkhaled"
-    }
+    },
+    "registration_verification_mode": "auto"
   }
 }
 ```
+`registration_verification_mode` (`auto` \| `otp`, default `auto`) is the self-registration verification switch — also exposed/editable via `/teacher/access` and mirrored in `GET /tenant/context` → `data.auth`.
 
 Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fields are `null` until set. The response carries an **`ETag`** (the profile's version) — capture it and echo it as `If-Match` on `PUT` to guard against overwriting a concurrent edit.
 
@@ -460,6 +463,7 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 | `contact.address` | string | no | nullable, max 500 |
 | `socials` | object | no | nullable object; values are URLs |
 | `socials.*` | string | no | nullable, valid URL, max 2048 |
+| `registration_verification_mode` | string | no | `sometimes, in:auto,otp` — self-registration verification switch (also settable via `PUT /teacher/access`) |
 
 **Optimistic concurrency (optional):** send `If-Match: <etag>` (the `ETag` from a prior GET/PUT). If the row changed since, the write is rejected with **`412 precondition_failed`** so you can reload and retry instead of clobbering the other edit. Omit the header to skip the check (backward compatible). The response echoes the new `ETag`.
 
@@ -482,8 +486,10 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 **Response 200**
 
 ```json
-{ "data": { "login_enabled": true, "registration_enabled": true } }
+{ "data": { "login_enabled": true, "registration_enabled": true, "registration_verification_mode": "auto" } }
 ```
+
+`registration_verification_mode` (`auto` \| `otp`, default `auto`) decides whether a new student self-registration is **auto-verified/active** (`auto`) or must verify an OTP before the membership activates (`otp`) — enforced at `POST /auth/register` (see [Identity](identity.md)). Editable from here **and** from `PUT /teacher/profile`.
 
 ---
 
@@ -500,6 +506,7 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 |---|---|---|---|
 | `login_enabled` | boolean | no | `false` blocks sign-in for **everyone except the teacher** (assistants, students, parents included). Only the teacher can still sign in — to reach their panel and re-open access. |
 | `registration_enabled` | boolean | no | `false` rejects new student self-registration with `403`. |
+| `registration_verification_mode` | string | no | `sometimes, in:auto,otp` (partial update). `auto` = new students auto-verified/active; `otp` = must verify an OTP before the membership activates. |
 
 **Response 200:** Same shape as `GET /teacher/access`.
 
