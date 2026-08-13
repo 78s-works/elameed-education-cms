@@ -35,6 +35,9 @@ class Package extends Model
 
     protected $fillable = [
         'name',
+        'description',
+        'cover_url',
+        'promo_video_url',
         'access_mode',
         'price_minor',
         'currency',

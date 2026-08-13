@@ -144,6 +144,12 @@ class StudentLibraryController
 
         $packages = Package::query()
             ->whereIn('id', $packageIds)
+            // B27 package-type filter (by the type's public uuid).
+            ->when($request->input('package_type'), fn ($q, $uuid) => $q->whereHas(
+                'packageType',
+                fn ($t) => $t->where('uuid', $uuid),
+            ))
+            ->with('packageType')
             ->withCount('items')
             ->orderBy('name')
             ->orderBy('id')

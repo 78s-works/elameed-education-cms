@@ -4,6 +4,7 @@ namespace App\Modules\Catalog\Http\Requests;
 
 use App\Modules\Catalog\Models\PackageType;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 /**
  * Package-type authoring (B27). The tenant + academic year come from context
@@ -39,6 +40,11 @@ class PackageTypeRequest extends FormRequest
                     }
                 },
             ],
+            // Delivery channel (B1): center | online | hybrid. Required on create.
+            'channel' => [$required, Rule::in(PackageType::CHANNELS)],
+            // Buy-alone (B1): its packages aren't bought directly; only the shown
+            // lessons are purchasable. Defaults to false when omitted.
+            'buy_alone' => ['sometimes', 'boolean'],
             'sort_order' => ['nullable', 'integer', 'min:0'],
             'description' => ['nullable', 'string', 'max:2000'],
         ];

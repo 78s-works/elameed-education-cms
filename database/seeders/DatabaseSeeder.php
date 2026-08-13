@@ -43,6 +43,7 @@ use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Invoice;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Commerce\Models\OrderItem;
+use App\Modules\Catalog\Models\PackageType;
 use App\Modules\Catalog\Services\PackageItemService;
 use App\Modules\Commerce\Models\Payment;
 use App\Modules\Engagement\Models\Badge;
@@ -127,7 +128,7 @@ class DatabaseSeeder extends Seeder
         'reviews', 'lesson_progress', 'playback_sessions', 'exam_attempts',
         // VD content (§7/§8): parts, recursive packages + pass-overrides. Listed
         // before their parents (lessons/exams/academic_years) for FK-safe DELETE.
-        'part_pass_overrides', 'package_items', 'packages', 'lesson_sections',
+        'part_pass_overrides', 'package_items', 'packages', 'package_types', 'lesson_sections',
         'questions', 'exams', 'attendance_records', 'activation_codes', 'centers',
         'ledger_entries', 'wallets', 'invoices', 'payments', 'order_items', 'orders',
         'enrollments', 'media_renditions',
@@ -1408,16 +1409,16 @@ class DatabaseSeeder extends Seeder
         $freeCourse = $this->firstFreeCourse($courses);
         $centerCourse = $this->firstCenterCourse($courses);
 
-        // Everyone (active students) is enrolled in the free course.
+        // Everyone (active students) is enrolled in the free course's lessons.
         foreach ($students as $s) {
-            $this->createEnrollment($tenant, $s, 'manual', 'active', $freeCourse, null, null, null, now()->subMonths(1), null);
+            $this->grantCourseLessons($tenant, $s, 'manual', 'active', $freeCourse, now()->subMonths(1), null);
         }
 
         // --- Student 0: card purchase of course A, then wallet top-up + wallet buy of course B
         $orderA = $this->createOrder($tenant, $students[0], 'paid', [
             ['item_type' => 'course', 'item_id' => $courseA->id, 'price_minor' => $courseA->price_minor, 'title' => $courseA->title],
         ], 'paymob', 'paid', now()->subDays(20), 1);
-        $this->createEnrollment($tenant, $students[0], 'purchase', 'active', $courseA, null, null, null, now()->subDays(20), $courseA->access_days ? now()->subDays(20)->addDays($courseA->access_days) : null);
+        $this->grantCourseLessons($tenant, $students[0], 'purchase', 'active', $courseA, now()->subDays(20), $courseA->access_days ? now()->subDays(20)->addDays($courseA->access_days) : null);
         $this->postSale($tenant, $orderA, $courseA->price_minor, null);
 
         // Wallet top-up (Fawry) → credits student wallet via ledger.
@@ -1434,7 +1435,7 @@ class DatabaseSeeder extends Seeder
         $orderB = $this->createOrder($tenant, $students[0], 'paid', [
             ['item_type' => 'course', 'item_id' => $courseB->id, 'price_minor' => $courseB->price_minor, 'title' => $courseB->title],
         ], 'wallet', 'paid', now()->subDays(14), null);
-        $this->createEnrollment($tenant, $students[0], 'wallet', 'active', $courseB, null, null, null, now()->subDays(14), $courseB->access_days ? now()->subDays(14)->addDays($courseB->access_days) : null);
+        $this->grantCourseLessons($tenant, $students[0], 'wallet', 'active', $courseB, now()->subDays(14), $courseB->access_days ? now()->subDays(14)->addDays($courseB->access_days) : null);
         $this->post($tenant->id, 'order:'.$orderB->id, $this->saleLegs($walletA->id, $courseB->price_minor), 'order', $orderB->id, now()->subDays(14));
 
         // A refunded duplicate order for student 0 (populates 'refunded').
@@ -1446,18 +1447,18 @@ class DatabaseSeeder extends Seeder
         $orderB1 = $this->createOrder($tenant, $students[1], 'paid', [
             ['item_type' => 'course', 'item_id' => $courseB->id, 'price_minor' => $courseB->price_minor, 'title' => $courseB->title],
         ], 'paymob', 'paid', now()->subDays(12), null);
-        $this->createEnrollment($tenant, $students[1], 'purchase', 'active', $courseB, null, null, null, now()->subDays(12), $courseB->access_days ? now()->subDays(12)->addDays($courseB->access_days) : null);
+        $this->grantCourseLessons($tenant, $students[1], 'purchase', 'active', $courseB, now()->subDays(12), $courseB->access_days ? now()->subDays(12)->addDays($courseB->access_days) : null);
         $this->postSale($tenant, $orderB1, $courseB->price_minor, null);
 
         // --- Student 2: code redemption (centre course) + centre enrollment
         if ($centerCourse !== null) {
-            $this->createEnrollment($tenant, $students[2], 'code', 'active', $centerCourse, null, null, null, now()->subDays(7), $centerCourse->access_days ? now()->subDays(7)->addDays($centerCourse->access_days) : null);
-            $this->createEnrollment($tenant, $students[2], 'center', 'active', $centerCourse, null, null, null, now()->subDays(7), now()->addDays(90));
+            $this->grantCourseLessons($tenant, $students[2], 'code', 'active', $centerCourse, now()->subDays(7), $centerCourse->access_days ? now()->subDays(7)->addDays($centerCourse->access_days) : null);
+            $this->grantCourseLessons($tenant, $students[2], 'center', 'active', $centerCourse, now()->subDays(7), now()->addDays(90));
         }
 
         // --- Student 3: manual grant of course A + an EXPIRED enrollment on course B
-        $this->createEnrollment($tenant, $students[3], 'manual', 'active', $courseA, null, null, null, now()->subDays(30), now()->addDays(60));
-        $this->createEnrollment($tenant, $students[3], 'purchase', 'expired', $courseB, null, null, null, now()->subDays(400), now()->subDays(35));
+        $this->grantCourseLessons($tenant, $students[3], 'manual', 'active', $courseA, now()->subDays(30), now()->addDays(60));
+        $this->grantCourseLessons($tenant, $students[3], 'purchase', 'expired', $courseB, now()->subDays(400), now()->subDays(35));
 
         // --- Student 4: a pending (abandoned) order + a failed order + a cancelled enrollment
         $this->createOrder($tenant, $students[4], 'pending', [
@@ -1466,7 +1467,7 @@ class DatabaseSeeder extends Seeder
         $this->createOrder($tenant, $students[4], 'failed', [
             ['item_type' => 'course', 'item_id' => $courseB->id, 'price_minor' => $courseB->price_minor, 'title' => $courseB->title],
         ], 'fawry', 'failed', now()->subDays(1), null);
-        $this->createEnrollment($tenant, $students[4], 'purchase', 'cancelled', $courseA, null, null, null, now()->subDays(40), null);
+        $this->grantCourseLessons($tenant, $students[4], 'purchase', 'cancelled', $courseA, now()->subDays(40), null);
     }
 
     /**
@@ -1585,6 +1586,27 @@ class DatabaseSeeder extends Seeder
         ]);
     }
 
+    /**
+     * Grant access to every lesson of a course as PER-LESSON enrollments (VD:
+     * courses retired as the student's unit — access is lesson-scoped). One row
+     * per lesson so `/me/lessons` (and the lesson-native player) see the content
+     * without a course grant. `course_id` is deliberately left null on the row.
+     */
+    private function grantCourseLessons(Tenant $tenant, User $user, string $source, string $status, Course $course, ?Carbon $startsAt, ?Carbon $expiresAt): void
+    {
+        $lessonIds = Lesson::query()->where('course_id', $course->id)->pluck('id');
+        foreach ($lessonIds as $lessonId) {
+            Enrollment::create([
+                'user_id' => $user->id,
+                'lesson_id' => $lessonId,
+                'source' => $source,
+                'starts_at' => $startsAt,
+                'expires_at' => $expiresAt,
+                'status' => $status,
+            ]);
+        }
+    }
+
     // =====================================================================
     // Engagement: reviews, favorites, progress, points, badges, playback
     // =====================================================================
@@ -1651,8 +1673,9 @@ class DatabaseSeeder extends Seeder
         $lessons = $lessonsByCourse[$courseAIdx];
         $active = array_slice($students, 0, 3);
         foreach ($active as $si => $s) {
-            $enrollment = Enrollment::where('user_id', $s->id)->where('course_id', $courseA->id)->first();
             foreach ($lessons as $li => $lesson) {
+                // Access is per-lesson now — link progress to the lesson's own grant.
+                $enrollment = Enrollment::where('user_id', $s->id)->where('lesson_id', $lesson->id)->first();
                 $completed = $li < (3 - $si); // earlier students completed more
                 LessonProgress::create([
                     'enrollment_id' => $enrollment?->id,
@@ -2082,9 +2105,18 @@ class DatabaseSeeder extends Seeder
         $ctx = app(AcademicYearContext::class);
         $ctx->set($year->id);
 
+        // Package types (B27) — the taxonomy the student filter uses.
+        $monthlyType = PackageType::create([
+            'name' => 'اشتراك شهري', 'channel' => 'online', 'buy_alone' => false, 'sort_order' => 0,
+        ]);
+        $termType = PackageType::create([
+            'name' => 'باقة الترم', 'channel' => 'hybrid', 'buy_alone' => false, 'sort_order' => 1,
+        ]);
+
         $monthly = Package::create([
             'name' => 'باقة الشهر الأول', 'access_mode' => 'both',
             'price_minor' => 20000, 'currency' => 'EGP', 'is_purchasable' => true,
+            'package_type_id' => $monthlyType->id,
         ]);
         $pos = 0;
         foreach (array_slice($lessons, 0, 2) as $l) {
@@ -2098,6 +2130,7 @@ class DatabaseSeeder extends Seeder
         $term = Package::create([
             'name' => 'باقة الترم الكاملة', 'access_mode' => 'both',
             'price_minor' => 50000, 'currency' => 'EGP', 'is_purchasable' => true,
+            'package_type_id' => $termType->id,
         ]);
         PackageItem::create([
             'package_id' => $term->id, 'item_type' => PackageItem::TYPE_PACKAGE,
@@ -2110,14 +2143,14 @@ class DatabaseSeeder extends Seeder
             ]);
         }
 
-        // ── A real package PURCHASE (VD LP-D2): the first two students buy the
-        // term package. A package buy fans out into one enrollment per descendant
-        // lesson (walking the recursive package_items), each tagged with the source
-        // package_id as provenance. This is what makes /me/packages (derived from
-        // enrollments.package_id) and /me/lessons non-empty for a bought package —
-        // without it the student library is empty and "bought packages" can't open.
-        $descendantLessonIds = app(PackageItemService::class)->descendantLessonIds($term);
-        foreach (array_slice($students, 1, 2) as $buyer) {
+        // ── Real package PURCHASES (VD LP-D2): the 2nd student buys BOTH packages
+        // (two different B27 types — exercises the package-type filter); the 3rd
+        // buys just the term package. A package buy fans out into one enrollment
+        // per descendant lesson (walking the recursive package_items), each tagged
+        // with the source package_id as provenance — this is what makes /me/packages
+        // (derived from enrollments.package_id) and /me/lessons non-empty.
+        $svc = app(PackageItemService::class);
+        $buyPackage = function (User $buyer, Package $pkg) use ($tenant, $svc): void {
             $when = now()->subDays(6);
             $this->createOrder(
                 $tenant,
@@ -2125,26 +2158,29 @@ class DatabaseSeeder extends Seeder
                 'paid',
                 [[
                     'item_type' => 'package',
-                    'item_id' => $term->id,
-                    'price_minor' => (int) $term->price_minor,
-                    'title' => $term->name,
+                    'item_id' => $pkg->id,
+                    'price_minor' => (int) $pkg->price_minor,
+                    'title' => $pkg->name,
                 ]],
                 'paymob',
                 'paid',
                 $when,
                 null,
             );
-            foreach ($descendantLessonIds as $lessonId) {
-                Enrollment::create([
-                    'user_id' => $buyer->id,
-                    'lesson_id' => $lessonId,
-                    'package_id' => $term->id,
-                    'source' => 'purchase',
-                    'starts_at' => $when,
-                    'expires_at' => null,
-                    'status' => 'active',
-                ]);
+            foreach ($svc->descendantLessonIds($pkg) as $lessonId) {
+                Enrollment::firstOrCreate(
+                    ['user_id' => $buyer->id, 'lesson_id' => $lessonId, 'package_id' => $pkg->id],
+                    ['source' => 'purchase', 'starts_at' => $when, 'expires_at' => null, 'status' => 'active'],
+                );
             }
+        };
+
+        if (isset($students[1])) {
+            $buyPackage($students[1], $term);
+            $buyPackage($students[1], $monthly);
+        }
+        if (isset($students[2])) {
+            $buyPackage($students[2], $term);
         }
 
         $ctx->forget();

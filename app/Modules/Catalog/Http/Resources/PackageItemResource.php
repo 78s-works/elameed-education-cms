@@ -51,6 +51,8 @@ class PackageItemResource extends JsonResource
 
         return $package === null ? null : [
             'id' => $package->id,
+            // uuid lets the student modal lazy-load a sub-package's own items on expand.
+            'uuid' => $package->uuid,
             'type' => 'package',
             'name' => $package->name,
             'access_mode' => $package->access_mode?->value,

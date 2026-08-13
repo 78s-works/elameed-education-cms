@@ -7,10 +7,12 @@ use App\Modules\Catalog\Http\Resources\CourseDetailResource;
 use App\Modules\Catalog\Http\Resources\CourseResource;
 use App\Modules\Catalog\Http\Resources\LessonResource;
 use App\Modules\Catalog\Http\Resources\PackageResource;
+use App\Modules\Catalog\Http\Resources\PackageTypeResource;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
+use App\Modules\Catalog\Models\PackageType;
 use App\Modules\Catalog\Services\StudentPartVisibility;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Tenancy\Services\TenantContext;
@@ -109,15 +111,48 @@ class PublicCatalogController
         $packages = Package::query()
             ->where('is_purchasable', true)
             ->when($request->input('q'), fn ($q, $term) => $q->where('name', 'like', '%'.$term.'%'))
+            // B27 package-type filter (bind by the type's public uuid).
+            ->when($request->input('package_type'), fn ($q, $uuid) => $q->whereHas(
+                'packageType',
+                fn (Builder $t) => $t->where('uuid', $uuid),
+            ))
             ->tap(fn (Builder $q) => $this->applyAccessMode($q, $request))
             ->tap(fn (Builder $q) => $this->applyAcademicYear($q, $request))
             ->tap(fn (Builder $q) => $this->applyExcludeOwned($q, $request, 'package_id'))
+            ->with('packageType')
             ->withCount('items')
             ->orderBy('name')
             ->orderBy('id')
             ->paginate(20);
 
         return PackageResource::collection($packages);
+    }
+
+    /**
+     * GET /package-types — the tenant's content-package types (B27), for the
+     * student-facing package filter. Public + tenant-scoped; unpaginated (the set
+     * is small) so the client can render the full chip row in one call.
+     */
+    public function packageTypes(): AnonymousResourceCollection
+    {
+        $types = PackageType::query()->orderBy('sort_order')->orderBy('id')->get();
+
+        return PackageTypeResource::collection($types);
+    }
+
+    /**
+     * GET /packages/{package:uuid} — a single purchasable package with its
+     * ordered items (lessons + sub-packages) for the public package-detail page.
+     * Only purchasable packages are exposed publicly; anything else is a 404.
+     */
+    public function showPackage(Package $package): PackageResource
+    {
+        abort_unless((bool) $package->is_purchasable, 404);
+
+        $package->load(['packageType', 'items' => fn ($q) => $q->orderBy('sort_order')->orderBy('id')])
+            ->loadCount('items');
+
+        return new PackageResource($package);
     }
 
     /**

@@ -22,14 +22,20 @@ class PackageType extends Model
     use BelongsToTenant;
     use HasUuids;
 
+    /** Allowed delivery channels (B1). `hybrid` = both center + online. */
+    public const CHANNELS = ['center', 'online', 'hybrid'];
+
     protected $fillable = [
         'name',
+        'channel',
+        'buy_alone',
         'sort_order',
         'description',
     ];
 
     protected $casts = [
         'sort_order' => 'integer',
+        'buy_alone' => 'boolean',
     ];
 
     /** Only `uuid` is a generated UUID column; the PK stays an auto-increment bigint. */

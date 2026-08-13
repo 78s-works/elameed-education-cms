@@ -22,6 +22,9 @@ class PackageResource extends JsonResource
             'id' => $this->id,
             'uuid' => $this->uuid,
             'name' => $this->name,
+            'description' => $this->description,
+            'cover_url' => $this->cover_url,
+            'promo_video_url' => $this->promo_video_url,
             'access_mode' => $this->access_mode?->value,
             'price_minor' => $this->price_minor,
             'currency' => $this->currency,
@@ -30,6 +33,10 @@ class PackageResource extends JsonResource
                 'id' => $this->packageType?->id,
                 'uuid' => $this->packageType?->uuid,
                 'name' => $this->packageType?->name,
+                // Channel + buy_alone drive the student explore UX (F4): a buy_alone
+                // type sells its lessons individually, not the package as a whole.
+                'channel' => $this->packageType?->channel,
+                'buy_alone' => (bool) $this->packageType?->buy_alone,
             ]),
             'academic_year_id' => $this->whenLoaded('academicYear', fn () => $this->academicYear?->uuid),
             'items_count' => $this->whenCounted('items'),

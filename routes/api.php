@@ -196,6 +196,10 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
 
     // Public catalogue (M04) — published courses of the resolved tenant
     Route::get('/courses', [PublicCatalogController::class, 'index']);
+    // Content-package types (B27) — for the student-facing package filter.
+    Route::get('/package-types', [PublicCatalogController::class, 'packageTypes']);
+    // Public package detail (name + ordered items) for the package-detail page.
+    Route::get('/packages/{package:uuid}', [PublicCatalogController::class, 'showPackage']);
     Route::get('/courses/{course:slug}', [PublicCatalogController::class, 'show']);
     Route::get('/courses/{course:slug}/reviews', [ReviewController::class, 'index']);
 

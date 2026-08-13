@@ -21,6 +21,8 @@ class PackageTypeResource extends JsonResource
             'id' => $this->id,
             'uuid' => $this->uuid,
             'name' => $this->name,
+            'channel' => $this->channel,
+            'buy_alone' => (bool) $this->buy_alone,
             'sort_order' => $this->sort_order,
             'description' => $this->description,
             'created_at' => $this->created_at?->toIso8601String(),
