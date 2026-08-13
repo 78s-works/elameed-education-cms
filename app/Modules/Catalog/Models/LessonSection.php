@@ -10,6 +10,7 @@ use App\Modules\Catalog\Enums\LessonSectionType;
 use App\Modules\Catalog\Enums\PdfKind;
 use App\Modules\Catalog\Enums\SectionDelivery;
 use App\Modules\Media\Models\MediaAsset;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -32,10 +33,12 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class LessonSection extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     protected $fillable = [
         'lesson_id',
+        'academic_year_id',
         'type',
         'access_mode',
         'delivery',

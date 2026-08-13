@@ -3,6 +3,7 @@
 namespace App\Modules\Assessment\Models;
 
 use App\Modules\Assessment\Enums\QuestionType;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -15,9 +16,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class Question extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     protected $fillable = [
+        'academic_year_id',
         'exam_id', 'category_id', 'type', 'body', 'options', 'correct', 'points', 'book_ref', 'sort_order',
     ];
 

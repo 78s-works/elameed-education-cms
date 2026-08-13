@@ -3,6 +3,7 @@
 namespace App\Modules\Catalog\Models;
 
 use App\Models\User;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -15,11 +16,13 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class LessonAccessWindow extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     protected $fillable = [
         'user_id',
         'lesson_id',
+        'academic_year_id',
         'started_at',
         'expires_at',
         'locked_at',

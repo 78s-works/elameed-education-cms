@@ -8,6 +8,7 @@ use App\Modules\Assessment\Enums\ExamPassMode;
 use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -21,6 +22,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class Exam extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
     use HasUuids;
     use SoftDeletes;
@@ -33,6 +35,7 @@ class Exam extends Model
     // `depends_on_exam_id` is retired (exam→exam gating removed). Column kept
     // dormant in the DB; deliberately not fillable so nothing writes it.
     protected $fillable = [
+        'academic_year_id',
         'course_id', 'lesson_id', 'unit_id', 'title', 'type', 'pass_percent', 'duration_min',
         'max_time_extensions', 'attempts_allowed', 'question_order', 'scoring', 'starts_at', 'ends_at',
         'result_visibility', 'show_answers', 'mode', 'is_published',

@@ -3,15 +3,18 @@
 namespace App\Modules\Engagement\Models;
 
 use App\Modules\Catalog\Models\Course;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Favorite extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     protected $fillable = [
+        'academic_year_id',
         'user_id',
         'course_id',
     ];

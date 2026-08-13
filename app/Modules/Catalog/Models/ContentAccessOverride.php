@@ -3,6 +3,7 @@
 namespace App\Modules\Catalog\Models;
 
 use App\Models\User;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -15,10 +16,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class ContentAccessOverride extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     protected $fillable = [
         'user_id',
+        'academic_year_id',
         'lesson_id',
         'section_id',
         'unit_id',

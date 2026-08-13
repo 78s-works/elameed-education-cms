@@ -3,12 +3,14 @@
 namespace App\Modules\Engagement\Models;
 
 use App\Modules\Catalog\Models\Lesson;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class LessonProgress extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     protected $table = 'lesson_progress';
@@ -16,6 +18,7 @@ class LessonProgress extends Model
     protected $fillable = [
         'enrollment_id',
         'lesson_id',
+        'academic_year_id',
         'user_id',
         'watch_percent',
         'watch_seconds',

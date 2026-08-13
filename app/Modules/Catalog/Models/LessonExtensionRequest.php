@@ -4,6 +4,7 @@ namespace App\Modules\Catalog\Models;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ExtensionStatus;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -17,10 +18,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class LessonExtensionRequest extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     protected $fillable = [
         'access_window_id',
+        'academic_year_id',
         'user_id',
         'status',
         'requested_at',

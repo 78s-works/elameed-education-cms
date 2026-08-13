@@ -5,6 +5,7 @@ namespace App\Modules\Engagement\Models;
 use App\Models\User;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Engagement\Enums\CommentStatus;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -21,12 +22,14 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class Comment extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
     use HasUuids;
     use SoftDeletes;
 
     protected $fillable = [
         'lesson_id',
+        'academic_year_id',
         'user_id',
         'parent_id',
         'body',

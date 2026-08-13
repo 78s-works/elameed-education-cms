@@ -4,6 +4,7 @@ namespace App\Modules\Assessment\Models;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ExtensionStatus;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -18,9 +19,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class ExamTimeExtension extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     protected $fillable = [
+        'academic_year_id',
         'exam_id',
         'user_id',
         'requested_minutes',

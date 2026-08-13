@@ -4,6 +4,7 @@ namespace App\Modules\Catalog\Models;
 
 use App\Modules\Catalog\Enums\DependencyEnforcement;
 use App\Modules\Catalog\Enums\DependencyTrigger;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -17,10 +18,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class ContentDependency extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     protected $fillable = [
         'section_id',
+        'academic_year_id',
         'depends_on_section_id',
         'trigger',
         'enforcement',

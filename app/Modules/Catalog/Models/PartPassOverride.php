@@ -3,6 +3,7 @@
 namespace App\Modules\Catalog\Models;
 
 use App\Models\User;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -15,10 +16,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class PartPassOverride extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     protected $fillable = [
         'lesson_section_id',
+        'academic_year_id',
         'user_id',
         'granted_by',
         'granted_at',

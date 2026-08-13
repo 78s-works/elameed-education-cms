@@ -4,6 +4,7 @@ namespace App\Modules\Assessment\Models;
 
 use App\Models\User;
 use App\Modules\Assessment\Enums\AttemptStatus;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -14,6 +15,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class ExamAttempt extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     protected $attributes = [
@@ -21,6 +23,7 @@ class ExamAttempt extends Model
     ];
 
     protected $fillable = [
+        'academic_year_id',
         'exam_id', 'user_id', 'attempt_number', 'started_at', 'submitted_at',
         'score', 'max_score', 'status', 'answers', 'needs_manual_grade',
         'feedback', 'corrected_file',

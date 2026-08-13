@@ -194,14 +194,19 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
     // Public landing bundle: branding + teacher site metadata (SEO/OG) for the <head>.
     Route::get('/tenant/landing/meta', TenantLandingMetaController::class)->middleware('throttle:public');
 
-    // Public catalogue (M04) — published courses of the resolved tenant
-    Route::get('/courses', [PublicCatalogController::class, 'index']);
-    // Content-package types (B27) — for the student-facing package filter.
-    Route::get('/package-types', [PublicCatalogController::class, 'packageTypes']);
-    // Public package detail (name + ordered items) for the package-detail page.
-    Route::get('/packages/{package:uuid}', [PublicCatalogController::class, 'showPackage']);
-    Route::get('/courses/{course:slug}', [PublicCatalogController::class, 'show']);
-    Route::get('/courses/{course:slug}/reviews', [ReviewController::class, 'index']);
+    // Public catalogue (M04) — published courses of the resolved tenant. Year-aware
+    // via `academic-year:optional`: when the SPA sends X-Academic-Year the listing
+    // scopes to that year (courses/packages/types/reviews all carry academic_year_id
+    // now); with no header it stays tenant-wide, so anonymous browse never 422s.
+    Route::middleware('academic-year:optional')->group(function (): void {
+        Route::get('/courses', [PublicCatalogController::class, 'index']);
+        // Content-package types (B27) — for the student-facing package filter.
+        Route::get('/package-types', [PublicCatalogController::class, 'packageTypes']);
+        // Public package detail (name + ordered items) for the package-detail page.
+        Route::get('/packages/{package:uuid}', [PublicCatalogController::class, 'showPackage']);
+        Route::get('/courses/{course:slug}', [PublicCatalogController::class, 'show']);
+        Route::get('/courses/{course:slug}/reviews', [ReviewController::class, 'index']);
+    });
 
     // Identity, auth & OTP (M11) — public
     Route::post('/auth/register', [AuthController::class, 'register'])->middleware('throttle:otp');
@@ -217,7 +222,14 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
     Route::get('/parent/magic/{token}', [ParentController::class, 'magicLogin'])->middleware('throttle:auth');
 
     // Authenticated — must be an ACTIVE member of this tenant (suspend blocks here).
-    Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
+    // `academic-year:optional` runs site-wide here: it resolves the X-Academic-Year
+    // header into AcademicYearContext when the client sends one (so every content
+    // query — teacher, student, parent — scopes to that year), and no-ops when it
+    // doesn't (tenant-only, nothing breaks). Authoring surfaces that MUST stamp a
+    // year keep their own nested strict `academic-year` group, which still 422s on
+    // a missing header. Mounted here, not on the outer `tenant` group, so the
+    // public /auth/* routes never see it.
+    Route::middleware(['auth:sanctum', 'active', 'academic-year:optional'])->group(function (): void {
         Route::post('/auth/logout', [AuthController::class, 'logout']);
         Route::get('/me', MeController::class);
 

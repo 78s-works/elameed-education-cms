@@ -2,6 +2,7 @@
 
 namespace App\Modules\Catalog\Models;
 
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -12,12 +13,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * Not an Eloquent morphTo — the two targets live in different tables and the
  * `item_type` values are domain tokens (lesson|package), not class names — so
- * resolution is explicit (see Package::resolveItem / PackageItemService). The
- * academic year is inherited from the parent package, so this model carries no
- * `academic_year_id` of its own (tenant-scoped only).
+ * resolution is explicit (see Package::resolveItem / PackageItemService). It
+ * carries its own `academic_year_id` (site-wide year-scoping, Phase 1), always
+ * equal to the parent package's year.
  */
 class PackageItem extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     public const TYPE_LESSON = 'lesson';
@@ -26,6 +28,7 @@ class PackageItem extends Model
 
     protected $fillable = [
         'package_id',
+        'academic_year_id',
         'item_type',
         'item_id',
         'sort_order',

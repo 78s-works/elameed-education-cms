@@ -3,6 +3,7 @@
 namespace App\Modules\Centers\Models;
 
 use App\Models\User;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -12,9 +13,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class AttendanceRecord extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
 
     protected $fillable = [
+        'academic_year_id',
         'center_id',
         'user_id',
         'course_id',

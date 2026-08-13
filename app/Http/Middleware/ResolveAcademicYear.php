@@ -17,8 +17,16 @@ use Symfony\Component\HttpFoundation\Response;
  * Mount only on routes already inside the `tenant` group — the AcademicYear lookup
  * relies on the BelongsToTenant global scope to reject another tenant's uuid.
  *
- *   - 422 when the header is absent (the client must always declare a year).
- *   - 403 when the uuid is unknown or belongs to another tenant.
+ * Two modes (route param):
+ *   - `academic-year` (default, strict): the header is mandatory — 422 if absent.
+ *     Use on year-authoring surfaces where a new row MUST be stamped with a year.
+ *   - `academic-year:optional`: resolve the header when present, otherwise fall
+ *     through with no year context (the trait/global scope then no-op → the
+ *     request stays tenant-only). Use site-wide so scoping engages the moment a
+ *     client sends the header, without 422-breaking clients that don't yet.
+ *
+ * A present-but-unknown/foreign uuid is 403 in BOTH modes — a bad year is an
+ * error, only an ABSENT header differs between the modes.
  */
 class ResolveAcademicYear
 {
@@ -26,11 +34,15 @@ class ResolveAcademicYear
         private readonly AcademicYearContext $context,
     ) {}
 
-    public function handle(Request $request, Closure $next): Response
+    public function handle(Request $request, Closure $next, string $mode = 'required'): Response
     {
         $uuid = $request->header('X-Academic-Year');
 
         if (! is_string($uuid) || $uuid === '') {
+            if ($mode === 'optional') {
+                return $next($request);
+            }
+
             throw ValidationException::withMessages([
                 'academic_year' => 'The X-Academic-Year header is required.',
             ]);

@@ -4,6 +4,7 @@ namespace App\Modules\Catalog\Models;
 
 use App\Modules\Catalog\Enums\AccessMode;
 use App\Modules\Catalog\Enums\ContentVisibility;
+use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -19,6 +20,7 @@ use Illuminate\Support\Str;
  */
 class Course extends Model
 {
+    use BelongsToAcademicYear;
     use BelongsToTenant;
     use HasUuids;
     use SoftDeletes;
@@ -30,6 +32,7 @@ class Course extends Model
     ];
 
     protected $fillable = [
+        'academic_year_id',
         'title',
         'subtitle',
         'slug',

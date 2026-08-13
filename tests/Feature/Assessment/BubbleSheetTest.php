@@ -104,6 +104,9 @@ class BubbleSheetTest extends TestCase
         ], $attrs));
         $exam->tenant_id = $this->tenant->id;
         $exam->course_id = $this->course->id;
+        // Exam is year-scoped (site-wide scoping Phase 2); stamp the year so the
+        // strict `academic-year` bubble-sheet route can bind it under the header.
+        $exam->academic_year_id = $this->year->id;
         $exam->save();
 
         return $exam;
