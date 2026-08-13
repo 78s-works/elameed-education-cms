@@ -37,8 +37,11 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('lesson_access_windows', function (Blueprint $table): void {
+            // Drop the FK first: MySQL backs it with the composite index, so the
+            // index cannot be dropped while the constraint still needs it (1553).
+            $table->dropForeign(['academic_year_id']);
             $table->dropIndex(['tenant_id', 'academic_year_id']);
-            $table->dropConstrainedForeignId('academic_year_id');
+            $table->dropColumn('academic_year_id');
         });
     }
 };
