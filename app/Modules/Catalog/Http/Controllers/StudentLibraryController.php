@@ -5,6 +5,7 @@ namespace App\Modules\Catalog\Http\Controllers;
 use App\Modules\Catalog\Http\Resources\PackageResource;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
+use App\Modules\Catalog\Services\PackageItemService;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Engagement\Models\LessonProgress;
 use Illuminate\Http\JsonResponse;
@@ -67,6 +68,67 @@ class StudentLibraryController
         ])->all();
 
         return response()->json(['data' => $data]);
+    }
+
+    /**
+     * GET /me/packages/{package}/lessons — the playable lessons a student owns
+     * inside one bought package. Resolves the package's recursive descendant
+     * lessons (walking package_items, any depth) and intersects them with the
+     * student's access-granting enrollments, so the SPA can open a bought package
+     * to its lessons (there is no other student-facing package-contents surface).
+     * Each lesson carries its parent course slug (the player's entry point) and a
+     * completed flag. Lessons the student has not been granted are omitted.
+     */
+    public function packageLessons(Request $request, Package $package): JsonResponse
+    {
+        $userId = $request->user()->getKey();
+
+        $descendantIds = app(PackageItemService::class)->descendantLessonIds($package);
+
+        $ownedIds = Enrollment::query()
+            ->where('user_id', $userId)
+            ->grantsAccess()
+            ->whereIn('lesson_id', $descendantIds)
+            ->pluck('lesson_id')
+            ->unique()
+            ->all();
+
+        $lessons = Lesson::query()
+            ->whereIn('id', $ownedIds)
+            ->with('course:id,slug,title')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+
+        $completed = LessonProgress::query()
+            ->where('user_id', $userId)
+            ->whereIn('lesson_id', $ownedIds)
+            ->whereNotNull('completed_at')
+            ->pluck('lesson_id')
+            ->all();
+        $completedSet = array_flip($completed);
+
+        return response()->json([
+            'data' => [
+                'package' => [
+                    'id' => $package->id,
+                    'uuid' => $package->uuid,
+                    'name' => $package->name,
+                    'access_mode' => $package->access_mode?->value,
+                    'items_count' => (int) $descendantIds->count(),
+                ],
+                'lessons' => $lessons->map(fn (Lesson $l) => [
+                    'id' => $l->id,
+                    'name' => $l->title,
+                    'title' => $l->title,
+                    'access_mode' => $l->access_mode?->value,
+                    'course_id' => $l->course_id,
+                    'course_slug' => $l->course?->slug,
+                    'course_title' => $l->course?->title,
+                    'completed' => isset($completedSet[$l->id]),
+                ])->all(),
+            ],
+        ]);
     }
 
     /** GET /me/packages — the packages the student has bought (by grant provenance). */

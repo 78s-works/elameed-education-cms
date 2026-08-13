@@ -6,6 +6,7 @@ use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Services\PackageItemService;
+use App\Modules\Catalog\Services\StudentPartVisibility;
 use App\Modules\Commerce\Models\Coupon;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Order;
@@ -26,6 +27,7 @@ class CheckoutService
         private readonly TenantContext $context,
         private readonly CouponService $coupons,
         private readonly PackageItemService $packageItems,
+        private readonly StudentPartVisibility $studyMode,
     ) {}
 
     /**
@@ -76,10 +78,13 @@ class CheckoutService
     {
         $quote = $this->price($items, $couponCode);
 
-        // Don't let a student buy content they already own (M04). Checked at the
-        // order step so the wallet isn't charged for a duplicate enrollment.
+        // Don't let a student buy content they already own (M04), nor content on a
+        // channel they don't study (VD §7 — a center student can't buy an online
+        // course, or vice-versa). Both checked at the order step so the wallet is
+        // never charged for content the student could never access.
         foreach ($quote['lines'] as $line) {
             $this->assertNotAlreadyOwned($userId, $line);
+            $this->assertChannelAllowed($userId, $line);
         }
 
         $order = new Order([
@@ -98,6 +103,30 @@ class CheckoutService
         }
 
         return $order;
+    }
+
+    /**
+     * Reject an order line whose content is on a channel the buyer doesn't study
+     * (VD §7). Reuses {@see AccessMode::isVisibleTo} — the same rule the catalogue
+     * filter and the play gate use — so a `both` item, or a hybrid/legacy student
+     * (study_mode `both`/null), is never blocked. Wallet top-ups have no channel.
+     */
+    private function assertChannelAllowed(int $userId, array $line): void
+    {
+        $model = match ($line['item_type']) {
+            OrderItem::TYPE_COURSE => Course::query()->find($line['item_id']),
+            OrderItem::TYPE_LESSON => Lesson::query()->find($line['item_id']),
+            OrderItem::TYPE_PACKAGE => Package::withoutGlobalScope('academic_year')->find($line['item_id']),
+            default => null, // wallet top-up: no channel
+        };
+        if ($model === null) {
+            return;
+        }
+
+        $tenantId = (int) $this->context->tenantOrFail()->getKey();
+        if (! $model->access_mode->isVisibleTo($this->studyMode->studyModeFor($tenantId, $userId))) {
+            throw ValidationException::withMessages(['items' => 'This content is not available for your study mode.']);
+        }
     }
 
     /** Reject an order line for content the buyer already has access to. */

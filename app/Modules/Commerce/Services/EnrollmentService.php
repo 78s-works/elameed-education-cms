@@ -4,12 +4,14 @@ namespace App\Modules\Commerce\Services;
 
 use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Models\Exam;
+use App\Modules\Catalog\Enums\AccessMode;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Services\LessonAvailabilityService;
 use App\Modules\Catalog\Services\PackageItemService;
 use App\Modules\Catalog\Services\SequentialUnlockService;
+use App\Modules\Catalog\Services\StudentPartVisibility;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Modules\Commerce\Models\Enrollment;
@@ -33,7 +35,22 @@ class EnrollmentService
         private readonly LessonAvailabilityService $availability,
         private readonly PackageItemService $packageItems,
         private readonly SequentialUnlockService $sequential,
+        private readonly StudentPartVisibility $studyMode,
     ) {}
+
+    /**
+     * Channel scope (VD §7): a single-channel student (center/online) may only
+     * reach content on their own channel plus `both`; a hybrid (`both`) student —
+     * and any student with no study_mode set (legacy) — reaches every channel.
+     * `both` content is visible to everyone, and content with no access_mode
+     * (null) carries no channel restriction. Reuses {@see AccessMode::isVisibleTo}
+     * so the play gate matches the catalogue filter and checkout guard exactly.
+     */
+    private function channelAllows(int $tenantId, int $userId, ?AccessMode $contentMode): bool
+    {
+        return $contentMode === null
+            || $contentMode->isVisibleTo($this->studyMode->studyModeFor($tenantId, $userId));
+    }
 
     /**
      * Grant a whole-course enrollment. `$bundleId` records the package it came
@@ -97,6 +114,12 @@ class EnrollmentService
     /** Does the user currently have access to the whole course? Free courses are open. */
     public function hasAccess(int $tenantId, int $userId, Course $course): bool
     {
+        // Channel scope first: a center student never reaches an online course (or
+        // vice-versa), even a free one — the whole course is off their channel.
+        if (! $this->channelAllows($tenantId, $userId, $course->access_mode)) {
+            return false;
+        }
+
         if ($course->is_free) {
             return true;
         }
@@ -117,11 +140,21 @@ class EnrollmentService
      */
     public function hasLessonAccess(int $tenantId, int $userId, Lesson $lesson): bool
     {
+        $course = $lesson->course;
+
+        // Channel scope first (VD §7): a single-channel student can't reach a lesson
+        // on the other channel — checked against BOTH the lesson's own access_mode
+        // and its parent course's, so neither an off-channel standalone lesson nor a
+        // lesson inside an off-channel course opens, even as a free preview.
+        if (! $this->channelAllows($tenantId, $userId, $lesson->access_mode)
+            || ($course !== null && ! $this->channelAllows($tenantId, $userId, $course->access_mode))) {
+            return false;
+        }
+
         if ($lesson->is_free_preview) {
             return true;
         }
 
-        $course = $lesson->course;
         if ($course !== null && $course->is_free) {
             return true;
         }

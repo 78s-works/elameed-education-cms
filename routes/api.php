@@ -252,6 +252,10 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::get('/me/activity', [ProgressController::class, 'activity']);
         Route::get('/me/resume', [ProgressController::class, 'resume']);
 
+        // Lesson meta for the lesson-native player (title/duration/completion) —
+        // content is in /sections; this is the header without a parent course.
+        Route::get('/lessons/{lesson}', [StudentLessonSectionsController::class, 'show']);
+
         // Typed content sections + unlock state (M04, FR-M04-01/06). Each section
         // carries a `locked` flag from the mandatory content-dependency rules.
         Route::get('/lessons/{lesson}/sections', [StudentLessonSectionsController::class, 'index']);
@@ -318,6 +322,9 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         // The student's own library (VD F1): purchased standalone lessons + packages.
         Route::get('/me/lessons', [StudentLibraryController::class, 'lessons']);
         Route::get('/me/packages', [StudentLibraryController::class, 'packages']);
+        // One bought package's playable lessons (recursive descendants ∩ owned) —
+        // the only student-facing package-contents surface.
+        Route::get('/me/packages/{package}/lessons', [StudentLibraryController::class, 'packageLessons']);
 
         // Own paper (in-center) exam scores (VD R12). Spans academic years — no
         // X-Academic-Year required; still tenant-scoped.

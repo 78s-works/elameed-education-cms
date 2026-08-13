@@ -43,6 +43,7 @@ use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Invoice;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Commerce\Models\OrderItem;
+use App\Modules\Catalog\Services\PackageItemService;
 use App\Modules\Commerce\Models\Payment;
 use App\Modules\Engagement\Models\Badge;
 use App\Modules\Engagement\Models\Favorite;
@@ -121,6 +122,7 @@ class DatabaseSeeder extends Seeder
         'lesson_access_windows', 'comments', 'coupons', 'teacher_meta',
         'parent_magic_links',
         'audit_logs', 'media_callback_events', 'login_attempts', 'otp_codes',
+        'notification_preferences', 'notification_channel_settings',
         'notifications', 'student_badges', 'badges', 'points_entries', 'favorites',
         'reviews', 'lesson_progress', 'playback_sessions', 'exam_attempts',
         // VD content (§7/§8): parts, recursive packages + pass-overrides. Listed
@@ -2108,6 +2110,43 @@ class DatabaseSeeder extends Seeder
             ]);
         }
 
+        // ── A real package PURCHASE (VD LP-D2): the first two students buy the
+        // term package. A package buy fans out into one enrollment per descendant
+        // lesson (walking the recursive package_items), each tagged with the source
+        // package_id as provenance. This is what makes /me/packages (derived from
+        // enrollments.package_id) and /me/lessons non-empty for a bought package —
+        // without it the student library is empty and "bought packages" can't open.
+        $descendantLessonIds = app(PackageItemService::class)->descendantLessonIds($term);
+        foreach (array_slice($students, 1, 2) as $buyer) {
+            $when = now()->subDays(6);
+            $this->createOrder(
+                $tenant,
+                $buyer,
+                'paid',
+                [[
+                    'item_type' => 'package',
+                    'item_id' => $term->id,
+                    'price_minor' => (int) $term->price_minor,
+                    'title' => $term->name,
+                ]],
+                'paymob',
+                'paid',
+                $when,
+                null,
+            );
+            foreach ($descendantLessonIds as $lessonId) {
+                Enrollment::create([
+                    'user_id' => $buyer->id,
+                    'lesson_id' => $lessonId,
+                    'package_id' => $term->id,
+                    'source' => 'purchase',
+                    'starts_at' => $when,
+                    'expires_at' => null,
+                    'status' => 'active',
+                ]);
+            }
+        }
+
         $ctx->forget();
     }
 
@@ -2203,9 +2242,21 @@ class DatabaseSeeder extends Seeder
         }
 
         // center_id_codes (F17) — one grade-1 batch for the first center; the
-        // first two are already redeemed by students.
+        // first two are already redeemed by students. Year-scoped (BelongsToAcademicYear)
+        // → the academic-year context MUST be set before the first insert, since
+        // `academic_year_id` is now NOT NULL (2026_08_12 migration).
         if (! empty($centers)) {
             $center = $centers[0];
+
+            // Set the year context up-front so BOTH center_id_codes and
+            // center_exam_grades auto-fill academic_year_id.
+            $year = AcademicYear::withoutGlobalScopes()
+                ->where('tenant_id', $tenant->id)->orderBy('sort_order')->orderBy('id')->first();
+            $ctx = app(AcademicYearContext::class);
+            if ($year !== null) {
+                $ctx->set($year->id);
+            }
+
             $batchId = (string) Str::uuid();
             for ($i = 1; $i <= 5; $i++) {
                 $redeemed = $i <= 2 && isset($students[$i - 1]);
@@ -2219,13 +2270,8 @@ class DatabaseSeeder extends Seeder
                 ]);
             }
 
-            // center_exam_grades (F11) — paper-exam scores (year-scoped → set the
-            // academic-year context so BelongsToAcademicYear auto-fills).
-            $year = AcademicYear::withoutGlobalScopes()
-                ->where('tenant_id', $tenant->id)->orderBy('sort_order')->orderBy('id')->first();
+            // center_exam_grades (F11) — paper-exam scores (same year context).
             if ($year !== null) {
-                $ctx = app(AcademicYearContext::class);
-                $ctx->set($year->id);
                 foreach (array_slice($students, 0, 3) as $idx => $s) {
                     CenterExamGrade::create([
                         'center_id' => $center->id, 'student_user_id' => $s->id,

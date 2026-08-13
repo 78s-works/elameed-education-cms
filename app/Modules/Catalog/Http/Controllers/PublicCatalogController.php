@@ -11,7 +11,9 @@ use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
+use App\Modules\Catalog\Services\StudentPartVisibility;
 use App\Modules\Commerce\Models\Enrollment;
+use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -33,6 +35,11 @@ use Illuminate\Validation\Rule;
  */
 class PublicCatalogController
 {
+    public function __construct(
+        private readonly TenantContext $context,
+        private readonly StudentPartVisibility $studyMode,
+    ) {}
+
     public function index(Request $request): AnonymousResourceCollection
     {
         $request->validate([
@@ -115,12 +122,17 @@ class PublicCatalogController
 
     /**
      * Channel filter on the `access_mode` column. Reuses {@see AccessMode::isVisibleTo}
-     * so `both` content always shows and `?access_mode=both` returns every channel —
-     * i.e. the filter behaves like a student of that study_mode browsing.
+     * so `both` content always shows and a `both` mode returns every channel — i.e.
+     * the filter behaves like a student of that study_mode browsing.
+     *
+     * A logged-in single-channel student (center/online) is HARD-scoped to their own
+     * channel: their study_mode wins and any `?access_mode=` override is ignored, so a
+     * center student can never browse online content (VD §7). Hybrid (`both`) and
+     * anonymous callers fall back to the explicit `?access_mode=` query filter.
      */
     private function applyAccessMode(Builder $query, Request $request): void
     {
-        $mode = AccessMode::tryFrom((string) $request->string('access_mode'));
+        $mode = $this->effectiveAccessMode($request);
 
         if ($mode === null) {
             return;
@@ -132,6 +144,29 @@ class PublicCatalogController
         );
 
         $query->whereIn('access_mode', $allowed);
+    }
+
+    /**
+     * The channel to scope the catalogue by: the authenticated student's own
+     * study_mode when they are a single-channel student, otherwise the explicit
+     * `?access_mode=` request filter. Auth is optional on this public route, so the
+     * user is resolved via the sanctum guard (mirrors {@see applyExcludeOwned}).
+     */
+    private function effectiveAccessMode(Request $request): ?AccessMode
+    {
+        $user = $request->user() ?? auth('sanctum')->user();
+
+        if ($user !== null) {
+            $studyMode = $this->studyMode->studyModeFor(
+                (int) $this->context->tenantOrFail()->getKey(),
+                (int) $user->getKey(),
+            );
+            if ($studyMode !== AccessMode::Both) {
+                return $studyMode;
+            }
+        }
+
+        return AccessMode::tryFrom((string) $request->string('access_mode'));
     }
 
     /**
