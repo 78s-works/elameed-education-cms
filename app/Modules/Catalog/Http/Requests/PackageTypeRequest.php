@@ -46,7 +46,6 @@ class PackageTypeRequest extends FormRequest
             // lessons are purchasable. Defaults to false when omitted.
             'buy_alone' => ['sometimes', 'boolean'],
             'sort_order' => ['nullable', 'integer', 'min:0'],
-            'description' => ['nullable', 'string', 'max:2000'],
         ];
     }
 }

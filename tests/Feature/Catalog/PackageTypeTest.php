@@ -71,7 +71,7 @@ class PackageTypeTest extends TestCase
     private function makeType(array $payload = [], ?AcademicYear $year = null): array
     {
         return $this->withHeaders($this->headers($year))
-            ->postJson('/api/v1/teacher/package-types', array_merge(['name' => 'Term'], $payload))
+            ->postJson('/api/v1/teacher/package-types', array_merge(['name' => 'Term', 'channel' => 'hybrid'], $payload))
             ->assertStatus(201)->json('data');
     }
 
@@ -93,11 +93,10 @@ class PackageTypeTest extends TestCase
         Sanctum::actingAs($this->teacher());
 
         $uuid = $this->withHeaders($this->headers())->postJson('/api/v1/teacher/package-types', [
-            'name' => 'Revision', 'sort_order' => 5, 'description' => 'Revision bundles',
+            'name' => 'Revision', 'channel' => 'hybrid', 'sort_order' => 5,
         ])->assertStatus(201)
             ->assertJsonPath('data.name', 'Revision')
             ->assertJsonPath('data.sort_order', 5)
-            ->assertJsonPath('data.description', 'Revision bundles')
             ->json('data.uuid');
 
         $this->assertDatabaseHas('package_types', [
@@ -178,13 +177,13 @@ class PackageTypeTest extends TestCase
         $this->makeType(['name' => 'Dup']);
 
         // Same name, same year → rejected.
-        $this->withHeaders($this->headers())->postJson('/api/v1/teacher/package-types', ['name' => 'Dup'])
+        $this->withHeaders($this->headers())->postJson('/api/v1/teacher/package-types', ['name' => 'Dup', 'channel' => 'hybrid'])
             ->assertStatus(422)
             ->assertJsonStructure(['error' => ['details' => ['name']]]);
 
         // Same name in a different year → allowed (year is part of the key).
         $other = $this->makeYear('Other', 10);
-        $this->withHeaders($this->headers($other))->postJson('/api/v1/teacher/package-types', ['name' => 'Dup'])
+        $this->withHeaders($this->headers($other))->postJson('/api/v1/teacher/package-types', ['name' => 'Dup', 'channel' => 'hybrid'])
             ->assertStatus(201);
     }
 

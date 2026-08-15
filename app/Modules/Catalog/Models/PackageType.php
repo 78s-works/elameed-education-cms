@@ -30,7 +30,6 @@ class PackageType extends Model
         'channel',
         'buy_alone',
         'sort_order',
-        'description',
     ];
 
     protected $casts = [

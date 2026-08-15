@@ -13,6 +13,7 @@ use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Models\PackageType;
+use App\Modules\Catalog\Services\PackageItemService;
 use App\Modules\Catalog\Services\StudentPartVisibility;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Tenancy\Services\TenantContext;
@@ -131,24 +132,52 @@ class PublicCatalogController
     /**
      * GET /package-types — the tenant's content-package types (B27), for the
      * student-facing package filter. Public + tenant-scoped; unpaginated (the set
-     * is small) so the client can render the full chip row in one call.
+     * is small). Spec F4: only types that have PUBLISHED lessons show up — a type
+     * qualifies when at least one of its packages has a published descendant
+     * lesson (walking the recursive package_items).
      */
-    public function packageTypes(): AnonymousResourceCollection
+    public function packageTypes(PackageItemService $items): AnonymousResourceCollection
     {
-        $types = PackageType::query()->orderBy('sort_order')->orderBy('id')->get();
+        $publishedLessonIds = Lesson::query()->published()->pluck('id')
+            ->map(fn ($id) => (int) $id)->all();
+        $publishedSet = array_flip($publishedLessonIds);
+
+        $types = PackageType::query()
+            ->with(['packages:id,tenant_id,academic_year_id,package_type_id'])
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get()
+            ->filter(function (PackageType $type) use ($items, $publishedSet): bool {
+                foreach ($type->packages as $package) {
+                    foreach ($items->descendantLessonIds($package) as $lessonId) {
+                        if (isset($publishedSet[(int) $lessonId])) {
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            })
+            ->values();
 
         return PackageTypeResource::collection($types);
     }
 
     /**
-     * GET /packages/{package:uuid} — a single purchasable package with its
-     * ordered items (lessons + sub-packages) for the public package-detail page.
-     * Only purchasable packages are exposed publicly; anything else is a 404.
+     * GET /packages/{package:uuid} — a single package with its ordered items
+     * (lessons + sub-packages) for the public package-detail modal + accordion.
+     *
+     * Not gated on `is_purchasable`: a buy-alone type's packages (and structural
+     * sub-packages) are not sold as a whole yet must still be viewable so the
+     * student can browse the tree and buy the individual lessons. The explore
+     * grid ({@see packages()}) stays `is_purchasable`-gated, so hidden packages
+     * never surface there — this route is reached only by uuid, from a listed
+     * parent. Buying is separately gated at checkout, so a non-purchasable
+     * package can be viewed but never bought as a whole. Route binding keeps it
+     * tenant-scoped (foreign uuids 404).
      */
     public function showPackage(Package $package): PackageResource
     {
-        abort_unless((bool) $package->is_purchasable, 404);
-
         $package->load(['packageType', 'items' => fn ($q) => $q->orderBy('sort_order')->orderBy('id')])
             ->loadCount('items');
 

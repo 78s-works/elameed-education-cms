@@ -26,6 +26,9 @@ class PackageRequest extends FormRequest
 
         return [
             'name' => [$required, 'string', 'max:255'],
+            'description' => ['nullable', 'string', 'max:5000'],
+            'cover_url' => ['nullable', 'string', 'max:2048'],
+            'promo_video_url' => ['nullable', 'string', 'max:2048'],
             'access_mode' => [$required, Rule::enum(AccessMode::class)],
             'price_minor' => ['nullable', 'integer', 'min:0'],
             'currency' => ['nullable', 'string', 'size:3'],

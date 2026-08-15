@@ -181,6 +181,6 @@ class Lesson extends Model
     {
         return $query
             ->where('visibility', ContentVisibility::Visible->value)
-            ->where(fn (Builder $q) => $q->whereNull('publish_at')->orWhere('publish_at', '<=', now()));
+            ->where(fn(Builder $q) => $q->whereNull('publish_at')->orWhere('publish_at', '<=', now()));
     }
 }

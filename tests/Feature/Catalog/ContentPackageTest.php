@@ -4,6 +4,7 @@ namespace Tests\Feature\Catalog;
 
 use App\Models\User;
 use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Catalog\Models\PackageType;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
@@ -29,12 +30,26 @@ class ContentPackageTest extends TestCase
 
     private AcademicYear $year;
 
+    private int $typeId;
+
     protected function setUp(): void
     {
         parent::setUp();
         Cache::flush();
         $this->tenant = Tenant::create(['slug' => 'demo', 'name' => 'Demo', 'status' => TenantStatus::Active]);
         $this->year = $this->makeYear('2025 / 2026');
+        $this->typeId = $this->makeType();
+    }
+
+    /** A package now requires a type (B27); every package this suite creates uses this default. */
+    private function makeType(?AcademicYear $year = null): int
+    {
+        $type = new PackageType(['name' => 'Default', 'channel' => 'hybrid', 'buy_alone' => false, 'sort_order' => 0]);
+        $type->tenant_id = $this->tenant->id;
+        $type->academic_year_id = ($year ?? $this->year)->id;
+        $type->save();
+
+        return $type->id;
     }
 
     // --- helpers -----------------------------------------------------------
@@ -80,7 +95,7 @@ class ContentPackageTest extends TestCase
     private function makePackage(string $accessMode = 'both', string $name = 'Package', ?AcademicYear $year = null): int
     {
         return $this->withHeaders($this->headers($year))
-            ->postJson('/api/v1/teacher/content-packages', ['name' => $name, 'access_mode' => $accessMode])
+            ->postJson('/api/v1/teacher/content-packages', ['name' => $name, 'access_mode' => $accessMode, 'package_type_id' => $this->typeId])
             ->assertStatus(201)->json('data.id');
     }
 
@@ -98,6 +113,7 @@ class ContentPackageTest extends TestCase
 
         $id = $this->withHeaders($this->headers())->postJson('/api/v1/teacher/content-packages', [
             'name' => 'Term 1', 'access_mode' => 'both', 'price_minor' => 20000, 'currency' => 'EGP', 'is_purchasable' => true,
+            'package_type_id' => $this->typeId,
         ])->assertStatus(201)
             ->assertJsonPath('data.name', 'Term 1')
             ->assertJsonPath('data.access_mode', 'both')
