@@ -57,15 +57,19 @@ class DatabaseSeeder extends Seeder
     {
         $this->seedPlatformAdmin();
 
+        // Global notification catalog (types/templates/translations) — needed before
+        // any tenant dispatches notifications.
+        $this->call(NotificationCatalogSeeder::class);
+
         if (Tenant::query()->where('slug', self::TENANT_SLUG)->exists()) {
             $this->command?->info('Academy already seeded — skipping content.');
-
-            return;
+        } else {
+            DB::transaction(fn () => $this->seedAcademy());
+            $this->command?->info('Seeded platform admin + academy `'.self::TENANT_SLUG.'` across '.count(self::YEARS).' academic years.');
         }
 
-        DB::transaction(fn () => $this->seedAcademy());
-
-        $this->command?->info('Seeded platform admin + academy `'.self::TENANT_SLUG.'` across '.count(self::YEARS).' academic years.');
+        // The full real-world tenant modelled on ahmedtammam.com (idempotent).
+        $this->call(AhmedTammamAcademySeeder::class);
     }
 
     private function seedPlatformAdmin(): void

@@ -23,6 +23,10 @@ class AssistantResource extends JsonResource
             'email' => $this->user?->email,
             'status' => $this->status->value,
             'permissions' => $this->effectivePermissions(),
+            // The academic years this assistant serves (M18 — year-scoped roster).
+            'academic_year_ids' => $this->whenLoaded('academicYears', fn () => $this->academicYears->pluck('uuid')->all()),
+            'academic_years' => $this->whenLoaded('academicYears', fn () => $this->academicYears
+                ->map(fn ($y) => ['id' => $y->uuid, 'name' => $y->name])->values()->all()),
             'joined_at' => $this->joined_at?->toIso8601String(),
         ];
     }

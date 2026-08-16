@@ -12,6 +12,8 @@ use App\Modules\Identity\Http\Requests\CreateAssistantRequest;
 use App\Modules\Identity\Http\Requests\UpdateAssistantRequest;
 use App\Modules\Identity\Http\Resources\AssistantResource;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Catalog\Services\AcademicYearContext;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Support\Audit\AuditLogger;
 use Illuminate\Http\JsonResponse;
@@ -34,6 +36,7 @@ class AssistantController
 
     public function __construct(
         private readonly TenantContext $context,
+        private readonly AcademicYearContext $years,
         private readonly PlanLimitGuard $limits,
     ) {}
 
@@ -47,16 +50,20 @@ class AssistantController
     {
         $tenantId = $this->context->tenantOrFail()->getKey();
         $term = $request->query('q');
+        $yearId = $this->years->id();
 
         $page = TenantUser::query()
             ->where('tenant_id', $tenantId)
             ->where('role', TenantUserRole::Assistant->value)
+            // Year-scoped like lessons/packages: when a year is active, only
+            // assistants assigned to it show. Null-year assistants are disallowed.
+            ->when($yearId, fn ($q, $y) => $q->whereHas('academicYears', fn ($qq) => $qq->where('academic_years.id', $y)))
             ->when($request->input('filter.status'), fn ($q, $status) => $q->where('status', $status))
             ->when($term, fn ($q, $t) => $q->whereHas('user', fn ($u) => $u
                 ->where('name', 'like', "%{$t}%")
                 ->orWhere('phone', 'like', "%{$t}%")
                 ->orWhere('email', 'like', "%{$t}%")))
-            ->with('user')
+            ->with(['user', 'academicYears'])
             ->orderByDesc('id')
             ->paginate(30);
 
@@ -67,7 +74,7 @@ class AssistantController
     {
         $tenantId = $this->context->tenantOrFail()->getKey();
 
-        return new AssistantResource($this->assistantOrFail($tenantId, $assistant)->load('user'));
+        return new AssistantResource($this->assistantOrFail($tenantId, $assistant)->load(['user', 'academicYears']));
     }
 
     /** Create or link an assistant, granting the delegated permissions. */
@@ -75,6 +82,10 @@ class AssistantController
     {
         $tenantId = $this->context->tenantOrFail()->getKey();
         $data = $request->validated();
+
+        // Year assignment is mandatory — an assistant must belong to at least one
+        // academic year (defaults to the active year when none is passed).
+        $yearIds = $this->resolveYearIds($data['academic_year_ids'] ?? null, $tenantId);
 
         $existing = User::query()->where('phone', $data['phone'])->first();
 
@@ -106,7 +117,7 @@ class AssistantController
                 }
             }
 
-            TenantUser::create([
+            $membership = TenantUser::create([
                 'tenant_id' => $tenantId,
                 'user_id' => $user->id,
                 'role' => TenantUserRole::Assistant->value,
@@ -114,12 +125,13 @@ class AssistantController
                 'permissions' => $permissions,
                 'joined_at' => now(),
             ]);
+            $membership->academicYears()->sync($yearIds);
 
             return $user;
         });
 
         app(AuditLogger::class)->log('assistant.created', [
-            'assistant_id' => $assistant->getKey(), 'permissions' => $permissions,
+            'assistant_id' => $assistant->getKey(), 'permissions' => $permissions, 'academic_year_ids' => $yearIds,
         ], $tenantId, 'user', $assistant->getKey());
 
         return response()->json(['data' => array_filter([
@@ -164,13 +176,50 @@ class AssistantController
             $membership->save();
         }
 
+        if (array_key_exists('academic_year_ids', $data)) {
+            $yearIds = $this->resolveYearIds($data['academic_year_ids'], $tenantId);
+            $membership->academicYears()->sync($yearIds);
+            $changes['academic_year_ids'] = $yearIds;
+        }
+
         if ($changes !== []) {
             app(AuditLogger::class)->log('assistant.updated', [
                 'assistant_id' => $assistant->getKey(), ...$changes,
             ], $tenantId, 'user', $assistant->getKey());
         }
 
-        return new AssistantResource($membership->fresh()->load('user'));
+        return new AssistantResource($membership->fresh()->load(['user', 'academicYears']));
+    }
+
+    /**
+     * Resolve the assistant's target years to internal ids. Accepts a list of
+     * year UUIDs from the client; falls back to the active (header) year when
+     * none is given. Throws 422 if the result is empty — a year-less assistant
+     * is disallowed.
+     *
+     * @param  array<int, string>|null  $uuids
+     * @return list<int>
+     */
+    private function resolveYearIds(?array $uuids, int $tenantId): array
+    {
+        if (! empty($uuids)) {
+            $ids = AcademicYear::query()
+                ->where('tenant_id', $tenantId)
+                ->whereIn('uuid', $uuids)
+                ->pluck('id')
+                ->all();
+        } else {
+            $active = $this->years->id();
+            $ids = $active !== null ? [$active] : [];
+        }
+
+        if ($ids === []) {
+            throw ValidationException::withMessages([
+                'academic_year_ids' => __('Select at least one academic year for the assistant.'),
+            ]);
+        }
+
+        return array_values(array_map('intval', $ids));
     }
 
     /** Remove the assistant from this academy (drop membership + sign out). */

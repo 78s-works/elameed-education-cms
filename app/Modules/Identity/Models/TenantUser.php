@@ -3,12 +3,14 @@
 namespace App\Modules\Identity\Models;
 
 use App\Models\User;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\Permission;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 /**
  * A user's membership + role within one tenant. GLOBAL mapping table — not RLS-
@@ -48,6 +50,17 @@ class TenantUser extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * The academic years this membership is scoped to (M18 — assistants can serve
+     * several years at once). Students pin their single year on StudentProfile
+     * instead; this pivot is used for the assistant roster's year filter.
+     */
+    public function academicYears(): BelongsToMany
+    {
+        return $this->belongsToMany(AcademicYear::class, 'assistant_academic_year', 'tenant_user_id', 'academic_year_id')
+            ->withTimestamps();
     }
 
     public function isActive(): bool

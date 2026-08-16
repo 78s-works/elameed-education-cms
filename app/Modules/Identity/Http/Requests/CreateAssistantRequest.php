@@ -28,6 +28,9 @@ class CreateAssistantRequest extends FormRequest
             'password' => ['nullable', 'string', Password::min(8)],
             'permissions' => ['sometimes', 'array'],
             'permissions.*' => [Rule::enum(Permission::class)],
+            // Year assignment (UUIDs). Optional — defaults to the active year.
+            'academic_year_ids' => ['sometimes', 'array'],
+            'academic_year_ids.*' => ['string', 'uuid'],
         ];
     }
 }

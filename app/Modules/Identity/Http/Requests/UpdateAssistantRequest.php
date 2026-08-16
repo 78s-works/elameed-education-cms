@@ -27,6 +27,9 @@ class UpdateAssistantRequest extends FormRequest
             'status' => ['sometimes', Rule::in([MembershipStatus::Active->value, MembershipStatus::Suspended->value])],
             'permissions' => ['sometimes', 'array'],
             'permissions.*' => [Rule::enum(Permission::class)],
+            // Re-scope the assistant's years (UUIDs). Must be non-empty when sent.
+            'academic_year_ids' => ['sometimes', 'array', 'min:1'],
+            'academic_year_ids.*' => ['string', 'uuid'],
         ];
     }
 }

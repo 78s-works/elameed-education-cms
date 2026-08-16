@@ -16,6 +16,7 @@ use App\Modules\Identity\Http\Requests\UpdateStudentRequest;
 use App\Modules\Identity\Http\Resources\StudentResource;
 use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Catalog\Services\AcademicYearContext;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Modules\Wallet\Services\LedgerService;
 use App\Support\Audit\AuditLogger;
@@ -38,6 +39,7 @@ class StudentController
 
     public function __construct(
         private readonly TenantContext $context,
+        private readonly AcademicYearContext $years,
         private readonly LedgerService $ledger,
         private readonly PlanLimitGuard $limits,
     ) {}
@@ -46,10 +48,20 @@ class StudentController
     {
         $tenantId = $this->context->tenantOrFail()->getKey();
         $term = $request->query('q');
+        $yearId = $this->years->id();
 
         $page = TenantUser::query()
             ->where('tenant_id', $tenantId)
             ->where('role', TenantUserRole::Student->value)
+            // Year-scoped roster: when a year is active, only students pinned to it
+            // (StudentProfile.academic_year_id) show — like lessons/packages.
+            ->when($yearId, fn ($q, $y) => $q->whereIn(
+                'user_id',
+                StudentProfile::withoutGlobalScopes()
+                    ->where('tenant_id', $tenantId)
+                    ->where('academic_year_id', $y)
+                    ->select('user_id'),
+            ))
             ->when($request->input('filter.status'), fn ($q, $status) => $q->where('status', $status))
             ->when($term, fn ($q, $t) => $q->whereHas('user', fn ($u) => $u
                 ->where('name', 'like', "%{$t}%")
@@ -100,6 +112,12 @@ class StudentController
     {
         $tenantId = $this->context->tenantOrFail()->getKey();
         $data = $request->validated();
+
+        // A student MUST be pinned to a year (null rows disallowed). The active
+        // year comes from the X-Academic-Year header the panel always sends.
+        if ($this->years->id() === null) {
+            throw ValidationException::withMessages(['academic_year' => __('Select an academic year before adding a student.')]);
+        }
 
         $existing = User::query()->where('phone', $data['phone'])->first();
 
@@ -294,9 +312,18 @@ class StudentController
     /** Create/update the student's per-academy registration profile. */
     private function syncProfile(int $tenantId, int $userId, array $data): void
     {
+        $fields = StudentProfile::fields($data);
+
+        // Pin the student to the active academic year (stamped from the header).
+        // Only set on create / when a year is resolved — never blank an existing pin.
+        $yearId = $this->years->id();
+        if ($yearId !== null) {
+            $fields['academic_year_id'] = $yearId;
+        }
+
         StudentProfile::withoutGlobalScopes()->updateOrCreate(
             ['tenant_id' => $tenantId, 'user_id' => $userId],
-            StudentProfile::fields($data),
+            $fields,
         );
     }
 
