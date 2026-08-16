@@ -57,6 +57,27 @@ class PublicCatalogController
         };
     }
 
+    /**
+     * GET /academic-years — the tenant's academic years (grades), for the public
+     * registration grade picker. Tenant-scoped (BelongsToTenant); no auth, no
+     * year context needed (this is where a student CHOOSES their year).
+     */
+    public function academicYears(): \Illuminate\Http\JsonResponse
+    {
+        $years = AcademicYear::query()
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get(['uuid', 'name', 'sort_order'])
+            ->map(fn (AcademicYear $y) => [
+                'uuid' => $y->uuid,
+                'name' => $y->name,
+                'sort_order' => (int) $y->sort_order,
+            ])
+            ->all();
+
+        return response()->json(['data' => $years]);
+    }
+
     public function show(Course $course): CourseDetailResource
     {
         // Route binding scopes to the tenant; hidden/scheduled courses 404 publicly.

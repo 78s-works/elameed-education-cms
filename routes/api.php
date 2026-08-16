@@ -208,6 +208,10 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::get('/courses/{course:slug}/reviews', [ReviewController::class, 'index']);
     });
 
+    // Public academic-year (grade) list for the registration grade picker. Tenant-
+    // scoped; NOT year-scoped (this is where a student picks their year).
+    Route::get('/academic-years', [PublicCatalogController::class, 'academicYears']);
+
     // Identity, auth & OTP (M11) — public
     Route::post('/auth/register', [AuthController::class, 'register'])->middleware('throttle:otp');
     Route::post('/auth/otp/request', [AuthController::class, 'requestOtp'])->middleware('throttle:otp');

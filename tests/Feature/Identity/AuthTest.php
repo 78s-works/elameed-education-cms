@@ -100,6 +100,23 @@ class AuthTest extends TestCase
         return $code;
     }
 
+    /** A persisted academic year (grade) for this tenant; reused by name. The
+     *  manual register path now requires its uuid as `academic_year_uuid`. */
+    private function academicYear(string $name = 'الثالث الثانوي'): AcademicYear
+    {
+        $year = AcademicYear::withoutGlobalScopes()
+            ->where('tenant_id', $this->tenant->id)
+            ->where('name', $name)
+            ->first();
+        if ($year === null) {
+            $year = new AcademicYear(['name' => $name, 'sort_order' => 0]);
+            $year->tenant_id = $this->tenant->id;
+            $year->save();
+        }
+
+        return $year;
+    }
+
     private function setAccess(bool $login, bool $registration, string $verificationMode = 'auto'): void
     {
         $profile = new TeacherProfile([
@@ -122,7 +139,7 @@ class AuthTest extends TestCase
             'password_confirmation' => 'password123',
             'gender' => 'أنثى',
             'governorate' => 'القاهرة',
-            'academic_year' => 'الثالث الثانوي',
+            'academic_year_uuid' => $this->academicYear()->uuid,
             'guardian_phone' => '01099999999',
         ]);
 
@@ -144,6 +161,43 @@ class AuthTest extends TestCase
         ]);
     }
 
+    public function test_register_pins_student_to_the_chosen_academic_year(): void
+    {
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+        $year = $this->academicYear('الثاني الثانوي');
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Pinned',
+            'phone' => '01000000040',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'academic_year_uuid' => $year->uuid,
+        ])->assertCreated();
+
+        $user = User::where('phone', '01000000040')->firstOrFail();
+        // The FK pins the student to the year; the label mirrors the year name.
+        $this->assertDatabaseHas('student_profiles', [
+            'user_id' => $user->id,
+            'academic_year_id' => $year->id,
+            'academic_year' => 'الثاني الثانوي',
+        ]);
+    }
+
+    public function test_register_rejects_an_unknown_academic_year_uuid(): void
+    {
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Bad Year',
+            'phone' => '01000000041',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'academic_year_uuid' => (string) Str::uuid(),
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+
+        $this->assertDatabaseMissing('users', ['phone' => '01000000041']);
+    }
+
     public function test_register_persists_study_mode_and_resolves_center_uuid(): void
     {
         $this->setAccess(login: true, registration: true, verificationMode: 'auto');
@@ -156,6 +210,7 @@ class AuthTest extends TestCase
             'password_confirmation' => 'password123',
             'study_mode' => 'center',
             'center' => $center->uuid, // uuid, not the numeric id
+            'academic_year_uuid' => $this->academicYear()->uuid,
         ])->assertCreated();
 
         $user = User::where('phone', '01000000020')->firstOrFail();
@@ -175,6 +230,7 @@ class AuthTest extends TestCase
             'phone' => '01000000021',
             'password' => 'password123',
             'password_confirmation' => 'password123',
+            'academic_year_uuid' => $this->academicYear()->uuid,
         ])->assertCreated();
 
         $user = User::where('phone', '01000000021')->firstOrFail();
@@ -195,6 +251,7 @@ class AuthTest extends TestCase
             'password' => 'password123',
             'password_confirmation' => 'password123',
             'study_mode' => 'both',
+            'academic_year_uuid' => $this->academicYear()->uuid,
         ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
 
         $this->assertDatabaseMissing('users', ['phone' => '01000000022']);
@@ -214,6 +271,7 @@ class AuthTest extends TestCase
             'password_confirmation' => 'password123',
             'study_mode' => 'center',
             'center' => $foreignCenter->uuid,
+            'academic_year_uuid' => $this->academicYear()->uuid,
         ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
 
         $this->assertDatabaseMissing('users', ['phone' => '01000000023']);
@@ -337,6 +395,7 @@ class AuthTest extends TestCase
                 'password' => 'password123',
                 'password_confirmation' => 'password123',
                 'guardian_phone' => $guardian,
+                'academic_year_uuid' => $this->academicYear()->uuid,
             ])->assertCreated();
         }
 
@@ -354,7 +413,7 @@ class AuthTest extends TestCase
             'password_confirmation' => 'password123',
             'gender' => 'أنثى',
             'governorate' => 'القاهرة',
-            'academic_year' => 'الثالث الثانوي',
+            'academic_year_uuid' => $this->academicYear()->uuid,
             'guardian_phone' => '01099999998',
         ]);
 
@@ -385,6 +444,7 @@ class AuthTest extends TestCase
             'phone' => '01000000002',
             'password' => 'password123',
             'password_confirmation' => 'password123',
+            'academic_year_uuid' => $this->academicYear()->uuid,
         ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
     }
 
@@ -403,7 +463,7 @@ class AuthTest extends TestCase
             'password_confirmation' => 'password123',
             'gender' => 'أنثى',
             'governorate' => 'القاهرة',
-            'academic_year' => 'الثالث الثانوي',
+            'academic_year_uuid' => $this->academicYear()->uuid,
             'guardian_phone' => '01099999998',
         ])->assertStatus(201);
 
@@ -513,6 +573,7 @@ class AuthTest extends TestCase
             'phone' => '01000000012',
             'password' => 'password123',
             'password_confirmation' => 'password123',
+            'academic_year_uuid' => $this->academicYear()->uuid,
         ])->assertStatus(403)->assertJsonPath('error.code', 'forbidden');
 
         // Nothing was created.

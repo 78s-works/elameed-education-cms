@@ -10,6 +10,7 @@ use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
+use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Models\MediaAsset;
@@ -293,6 +294,39 @@ class CourseCatalogTest extends TestCase
 
         sort($names);
         $this->assertSame(['Both', 'Center'], $names); // `both` is a wildcard; online excluded
+    }
+
+    public function test_catalogue_scopes_to_a_center_students_channel_ignoring_the_query(): void
+    {
+        // A single-channel student's study_mode is authoritative: online content is
+        // hidden from a center student even if the request forges ?access_mode=online.
+        $tenant = $this->makeTenant('demo');
+        $course = $this->makeCourse($tenant);
+        foreach (['center', 'online', 'both'] as $mode) {
+            $this->makeLesson($tenant, $course, ['title' => ucfirst($mode), 'is_purchasable' => true, 'access_mode' => $mode]);
+        }
+
+        $student = User::factory()->create();
+        TenantUser::create([
+            'tenant_id' => $tenant->id,
+            'user_id' => $student->id,
+            'role' => TenantUserRole::Student->value,
+            'status' => MembershipStatus::Active->value,
+            'joined_at' => now(),
+        ]);
+        $profile = new StudentProfile(['study_mode' => 'center']);
+        $profile->tenant_id = $tenant->id;
+        $profile->user_id = $student->id;
+        $profile->save();
+
+        Sanctum::actingAs($student);
+
+        $names = collect($this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson('/api/v1/courses?view=lessons&access_mode=online')
+            ->assertOk()->json('data'))->pluck('name')->all();
+
+        sort($names);
+        $this->assertSame(['Both', 'Center'], $names); // online excluded despite the query
     }
 
     public function test_catalogue_academic_year_filter_narrows_lessons(): void

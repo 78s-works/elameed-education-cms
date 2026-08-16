@@ -3,6 +3,7 @@
 namespace App\Modules\Identity\Actions;
 
 use App\Models\User;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Centers\Models\Center;
 use App\Modules\Centers\Services\CenterIdCodeRedemptionService;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -100,8 +101,25 @@ class RegisterStudentAction
                 $profile->center_id = $idCode->center_id;
                 $profile->study_mode = 'center';
                 $profile->academic_year = $idCode->gradeLabel();
+                // Best-effort pin: match the code's grade label to a real academic
+                // year by name so the student is scoped like the manual path. Stays
+                // null (unpinned) if the teacher has no year of that name.
+                $profile->academic_year_id = AcademicYear::query()
+                    ->where('name', $idCode->gradeLabel())
+                    ->value('id');
             } elseif (! empty($data['center'])) {
                 $profile->center_id = Center::query()->where('uuid', $data['center'])->value('id');
+            }
+
+            // Manual path: resolve the chosen academic-year uuid to its FK and mirror
+            // the year name into the free-text `academic_year` label (display + the
+            // student's own profile screen). The uuid was validated in RegisterRequest.
+            if (empty($data['id_code']) && ! empty($data['academic_year_uuid'])) {
+                $year = AcademicYear::query()->where('uuid', $data['academic_year_uuid'])->first();
+                if ($year !== null) {
+                    $profile->academic_year_id = $year->getKey();
+                    $profile->academic_year = $year->name;
+                }
             }
 
             $profile->save();

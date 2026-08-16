@@ -35,6 +35,14 @@ class MeResource extends JsonResource
             // show study_mode without a separate lookup.
             'study_mode' => $this->studentProfile?->study_mode,
             'center' => $this->studentProfile?->center?->uuid,
+            // The student's academic year (grade) — the container their content is
+            // scoped to (server-side). Null for non-students / unpinned students.
+            'academic_year' => $this->studentProfile?->academicYear
+                ? [
+                    'uuid' => $this->studentProfile->academicYear->uuid,
+                    'name' => $this->studentProfile->academicYear->name,
+                ]
+                : null,
             'memberships' => $this->memberships->map(fn ($m) => [
                 'tenant' => $m->tenant?->slug,
                 'tenant_name' => $m->tenant?->name,

@@ -36,6 +36,17 @@ class ResolveAcademicYear
 
     public function handle(Request $request, Closure $next, string $mode = 'required'): Response
     {
+        // Server-authoritative student scoping: a student is pinned to the academic
+        // year (grade) on their profile, set at registration. This OVERRIDES the
+        // client header so a student can only ever see their own year's content —
+        // teachers/assistants (no student profile) still drive scoping by header.
+        $studentYearId = $request->user()?->studentProfile?->academic_year_id;
+        if ($studentYearId !== null) {
+            $this->context->set((int) $studentYearId);
+
+            return $next($request);
+        }
+
         $uuid = $request->header('X-Academic-Year');
 
         if (! is_string($uuid) || $uuid === '') {

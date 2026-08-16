@@ -7,6 +7,7 @@ use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Services\AcademicYearContext;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
+use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
@@ -246,5 +247,33 @@ class AcademicYearTest extends TestCase
             ->getJson('/api/_probe/academic-year')
             ->assertOk()
             ->assertJsonPath('academic_year_id', $year->id);
+    }
+
+    public function test_student_is_pinned_to_their_profile_year_ignoring_header(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $yearA = $this->makeYear($tenant, 'Grade A', 0);
+        $yearB = $this->makeYear($tenant, 'Grade B', 1);
+
+        $student = $this->makeStudent($tenant);
+        $profile = new StudentProfile(['academic_year_id' => $yearA->id]);
+        $profile->tenant_id = $tenant->id;
+        $profile->user_id = $student->id;
+        $profile->save();
+
+        Sanctum::actingAs($student);
+
+        // No header at all → the student is still scoped to their own year (server-
+        // authoritative), where a teacher/assistant would 422 on the strict route.
+        $this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson('/api/_probe/academic-year')
+            ->assertOk()
+            ->assertJsonPath('academic_year_id', $yearA->id);
+
+        // A forged header for another year is ignored — the profile year wins.
+        $this->withHeaders(['X-Tenant' => 'demo', 'X-Academic-Year' => $yearB->uuid])
+            ->getJson('/api/_probe/academic-year')
+            ->assertOk()
+            ->assertJsonPath('academic_year_id', $yearA->id);
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Modules\Identity\Models;
 
 use App\Models\User;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Centers\Models\Center;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
@@ -26,6 +27,7 @@ class StudentProfile extends Model
 
     protected $fillable = [
         'user_id',
+        'academic_year_id',
         'gender',
         'governorate',
         'region',
@@ -45,6 +47,13 @@ class StudentProfile extends Model
     public function center(): BelongsTo
     {
         return $this->belongsTo(Center::class);
+    }
+
+    /** The student's academic year (grade) — the scoping container for their
+     *  content. Null for legacy/unpinned students. */
+    public function academicYear(): BelongsTo
+    {
+        return $this->belongsTo(AcademicYear::class);
     }
 
     /**
