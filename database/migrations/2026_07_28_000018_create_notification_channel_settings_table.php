@@ -6,20 +6,18 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Notification engine — per-tenant channel kill-switch + sender config (doc 10
- * §4, §7). Absence of a row means the channel is allowed; a row with
- * `is_active = false` skips the whole channel for the tenant silently. `config`
- * holds per-tenant sms/mailer sender credentials. Tenant-owned, so RLS-forced.
+ * `notification_channel_settings` — per-tenant channel config. Squashed create
+ * (config folded as text).
  */
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('notification_channel_settings', function (Blueprint $table): void {
+        Schema::create('notification_channel_settings', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->string('channel');
-            $table->json('config')->nullable();
+            $table->text('config')->nullable();
             $table->boolean('is_active')->default(true);
             $table->timestamps();
 

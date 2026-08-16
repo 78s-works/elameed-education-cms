@@ -5,6 +5,10 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
+/**
+ * `orders` — a checkout. Squashed create (folds the later subtotal/discount/
+ * coupon fields). `coupon_id` is a plain FK-less nullable column.
+ */
 return new class extends Migration
 {
     public function up(): void
@@ -15,9 +19,11 @@ return new class extends Migration
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->unsignedBigInteger('total_minor')->default(0);
+            $table->unsignedBigInteger('subtotal_minor')->nullable();
+            $table->unsignedBigInteger('discount_minor')->default(0);
             $table->string('currency', 3)->default('EGP');
-            $table->unsignedBigInteger('coupon_id')->nullable(); // P1.5
-            $table->string('status')->default('pending');        // pending|paid|failed|refunded
+            $table->unsignedBigInteger('coupon_id')->nullable();
+            $table->string('status')->default('pending');
             $table->timestamps();
 
             $table->index(['tenant_id', 'user_id']);
@@ -27,7 +33,7 @@ return new class extends Migration
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->foreignId('order_id')->constrained('orders')->cascadeOnDelete();
-            $table->string('item_type');                          // course|bundle|wallet_topup|book
+            $table->string('item_type');
             $table->unsignedBigInteger('item_id')->nullable();
             $table->unsignedBigInteger('price_minor')->default(0);
             $table->string('title')->nullable();

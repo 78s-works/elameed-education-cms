@@ -6,25 +6,23 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `packages` (VD change set §7.4 LP-1, doc 13 Phase 5) — the recursive content
- * grouping that replaces Course + Unit + Bundle. A package is scoped to one
- * academic year, carries its own access_mode ceiling + price, and contains
- * lessons and/or sub-packages (ordered) via `package_items`.
- *
- * Tenant-scoped (+ RLS on Postgres). Addressed internally by id under the
- * tenant + academic-year scope (a foreign id 404s), mirroring standalone
- * lessons; `uuid` is kept for a future public-catalogue surface.
+ * `packages` — recursive content package (the Unit/Bundle replacement). Squashed
+ * create (folds the media/access fields). `package_type_id` is added by a trailing
+ * migration because it FKs forward to `package_types` (created later).
  */
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('packages', function (Blueprint $table): void {
+        Schema::create('packages', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->uuid('uuid')->unique();
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->foreignId('academic_year_id')->constrained('academic_years')->cascadeOnDelete();
             $table->string('name');
+            $table->text('description')->nullable();
+            $table->string('cover_url', 2048)->nullable();
+            $table->string('promo_video_url', 2048)->nullable();
             $table->enum('access_mode', ['center', 'online', 'both'])->default('both');
             $table->unsignedBigInteger('price_minor')->nullable();
             $table->string('currency', 3)->nullable();

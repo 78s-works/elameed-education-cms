@@ -6,7 +6,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `favorites` — a student's bookmarked courses (FR-M20). Tenant-scoped.
+ * `favorites` — a student's wishlisted courses. Squashed create (folds the later
+ * academic_year_id scoping column).
  */
 return new class extends Migration
 {
@@ -15,11 +16,13 @@ return new class extends Migration
         Schema::create('favorites', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
+            $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('course_id')->constrained('courses')->cascadeOnDelete();
             $table->timestamps();
 
             $table->unique(['tenant_id', 'user_id', 'course_id']);
+            $table->index(['tenant_id', 'academic_year_id']);
         });
 
         TenantRls::enableFor('favorites');

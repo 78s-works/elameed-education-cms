@@ -6,9 +6,11 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `enrollments` — the single source of truth for content access (03_Data_Model.md
- * §3, §5). The playback-authz endpoint checks an active, in-window enrollment
- * before issuing a token.
+ * `enrollments` — a student's access grant to content. Squashed create: folds
+ * unit/lesson access columns and academic_year_id. `unit_id` and `bundle_id` are
+ * dormant FK-less columns (Units/Bundles retired) keeping their legacy index
+ * names. `exam_id` and `package_id` are added by trailing migrations because they
+ * FK forward to tables created later (exams / packages).
  */
 return new class extends Migration
 {
@@ -17,16 +19,24 @@ return new class extends Migration
         Schema::create('enrollments', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
+            $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('course_id')->nullable()->constrained('courses')->cascadeOnDelete();
-            $table->unsignedBigInteger('bundle_id')->nullable(); // P1.5
-            $table->string('source')->default('purchase');       // purchase|wallet|code|manual|center
+            $table->unsignedBigInteger('unit_id')->nullable();
+            $table->foreignId('lesson_id')->nullable()->constrained('lessons')->cascadeOnDelete();
+            $table->unsignedBigInteger('bundle_id')->nullable();
+            $table->string('source')->default('purchase');
             $table->timestamp('starts_at')->nullable();
-            $table->timestamp('expires_at')->nullable();          // from access_days
-            $table->string('status')->default('active');          // active|expired|cancelled
+            $table->timestamp('expires_at')->nullable();
+            $table->string('status')->default('active');
             $table->timestamps();
 
             $table->index(['tenant_id', 'user_id', 'course_id']);
+            $table->index('unit_id', 'enrollments_unit_id_foreign');
+            $table->index('bundle_id', 'enrollments_bundle_id_foreign');
+            $table->index(['tenant_id', 'user_id', 'unit_id']);
+            $table->index(['tenant_id', 'user_id', 'lesson_id']);
+            $table->index(['tenant_id', 'academic_year_id']);
         });
 
         TenantRls::enableFor('enrollments');

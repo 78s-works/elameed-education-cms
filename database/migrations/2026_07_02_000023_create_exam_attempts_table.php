@@ -6,9 +6,9 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `exam_attempts` (03_Data_Model.md §3). Answers are stored denormalised as a
- * JSON blob on the attempt (per the data model), with a `needs_manual_grade`
- * flag when subjective questions await a teacher.
+ * `exam_attempts` — a student's attempt at an exam. Squashed create (folds the
+ * later feedback / corrected_file / needs_manual_grade fields and the
+ * academic_year_id scoping column).
  */
 return new class extends Migration
 {
@@ -17,21 +17,23 @@ return new class extends Migration
         Schema::create('exam_attempts', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
+            $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->foreignId('exam_id')->constrained('exams')->cascadeOnDelete();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
-
             $table->unsignedInteger('attempt_number')->default(1);
             $table->timestamp('started_at')->nullable();
             $table->timestamp('submitted_at')->nullable();
-            $table->unsignedInteger('score')->nullable();      // points awarded
-            $table->unsignedInteger('max_score')->nullable();  // points possible
-            $table->string('status')->default('in_progress');  // in_progress|submitted|graded
-            $table->json('answers')->nullable();               // { qid: {answer, awarded, is_correct} }
+            $table->unsignedInteger('score')->nullable();
+            $table->unsignedInteger('max_score')->nullable();
+            $table->string('status')->default('in_progress');
+            $table->json('answers')->nullable();
+            $table->text('feedback')->nullable();
+            $table->json('corrected_file')->nullable();
             $table->boolean('needs_manual_grade')->default(false);
-
             $table->timestamps();
 
             $table->index(['tenant_id', 'exam_id', 'user_id']);
+            $table->index(['tenant_id', 'academic_year_id']);
         });
 
         TenantRls::enableFor('exam_attempts');

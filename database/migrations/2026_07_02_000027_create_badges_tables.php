@@ -6,8 +6,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `badges` (teacher-defined) + `student_badges` (awarded). Threshold badges are
- * auto-awarded when a student's total points reach `points_threshold` (FR-M19).
+ * `badges` + `student_badges` — gamification badges and their awards. Squashed
+ * create (folds the later academic_year_id scoping column on student_badges).
  */
 return new class extends Migration
 {
@@ -28,11 +28,13 @@ return new class extends Migration
         Schema::create('student_badges', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
+            $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('badge_id')->constrained('badges')->cascadeOnDelete();
             $table->timestamp('awarded_at')->nullable();
 
             $table->unique(['tenant_id', 'user_id', 'badge_id']);
+            $table->index(['tenant_id', 'academic_year_id']);
         });
 
         TenantRls::enableFor('badges');

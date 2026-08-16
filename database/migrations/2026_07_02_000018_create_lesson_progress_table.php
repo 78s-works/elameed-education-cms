@@ -6,8 +6,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `lesson_progress` — watch %, resume position (03_Data_Model.md §3). One row per
- * (user, lesson) within a tenant.
+ * `lesson_progress` — per-student watch state for a lesson. Squashed create
+ * (folds the later academic_year_id scoping column).
  */
 return new class extends Migration
 {
@@ -16,6 +16,7 @@ return new class extends Migration
         Schema::create('lesson_progress', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
+            $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->foreignId('enrollment_id')->nullable()->constrained('enrollments')->nullOnDelete();
             $table->foreignId('lesson_id')->constrained('lessons')->cascadeOnDelete();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
@@ -27,6 +28,7 @@ return new class extends Migration
             $table->timestamps();
 
             $table->unique(['tenant_id', 'user_id', 'lesson_id']);
+            $table->index(['tenant_id', 'academic_year_id']);
         });
 
         TenantRls::enableFor('lesson_progress');

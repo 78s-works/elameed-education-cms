@@ -6,8 +6,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `invoices` — sequential, gap-free number per tenant (03_Data_Model.md §5) for
- * tax/audit. ETA e-receipt (eta_receipt_uuid) is a final-phase addition.
+ * `invoices` — sequential per-tenant invoice for a paid order. Squashed create
+ * (folds the later nullable uuid public identifier).
  */
 return new class extends Migration
 {
@@ -15,6 +15,7 @@ return new class extends Migration
     {
         Schema::create('invoices', function (Blueprint $table) {
             $table->bigIncrements('id');
+            $table->uuid('uuid')->nullable()->unique();
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->foreignId('order_id')->constrained('orders')->cascadeOnDelete();
             $table->unsignedInteger('number');

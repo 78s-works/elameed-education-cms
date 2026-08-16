@@ -6,9 +6,9 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `playback_sessions` — issued short-lived playback tokens for concurrency/device
- * limits + analytics (03_Data_Model.md §3; 02_Architecture.md §7). The token is
- * stored HASHED; the plaintext lives only in the client's manifest/key requests.
+ * `playback_sessions` — short-lived signed playback grants. Squashed create
+ * (folds scope and media_version_id). media_asset_id / media_version_id are
+ * FK-less nullable columns.
  */
 return new class extends Migration
 {
@@ -18,9 +18,11 @@ return new class extends Migration
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
-            $table->foreignId('lesson_id')->constrained('lessons')->cascadeOnDelete();
+            $table->foreignId('lesson_id')->nullable()->constrained('lessons')->cascadeOnDelete();
             $table->unsignedBigInteger('media_asset_id')->nullable();
-            $table->string('token_hash')->index();
+            $table->unsignedBigInteger('media_version_id')->nullable();
+            $table->string('scope')->default('student');
+            $table->string('token_hash');
             $table->string('device_fingerprint')->nullable();
             $table->string('ip', 45)->nullable();
             $table->timestamp('issued_at')->nullable();
@@ -28,6 +30,7 @@ return new class extends Migration
             $table->timestamp('revoked_at')->nullable();
 
             $table->index(['tenant_id', 'user_id']);
+            $table->index('token_hash');
         });
 
         TenantRls::enableFor('playback_sessions');

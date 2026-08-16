@@ -6,9 +6,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `questions` (03_Data_Model.md §3). `exam_id` NULL = a reusable question-bank
- * item; set = attached to that exam. `body` may be null in bubble-sheet mode
- * (the question lives in a printed book, referenced by `book_ref`).
+ * `questions` — exam question bank. Squashed create (folds the later
+ * academic_year_id scoping column).
  */
 return new class extends Migration
 {
@@ -17,20 +16,20 @@ return new class extends Migration
         Schema::create('questions', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
+            $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->foreignId('exam_id')->nullable()->constrained('exams')->cascadeOnDelete();
             $table->foreignId('category_id')->nullable()->constrained('course_categories')->nullOnDelete();
-
-            $table->string('type');                    // mcq | true_false | short | essay | file
+            $table->string('type');
             $table->text('body')->nullable();
-            $table->json('options')->nullable();       // e.g. ["A","B","C","D"]
-            $table->json('correct')->nullable();       // e.g. [1]  (indices) — hidden from students
+            $table->json('options')->nullable();
+            $table->json('correct')->nullable();
             $table->unsignedInteger('points')->default(1);
-            $table->json('book_ref')->nullable();      // {book,page,qno} for bubble-sheet
+            $table->json('book_ref')->nullable();
             $table->unsignedInteger('sort_order')->default(0);
-
             $table->timestamps();
 
             $table->index(['tenant_id', 'exam_id']);
+            $table->index(['tenant_id', 'academic_year_id']);
         });
 
         TenantRls::enableFor('questions');

@@ -6,35 +6,39 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `lesson_sections` (FR-M04-01, "Flexible Lesson Content Structure"). Turns a
- * lesson from a single-video record into an ordered list of typed content
- * sections (lecture video, assignment video, PDF, assignment, quiz). Each row
- * points at exactly one payload: a MediaAsset (media_asset_id) OR an Exam
- * (exam_id). `pdf_kind` is set only for pdf sections. Tenant-scoped.
- *
- * References to media_assets/exams are nullable logical links (not hard FKs) to
- * mirror lessons.video_asset_id and avoid cross-module circular constraints.
+ * `lesson_sections` — the "parts" that make up a lesson. Squashed create: folds
+ * kind/is_required, the restructure part-config enums (access_mode/delivery/
+ * gate_rule/max_tries), youtube_url and academic_year_id. `media_asset_id` and
+ * `exam_id` are FK-less columns (dormant links) keeping their legacy index names.
  */
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('lesson_sections', function (Blueprint $table): void {
+        Schema::create('lesson_sections', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
+            $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->foreignId('lesson_id')->constrained('lessons')->cascadeOnDelete();
-
-            $table->string('type');                 // LessonSectionType
+            $table->string('type');
+            $table->enum('access_mode', ['center', 'online', 'both'])->nullable();
+            $table->enum('delivery', ['video_upload', 'image_upload', 'pdf_upload', 'bubble_sheet'])->nullable();
+            $table->enum('gate_rule', ['must_pass', 'must_submit'])->nullable();
+            $table->unsignedInteger('max_tries')->nullable();
             $table->string('title')->nullable();
             $table->unsignedInteger('sort_order')->default(0);
-
-            $table->unsignedBigInteger('media_asset_id')->nullable()->index();
-            $table->unsignedBigInteger('exam_id')->nullable()->index();
-            $table->string('pdf_kind')->nullable(); // PdfKind (pdf sections only)
-
+            $table->unsignedBigInteger('media_asset_id')->nullable();
+            $table->string('youtube_url', 2048)->nullable();
+            $table->unsignedBigInteger('exam_id')->nullable();
+            $table->string('pdf_kind')->nullable();
+            $table->string('assignment_kind')->nullable();
+            $table->boolean('is_required')->default(true);
             $table->timestamps();
 
             $table->index(['tenant_id', 'lesson_id']);
+            $table->index('media_asset_id');
+            $table->index('exam_id');
+            $table->index(['tenant_id', 'academic_year_id']);
         });
 
         TenantRls::enableFor('lesson_sections');

@@ -5,25 +5,25 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Recharge / activation codes (M12). Two kinds: `wallet` (credits the student's
- * wallet by `amount_minor`) and `course` (enrolls them in `course_id`). Sold at
- * centers; redeemed once by a student. One-time status is the redemption guard.
+ * `activation_codes` — prepaid/redeemable codes. Squashed create (folds the later
+ * generated_by staff pointer).
  */
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('activation_codes', function (Blueprint $table): void {
+        Schema::create('activation_codes', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->uuid('uuid')->unique();
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->string('code', 40);
-            $table->string('type');                              // wallet | course
-            $table->unsignedBigInteger('amount_minor')->nullable(); // wallet codes
-            $table->foreignId('course_id')->nullable()->constrained('courses')->nullOnDelete(); // course codes
+            $table->string('type');
+            $table->unsignedBigInteger('amount_minor')->nullable();
+            $table->foreignId('course_id')->nullable()->constrained('courses')->nullOnDelete();
             $table->foreignId('center_id')->nullable()->constrained('centers')->nullOnDelete();
+            $table->foreignId('generated_by')->nullable()->constrained('users')->nullOnDelete();
             $table->string('batch')->nullable();
-            $table->string('status')->default('active');         // active | redeemed | disabled
+            $table->string('status')->default('active');
             $table->foreignId('redeemed_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamp('redeemed_at')->nullable();
             $table->timestamp('expires_at')->nullable();

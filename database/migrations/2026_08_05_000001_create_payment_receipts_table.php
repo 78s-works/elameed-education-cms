@@ -6,34 +6,28 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `payment_receipts` — VD manual wallet top-ups (R9/R10; doc 12 §2, doc 13 Phase 11).
- * A student uploads a Vodafone Cash / InstaPay receipt image → `pending`; a teacher
- * or `finance`-permitted assistant approves (posts a `student_wallet` credit to the
- * ledger, idempotent on `receipt:{id}`) or rejects it. Fraud controls are human-only
- * (VD-D4) — every top-up stays `pending` until a reviewer acts.
+ * `payment_receipts` — manual (Vodafone Cash / InstaPay) payment proofs awaiting
+ * review. Squashed create (folds the later corrected_amount_minor field).
  */
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('payment_receipts', function (Blueprint $table): void {
+        Schema::create('payment_receipts', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->uuid('uuid')->unique();
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
-            $table->foreignId('user_id')->constrained('users')->cascadeOnDelete(); // the student
-
+            $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->enum('method', ['vodafone_cash', 'instapay']);
             $table->unsignedBigInteger('amount_minor');
+            $table->unsignedBigInteger('corrected_amount_minor')->nullable();
             $table->char('currency', 3)->default('EGP');
-            $table->foreignId('attachment_id')->constrained('attachments')->cascadeOnDelete(); // receipt image
-
+            $table->foreignId('attachment_id')->constrained('attachments')->cascadeOnDelete();
             $table->enum('status', ['pending', 'approved', 'rejected'])->default('pending');
             $table->foreignId('reviewed_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamp('reviewed_at')->nullable();
-            // Set on approve: the student_wallet credit leg posted for this receipt.
             $table->foreignId('ledger_entry_id')->nullable()->constrained('ledger_entries')->nullOnDelete();
             $table->string('reject_reason')->nullable();
-
             $table->timestamps();
 
             $table->index(['tenant_id', 'status']);

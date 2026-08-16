@@ -25,6 +25,7 @@ return new class extends Migration
 
             $table->string('host_video_id')->nullable();      // host's video id
             $table->string('playback_id')->nullable();        // host's playback id (delivery)
+            $table->string('thumbnail_url', 2048)->nullable(); // per-video poster (folded from add_thumbnail_to_media)
             $table->unsignedInteger('duration_sec')->nullable();
             $table->json('meta')->nullable();
             $table->text('error')->nullable();

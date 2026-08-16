@@ -6,19 +6,17 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `part_pass_overrides` (VD change set §7 LP-D3). A teacher (or a
- * `permission:homework` assistant) manually marks a student as having PASSED a
- * must_pass part after they exhaust their retakes. Progression treats an override
- * row as a pass regardless of score/tries. Tenant-scoped; one row per (part,
- * student).
+ * `part_pass_overrides` — teacher grant that marks a gating part as passed for a
+ * student. Squashed create (folds the later academic_year_id scoping column).
  */
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('part_pass_overrides', function (Blueprint $table): void {
+        Schema::create('part_pass_overrides', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
+            $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->foreignId('lesson_section_id')->constrained('lesson_sections')->cascadeOnDelete();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('granted_by')->constrained('users')->cascadeOnDelete();
@@ -28,6 +26,7 @@ return new class extends Migration
 
             $table->unique(['lesson_section_id', 'user_id']);
             $table->index(['tenant_id', 'lesson_section_id']);
+            $table->index(['tenant_id', 'academic_year_id']);
         });
 
         TenantRls::enableFor('part_pass_overrides');

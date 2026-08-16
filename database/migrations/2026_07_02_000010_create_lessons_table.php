@@ -6,11 +6,10 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `lessons` (03_Data_Model.md §3, FR-M04-02..07). Tenant-scoped.
- *
- * `video_asset_id` is a nullable logical reference to media_assets (set by the
- * self-hosted video pipeline in the Media step) — intentionally NOT a hard FK,
- * to avoid a circular dependency with media_assets.lesson_id (attachments).
+ * `lessons` — standalone content units (the Course-grouping tables were retired).
+ * Squashed create: folds youtube video source, availability/extension windows,
+ * price, self-reopen, access_mode and the NOT-NULL academic_year_id. `unit_id`
+ * stays as a dormant FK-less column (Units retired) keeping its legacy index name.
  */
 return new class extends Migration
 {
@@ -19,24 +18,36 @@ return new class extends Migration
         Schema::create('lessons', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
-            $table->foreignId('unit_id')->constrained('units')->cascadeOnDelete();
-            $table->foreignId('course_id')->constrained('courses')->cascadeOnDelete();
+            $table->foreignId('academic_year_id')->constrained('academic_years')->cascadeOnDelete();
+            $table->unsignedBigInteger('unit_id')->nullable();
+            $table->foreignId('course_id')->nullable()->constrained('courses')->cascadeOnDelete();
+            $table->enum('access_mode', ['center', 'online', 'both'])->default('both');
             $table->string('title');
             $table->text('description')->nullable();
             $table->unsignedInteger('sort_order')->default(0);
-
-            $table->unsignedBigInteger('video_asset_id')->nullable()->index();
+            $table->unsignedBigInteger('video_asset_id')->nullable();
+            $table->string('youtube_url', 2048)->nullable();
+            $table->string('active_video_source', 16)->default('upload');
             $table->unsignedInteger('duration_sec')->nullable();
-            $table->unsignedInteger('max_views')->nullable();       // P1.5 (view caps)
+            $table->unsignedInteger('max_views')->nullable();
+            $table->unsignedInteger('availability_days')->nullable()->default(7);
+            $table->unsignedInteger('max_extensions')->default(0);
+            $table->unsignedInteger('self_reopen_limit')->default(0);
+            $table->unsignedInteger('extension_hours')->default(24);
             $table->boolean('is_free_preview')->default(false);
-            $table->json('gating_rule')->nullable();                // {requires_exam_id} — P1.5
-
+            $table->unsignedBigInteger('price_minor')->default(0);
+            $table->string('currency', 3)->default('EGP');
+            $table->boolean('is_purchasable')->default(false);
+            $table->json('gating_rule')->nullable();
             $table->string('visibility')->default('visible');
             $table->timestamp('publish_at')->nullable();
             $table->timestamps();
 
+            $table->index('unit_id', 'lessons_unit_id_foreign');
             $table->index(['tenant_id', 'unit_id']);
             $table->index(['tenant_id', 'course_id']);
+            $table->index('video_asset_id');
+            $table->index(['tenant_id', 'academic_year_id']);
         });
 
         TenantRls::enableFor('lessons');

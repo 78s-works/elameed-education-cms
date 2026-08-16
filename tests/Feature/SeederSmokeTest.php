@@ -15,25 +15,32 @@ class SeederSmokeTest extends TestCase
         $this->seed();
 
         $this->assertDatabaseHas('users', ['phone' => '01000000000']);  // platform admin
-        $this->assertDatabaseHas('users', ['phone' => '0101000001']);   // farag-physics teacher/owner
-        $this->assertDatabaseHas('users', ['phone' => '0101000101']);   // farag-physics, student 1
-        // Physical row counts (assertDatabaseCount counts soft-deleted rows too):
-        //   4 packages (incl. retired legacy-basic), 3 tenants (2 active + 1 closed),
-        //   3 subscriptions (2 active + 1 canceled), 10 courses (5 per academy).
-        $this->assertDatabaseCount('subscription_packages', 4);
-        $this->assertDatabaseCount('tenants', 3);
-        $this->assertDatabaseCount('tenant_subscriptions', 3);
-        $this->assertDatabaseCount('courses', 10);
+        $this->assertDatabaseHas('users', ['phone' => '0101000001']);   // farag-physics teacher
+        $this->assertDatabaseHas('users', ['phone' => '0101000101']);   // year 1, online student
         $this->assertDatabaseHas('tenants', ['slug' => 'farag-physics']);
-        $this->assertDatabaseHas('tenants', ['slug' => 'sara-chemistry']);
 
-        // Re-run must not duplicate anything.
+        // Lean, year-partitioned academy: one tenant, 3 academic years, and per
+        // year a package-type + 3 lessons + 1 package + 2 students.
+        $this->assertDatabaseCount('tenants', 1);
+        $this->assertDatabaseCount('academic_years', 3);
+        $this->assertDatabaseCount('package_types', 3);
+        $this->assertDatabaseCount('packages', 3);
+        $this->assertDatabaseCount('lessons', 9);
+        // 1 teacher + (3 years × 2) students, tenant-scoped.
+        $this->assertDatabaseCount('student_profiles', 6);
+
+        // Every content row is stamped with an academic year (year-dependent seed).
+        $this->assertDatabaseMissing('lessons', ['academic_year_id' => null]);
+        $this->assertDatabaseMissing('packages', ['academic_year_id' => null]);
+        $this->assertDatabaseMissing('student_profiles', ['academic_year_id' => null]);
+
+        // Re-run must not duplicate anything (academy is skipped when present).
         $this->seed();
 
-        $this->assertDatabaseCount('subscription_packages', 4);
-        $this->assertDatabaseCount('tenants', 3);
-        $this->assertDatabaseCount('tenant_subscriptions', 3);
-        $this->assertDatabaseCount('courses', 10);
+        $this->assertDatabaseCount('tenants', 1);
+        $this->assertDatabaseCount('academic_years', 3);
+        $this->assertDatabaseCount('lessons', 9);
+        $this->assertDatabaseCount('packages', 3);
     }
 
     /**

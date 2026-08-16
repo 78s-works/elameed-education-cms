@@ -157,13 +157,16 @@ class PublicCatalogController
      * qualifies when at least one of its packages has a published descendant
      * lesson (walking the recursive package_items).
      */
-    public function packageTypes(PackageItemService $items): AnonymousResourceCollection
+    public function packageTypes(Request $request, PackageItemService $items): AnonymousResourceCollection
     {
         $publishedLessonIds = Lesson::query()->published()->pluck('id')
             ->map(fn ($id) => (int) $id)->all();
         $publishedSet = array_flip($publishedLessonIds);
 
         $types = PackageType::query()
+            // A logged-in student only sees their own year's types (server pin);
+            // otherwise the optional ?academic_year narrowing applies.
+            ->tap(fn (Builder $q) => $this->applyAcademicYear($q, $request))
             ->with(['packages:id,tenant_id,academic_year_id,package_type_id'])
             ->orderBy('sort_order')
             ->orderBy('id')
@@ -286,13 +289,26 @@ class PublicCatalogController
     }
 
     /**
-     * Optional ?academic_year=<uuid> narrowing for the year-scoped lessons/packages
-     * views. The uuid is tenant-scoped by the BelongsToTenant global scope; an
-     * unknown/foreign uuid resolves to no year, yielding an empty result set rather
-     * than silently leaking every year.
+     * Academic-year scoping for the year-scoped lessons/packages views.
+     *
+     * A logged-in student is PINNED to their profile's academic year (grade),
+     * server-authoritative: their catalogue only ever shows their own year and any
+     * `?academic_year=` query is ignored (mirrors the study_mode channel pin and
+     * the ResolveAcademicYear middleware, which can't reach this public route since
+     * it isn't behind auth:sanctum). Anonymous/teacher callers fall back to the
+     * optional `?academic_year=<uuid>` narrowing; an unknown/foreign uuid yields an
+     * empty set rather than leaking every year.
      */
     private function applyAcademicYear(Builder $query, Request $request): void
     {
+        $user = $request->user() ?? auth('sanctum')->user();
+        $studentYearId = $user?->studentProfile?->academic_year_id;
+        if ($studentYearId !== null) {
+            $query->where('academic_year_id', $studentYearId);
+
+            return;
+        }
+
         if (! $request->filled('academic_year')) {
             return;
         }

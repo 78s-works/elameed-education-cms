@@ -6,7 +6,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `course_categories` — teacher's own taxonomy (FR-M04-04). Tenant-scoped.
+ * `course_categories` — tenant-scoped taxonomy for courses. Squashed create
+ * (folds the later academic_year_id scoping column).
  */
 return new class extends Migration
 {
@@ -15,6 +16,7 @@ return new class extends Migration
         Schema::create('course_categories', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
+            $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->string('name');
             $table->string('grade')->nullable();
             $table->string('subject')->nullable();
@@ -24,6 +26,7 @@ return new class extends Migration
             $table->timestamps();
 
             $table->index('tenant_id');
+            $table->index(['tenant_id', 'academic_year_id']);
         });
 
         TenantRls::enableFor('course_categories');

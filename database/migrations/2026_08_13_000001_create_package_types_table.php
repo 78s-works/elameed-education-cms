@@ -6,27 +6,22 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `package_types` (B27) — a teacher-defined category/label for content
- * {@see packages}, scoped to one tenant and one academic year. The teacher
- * creates the types inside a year, then tags each content package with one of
- * that year's types. The year is the ceiling: a package may only reference a
- * type from its own academic year (enforced in PackageRequest).
- *
- * Tenant-scoped (+ RLS on Postgres, dormant on MySQL). Cascade-deletes with its
- * academic year; addressed publicly by uuid, mirroring academic_years.
+ * `package_types` — per-year soft label/grouping for packages. Squashed create
+ * (folds channel + buy_alone; the transient description column was dropped).
  */
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('package_types', function (Blueprint $table): void {
+        Schema::create('package_types', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->uuid('uuid')->unique();
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->foreignId('academic_year_id')->constrained('academic_years')->cascadeOnDelete();
             $table->string('name');
+            $table->string('channel', 16)->default('hybrid');
+            $table->boolean('buy_alone')->default(false);
             $table->integer('sort_order')->default(0);
-            $table->text('description')->nullable();
             $table->timestamps();
 
             $table->unique(['tenant_id', 'academic_year_id', 'name']);

@@ -329,6 +329,39 @@ class CourseCatalogTest extends TestCase
         $this->assertSame(['Both', 'Center'], $names); // online excluded despite the query
     }
 
+    public function test_catalogue_pins_a_student_to_their_profile_year_ignoring_the_query(): void
+    {
+        // A logged-in student's catalogue is server-scoped to their profile's year;
+        // a forged ?academic_year for another year is ignored.
+        $tenant = $this->makeTenant('demo');
+        $course = $this->makeCourse($tenant);
+        $yearA = $this->makeYear($tenant, 'Year A');
+        $yearB = $this->makeYear($tenant, 'Year B');
+        $this->makeLesson($tenant, $course, ['title' => 'In A', 'is_purchasable' => true, 'academic_year_id' => $yearA->id]);
+        $this->makeLesson($tenant, $course, ['title' => 'In B', 'is_purchasable' => true, 'academic_year_id' => $yearB->id]);
+
+        $student = User::factory()->create();
+        TenantUser::create([
+            'tenant_id' => $tenant->id,
+            'user_id' => $student->id,
+            'role' => TenantUserRole::Student->value,
+            'status' => MembershipStatus::Active->value,
+            'joined_at' => now(),
+        ]);
+        $profile = new StudentProfile(['academic_year_id' => $yearA->id, 'study_mode' => 'online']);
+        $profile->tenant_id = $tenant->id;
+        $profile->user_id = $student->id;
+        $profile->save();
+
+        Sanctum::actingAs($student);
+
+        $names = collect($this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson("/api/v1/courses?view=lessons&academic_year={$yearB->uuid}")
+            ->assertOk()->json('data'))->pluck('name')->all();
+
+        $this->assertSame(['In A'], $names); // pinned to Year A; the Year B query is ignored
+    }
+
     public function test_catalogue_academic_year_filter_narrows_lessons(): void
     {
         $tenant = $this->makeTenant('demo');
