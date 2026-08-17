@@ -3,8 +3,7 @@
 namespace Tests\Feature\Media;
 
 use App\Models\User;
-use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
@@ -65,19 +64,16 @@ class YoutubeLessonTest extends TestCase
         return $user;
     }
 
-    /** A visible course → unit → lesson. Attributes let a test set the video source. */
-    private function makeLesson(array $lessonAttrs = [], bool $freeCourse = false): Lesson
+    /** A standalone, priced lesson. Attributes let a test set the video source. */
+    private function makeLesson(array $lessonAttrs = []): Lesson
     {
-        $course = new Course([
-            'title' => 'C', 'visibility' => ContentVisibility::Visible->value,
-            'price_minor' => 10000, 'is_free' => $freeCourse,
-        ]);
-        $course->tenant_id = $this->tenant->id;
-        $course->slug = 'c-'.uniqid();
-        $course->save();
+        $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
 
-        $lesson = new Lesson(array_merge(['course_id' => $course->id, 'title' => 'L'], $lessonAttrs));
+        $lesson = new Lesson(array_merge(['title' => 'L', 'price_minor' => 10000], $lessonAttrs));
         $lesson->tenant_id = $this->tenant->id;
+        $lesson->academic_year_id = $year->id;
         $lesson->save();
 
         return $lesson->fresh();
@@ -144,7 +140,7 @@ class YoutubeLessonTest extends TestCase
     {
         $student = $this->student();
         $lesson = $this->makeLesson(['active_video_source' => 'youtube', 'youtube_url' => self::URL]);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);
 
         Sanctum::actingAs($student);
         $this->withHeader('X-Tenant', 'demo')
@@ -202,22 +198,5 @@ class YoutubeLessonTest extends TestCase
         // No encrypted-HLS token/key leaked when YouTube is active.
         $this->assertArrayNotHasKey('token', $res->json('data'));
         $this->assertArrayNotHasKey('key_url', $res->json('data'));
-    }
-
-    // ---- Non-leak ----------------------------------------------------------
-
-    public function test_public_detail_exposes_source_but_not_the_youtube_url(): void
-    {
-        $lesson = $this->makeLesson(['active_video_source' => 'youtube', 'youtube_url' => self::URL]);
-        $slug = $lesson->course->slug;
-
-        $res = $this->withHeader('X-Tenant', 'demo')->getJson("/api/v1/courses/{$slug}")
-            ->assertOk()
-            ->assertJsonPath('data.lessons.0.has_video', true)
-            ->assertJsonPath('data.lessons.0.active_video_source', 'youtube');
-
-        // The raw YouTube URL is NEVER in the public outline — it's released only
-        // through the enrollment-gated playback endpoint.
-        $this->assertStringNotContainsString(self::VIDEO_ID, $res->getContent());
     }
 }

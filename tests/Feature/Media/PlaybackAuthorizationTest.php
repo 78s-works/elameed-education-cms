@@ -3,8 +3,7 @@
 namespace Tests\Feature\Media;
 
 use App\Models\User;
-use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
@@ -52,18 +51,15 @@ class PlaybackAuthorizationTest extends TestCase
         return $user;
     }
 
-    private function lessonWithVideo(bool $freePreview = false, bool $freeCourse = false): Lesson
+    private function lessonWithVideo(bool $freePreview = false, bool $freeLesson = false): Lesson
     {
-        $course = new Course([
-            'title' => 'C', 'visibility' => ContentVisibility::Visible->value,
-            'price_minor' => 10000, 'is_free' => $freeCourse,
-        ]);
-        $course->tenant_id = $this->tenant->id;
-        $course->slug = 'c-'.uniqid();
-        $course->save();
+        $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
 
-        $lesson = new Lesson(['course_id' => $course->id, 'title' => 'L', 'is_free_preview' => $freePreview]);
+        $lesson = new Lesson(['title' => 'L', 'is_free_preview' => $freePreview, 'price_minor' => 10000, 'is_free' => $freeLesson]);
         $lesson->tenant_id = $this->tenant->id;
+        $lesson->academic_year_id = $year->id;
         $lesson->save();
 
         $asset = new MediaAsset(['type' => MediaType::HlsVideo->value, 'status' => MediaStatus::Ready->value, 'source_key' => 'media/source/x.mp4']);
@@ -101,7 +97,7 @@ class PlaybackAuthorizationTest extends TestCase
     {
         $student = $this->student();
         $lesson = $this->lessonWithVideo();
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);
         $this->seedRendition($lesson->video_asset_id, $student->id);
 
         Sanctum::actingAs($student);
@@ -164,7 +160,7 @@ class PlaybackAuthorizationTest extends TestCase
     {
         $student = $this->student();
         $lesson = $this->lessonWithVideo();
-        $enroll = app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+        $enroll = app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);
         $this->seedRendition($lesson->video_asset_id, $student->id);
 
         Sanctum::actingAs($student);

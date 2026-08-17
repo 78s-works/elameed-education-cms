@@ -7,7 +7,7 @@ use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonSection;
 use App\Modules\Catalog\Models\PartPassOverride;
@@ -54,20 +54,15 @@ class PartGatingTest extends TestCase
         return $user;
     }
 
-    private function course(): Course
+    private function lesson(): Lesson
     {
-        $course = new Course(['title' => 'C', 'visibility' => ContentVisibility::Visible->value, 'price_minor' => 10000, 'is_free' => false]);
-        $course->tenant_id = $this->tenant->id;
-        $course->slug = 'c-'.uniqid();
-        $course->save();
+        $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
 
-        return $course;
-    }
-
-    private function lesson(Course $course): Lesson
-    {
-        $lesson = new Lesson(['course_id' => $course->id, 'title' => 'L', 'sort_order' => 0]);
+        $lesson = new Lesson(['title' => 'L', 'sort_order' => 0, 'price_minor' => 10000]);
         $lesson->tenant_id = $this->tenant->id;
+        $lesson->academic_year_id = $year->id;
         $lesson->save();
 
         return $lesson->fresh();
@@ -77,7 +72,7 @@ class PartGatingTest extends TestCase
     private function exam(Lesson $lesson, array $attrs = []): Exam
     {
         $exam = new Exam(array_merge([
-            'title' => 'X', 'course_id' => $lesson->course_id, 'lesson_id' => $lesson->id,
+            'title' => 'X', 'lesson_id' => $lesson->id,
             'type' => ExamType::LessonQuiz->value, 'pass_percent' => 60,
             'pass_mode' => 'percent', 'pass_value' => 60, 'is_published' => true,
         ], $attrs));
@@ -109,9 +104,9 @@ class PartGatingTest extends TestCase
         return $attempt;
     }
 
-    private function enroll(User $student, Course $course): void
+    private function enroll(User $student, Lesson $lesson): void
     {
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $course, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);
     }
 
     private function sections(User $student, Lesson $lesson): TestResponse
@@ -134,9 +129,8 @@ class PartGatingTest extends TestCase
     public function test_must_submit_gate_locks_later_part_until_submitted(): void
     {
         $student = $this->member(TenantUserRole::Student);
-        $course = $this->course();
-        $lesson = $this->lesson($course);
-        $this->enroll($student, $course);
+        $lesson = $this->lesson();
+        $this->enroll($student, $lesson);
 
         $exam = $this->exam($lesson, ['type' => ExamType::Homework->value]);
         $this->section($lesson, ['type' => 'homework', 'exam_id' => $exam->id, 'gate_rule' => 'must_submit', 'sort_order' => 0]);
@@ -159,9 +153,8 @@ class PartGatingTest extends TestCase
     public function test_must_pass_gate_stays_locked_until_a_passing_attempt(): void
     {
         $student = $this->member(TenantUserRole::Student);
-        $course = $this->course();
-        $lesson = $this->lesson($course);
-        $this->enroll($student, $course);
+        $lesson = $this->lesson();
+        $this->enroll($student, $lesson);
 
         $exam = $this->exam($lesson); // pass_mode=percent, pass_value=60
         $this->section($lesson, ['type' => 'quiz', 'exam_id' => $exam->id, 'gate_rule' => 'must_pass', 'sort_order' => 0]);
@@ -183,9 +176,8 @@ class PartGatingTest extends TestCase
     {
         $student = $this->member(TenantUserRole::Student);
         $teacher = $this->member(TenantUserRole::Teacher);
-        $course = $this->course();
-        $lesson = $this->lesson($course);
-        $this->enroll($student, $course);
+        $lesson = $this->lesson();
+        $this->enroll($student, $lesson);
 
         $exam = $this->exam($lesson);
         $gate = $this->section($lesson, ['type' => 'quiz', 'exam_id' => $exam->id, 'gate_rule' => 'must_pass', 'sort_order' => 0]);
@@ -210,9 +202,8 @@ class PartGatingTest extends TestCase
     public function test_max_tries_caps_retakes_on_the_backing_exam(): void
     {
         $student = $this->member(TenantUserRole::Student);
-        $course = $this->course();
-        $lesson = $this->lesson($course);
-        $this->enroll($student, $course);
+        $lesson = $this->lesson();
+        $this->enroll($student, $lesson);
 
         // Part caps at 1 try even though the exam itself allows unlimited (0).
         $exam = $this->exam($lesson, ['attempts_allowed' => 0]);
@@ -231,9 +222,8 @@ class PartGatingTest extends TestCase
     public function test_unlimited_max_tries_allows_another_attempt(): void
     {
         $student = $this->member(TenantUserRole::Student);
-        $course = $this->course();
-        $lesson = $this->lesson($course);
-        $this->enroll($student, $course);
+        $lesson = $this->lesson();
+        $this->enroll($student, $lesson);
 
         // Part max_tries null (unlimited) overrides the exam's own cap of 1.
         $exam = $this->exam($lesson, ['attempts_allowed' => 1]);
@@ -252,9 +242,8 @@ class PartGatingTest extends TestCase
     public function test_section_exposes_per_part_result_with_degree_and_retakes(): void
     {
         $student = $this->member(TenantUserRole::Student);
-        $course = $this->course();
-        $lesson = $this->lesson($course);
-        $this->enroll($student, $course);
+        $lesson = $this->lesson();
+        $this->enroll($student, $lesson);
 
         // pass_value 60% — a 50% then an 80% attempt: best degree 80, passed true.
         $exam = $this->exam($lesson, ['pass_mode' => 'percent', 'pass_value' => 60]);
@@ -275,9 +264,8 @@ class PartGatingTest extends TestCase
     public function test_part_result_reflects_a_failing_best_attempt(): void
     {
         $student = $this->member(TenantUserRole::Student);
-        $course = $this->course();
-        $lesson = $this->lesson($course);
-        $this->enroll($student, $course);
+        $lesson = $this->lesson();
+        $this->enroll($student, $lesson);
 
         $exam = $this->exam($lesson, ['pass_mode' => 'percent', 'pass_value' => 60]);
         $this->section($lesson, ['type' => 'quiz', 'exam_id' => $exam->id, 'gate_rule' => 'must_pass', 'sort_order' => 0]);

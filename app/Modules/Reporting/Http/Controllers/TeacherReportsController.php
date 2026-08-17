@@ -234,7 +234,7 @@ class TeacherReportsController
         $examsTotal = Exam::query()->count();
 
         // ── Attendance (center check-in → online access; year-scoped by trait) ─
-        $sectionAttendance = fn () => AttendanceRecord::query()->whereNotNull('lesson_section_id');
+        $sectionAttendance = fn () => AttendanceRecord::query()->whereNotNull('center_session_id');
         $attendanceCheckins = $sectionAttendance()->count();
         $attendanceActive = (clone $sectionAttendance())
             ->where(fn ($q) => $q->whereNull('access_expires_at')->orWhere('access_expires_at', '>', $now))

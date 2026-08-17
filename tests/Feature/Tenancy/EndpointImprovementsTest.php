@@ -4,8 +4,8 @@ namespace Tests\Feature\Tenancy;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
@@ -48,16 +48,6 @@ class EndpointImprovementsTest extends TestCase
         return $u;
     }
 
-    private function course(string $title, ContentVisibility $visibility): Course
-    {
-        $c = new Course(['title' => $title, 'visibility' => $visibility->value, 'price_minor' => 1000, 'is_free' => false]);
-        $c->tenant_id = $this->tenant->id;
-        $c->slug = strtolower($title).'-'.uniqid();
-        $c->save();
-
-        return $c;
-    }
-
     public function test_landing_courses_section_lists_published_purchasable_lessons_only(): void
     {
         // The courses section now surfaces standalone lessons (VD §7). Only
@@ -79,6 +69,13 @@ class EndpointImprovementsTest extends TestCase
 
     private function lesson(string $title, ContentVisibility $visibility, bool $purchasable): Lesson
     {
+        $year = AcademicYear::where('tenant_id', $this->tenant->id)->orderBy('id')->first();
+        if ($year === null) {
+            $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+            $year->tenant_id = $this->tenant->id;
+            $year->save();
+        }
+
         $l = new Lesson([
             'title' => $title,
             'visibility' => $visibility->value,
@@ -86,6 +83,7 @@ class EndpointImprovementsTest extends TestCase
             'price_minor' => 1000,
         ]);
         $l->tenant_id = $this->tenant->id;
+        $l->academic_year_id = $year->id;
         $l->save();
 
         return $l;

@@ -7,7 +7,8 @@ use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Assessment\Models\Question;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -28,7 +29,7 @@ class ExamsTest extends TestCase
 
     private Tenant $tenant;
 
-    private Course $course;
+    private Lesson $lesson;
 
     private array $h;
 
@@ -38,7 +39,7 @@ class ExamsTest extends TestCase
         Cache::flush();
         $this->tenant = Tenant::create(['slug' => 'demo', 'name' => 'Demo', 'status' => TenantStatus::Active]);
         $this->h = ['X-Tenant' => 'demo'];
-        $this->course = $this->makeCourse();
+        $this->lesson = $this->makeLesson();
     }
 
     private function member(TenantUserRole $role): User
@@ -52,31 +53,35 @@ class ExamsTest extends TestCase
         return $user;
     }
 
-    private function makeCourse(): Course
+    private function makeLesson(): Lesson
     {
-        $c = new Course(['title' => 'Course', 'visibility' => ContentVisibility::Visible->value]);
-        $c->tenant_id = $this->tenant->id;
-        $c->slug = 'course-'.uniqid();
-        $c->save();
+        $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
 
-        return $c;
+        $l = new Lesson(['title' => 'Lesson', 'visibility' => ContentVisibility::Visible->value]);
+        $l->tenant_id = $this->tenant->id;
+        $l->academic_year_id = $year->id;
+        $l->save();
+
+        return $l;
     }
 
     private function enrolledStudent(): User
     {
         $student = $this->member(TenantUserRole::Student);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $this->course, EnrollmentSource::Manual);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $this->lesson, EnrollmentSource::Manual);
 
         return $student;
     }
 
     private function makeExam(array $attrs = []): Exam
     {
-        // Default to a course-scoped lesson_quiz so enrollment still gates access
+        // Default to a lesson-scoped lesson_quiz so enrollment still gates access
         // (a free_exam would bypass enrollment and break the access tests).
         $exam = new Exam(array_merge(['title' => 'Quiz', 'type' => 'lesson_quiz', 'is_published' => true, 'pass_percent' => 50, 'attempts_allowed' => 1], $attrs));
         $exam->tenant_id = $this->tenant->id;
-        $exam->course_id = $this->course->id;
+        $exam->lesson_id = $this->lesson->id;
         $exam->save();
 
         return $exam;

@@ -3,8 +3,7 @@
 namespace Tests\Feature\Media;
 
 use App\Models\User;
-use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
@@ -50,13 +49,13 @@ class MediaNotReadyTest extends TestCase
     /** A ready HLS lesson whose source_key file is intentionally absent on disk. */
     private function lessonWithMissingSource(bool $freePreview = true): Lesson
     {
-        $course = new Course(['title' => 'C', 'visibility' => ContentVisibility::Visible->value, 'price_minor' => 10000, 'is_free' => false]);
-        $course->tenant_id = $this->tenant->id;
-        $course->slug = 'c-'.uniqid();
-        $course->save();
+        $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
 
-        $lesson = new Lesson(['course_id' => $course->id, 'title' => 'L', 'is_free_preview' => $freePreview]);
+        $lesson = new Lesson(['title' => 'L', 'is_free_preview' => $freePreview, 'price_minor' => 10000, 'is_free' => false]);
         $lesson->tenant_id = $this->tenant->id;
+        $lesson->academic_year_id = $year->id;
         $lesson->save();
 
         // status = ready, source_key set — but the file is never written to the fake disk.

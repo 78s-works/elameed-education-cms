@@ -4,7 +4,7 @@ namespace Tests\Feature\Commerce;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Models\Coupon;
 use App\Modules\Commerce\Models\Order;
@@ -49,28 +49,22 @@ class CouponTest extends TestCase
         return $user;
     }
 
-    private function course(int $priceMinor, ?Tenant $tenant = null): Course
-    {
-        $tenant ??= $this->tenant;
-        $course = new Course([
-            'title' => 'Paid', 'price_minor' => $priceMinor,
-            'visibility' => ContentVisibility::Visible->value, 'purchase_enabled' => true,
-        ]);
-        $course->tenant_id = $tenant->id;
-        $course->slug = 'paid-'.uniqid();
-        $course->save();
-
-        return $course;
-    }
-
     private function lesson(int $priceMinor): Lesson
     {
+        $year = AcademicYear::where('tenant_id', $this->tenant->id)->orderBy('id')->first();
+        if ($year === null) {
+            $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+            $year->tenant_id = $this->tenant->id;
+            $year->save();
+        }
+
         $lesson = new Lesson([
             'title' => 'Lecture', 'price_minor' => $priceMinor, 'is_purchasable' => true,
             'visibility' => ContentVisibility::Visible->value,
         ]);
         $lesson->tenant_id = $this->tenant->id;
-        $lesson->save(); // academic_year_id auto-filled by Lesson::booted()
+        $lesson->academic_year_id = $year->id;
+        $lesson->save();
 
         return $lesson;
     }
@@ -121,11 +115,11 @@ class CouponTest extends TestCase
     public function test_percent_coupon_discounts_quote_and_order(): void
     {
         $student = $this->member(TenantUserRole::Student);
-        $course = $this->course(15000);
+        $lesson = $this->lesson(15000);
         $this->coupon(['code' => 'SAVE20', 'value' => 20]);
         Sanctum::actingAs($student);
         $h = ['X-Tenant' => 'demo'];
-        $cart = ['items' => [['type' => 'course', 'course' => $course->uuid]], 'coupon' => 'SAVE20'];
+        $cart = ['items' => [['type' => 'lesson', 'lesson' => $lesson->id]], 'coupon' => 'SAVE20'];
 
         $this->withHeaders($h)->postJson('/api/v1/checkout/quote', $cart)
             ->assertOk()
@@ -144,12 +138,12 @@ class CouponTest extends TestCase
     public function test_wallet_purchase_with_coupon_balances_ledger_and_counts_redemption(): void
     {
         $student = $this->member(TenantUserRole::Student);
-        $course = $this->course(15000);
+        $lesson = $this->lesson(15000);
         $coupon = $this->coupon(['code' => 'SAVE20', 'value' => 20, 'usage_limit' => 5]);
         $this->creditWallet($student, 20000);
         Sanctum::actingAs($student);
         $h = ['X-Tenant' => 'demo'];
-        $cart = ['items' => [['type' => 'course', 'course' => $course->uuid]], 'coupon' => 'SAVE20'];
+        $cart = ['items' => [['type' => 'lesson', 'lesson' => $lesson->id]], 'coupon' => 'SAVE20'];
 
         $orderUuid = $this->withHeaders($h)->postJson('/api/v1/checkout/order', $cart)->json('data.uuid');
         $this->withHeaders($h)->postJson('/api/v1/checkout/pay', ['order' => $orderUuid, 'method' => 'wallet'])
@@ -171,19 +165,19 @@ class CouponTest extends TestCase
     public function test_invalid_and_used_up_coupons_are_rejected(): void
     {
         $student = $this->member(TenantUserRole::Student);
-        $course = $this->course(15000);
+        $lesson = $this->lesson(15000);
         Sanctum::actingAs($student);
         $h = ['X-Tenant' => 'demo'];
 
         // Unknown code.
         $this->withHeaders($h)->postJson('/api/v1/checkout/quote', [
-            'items' => [['type' => 'course', 'course' => $course->uuid]], 'coupon' => 'NOPE',
+            'items' => [['type' => 'lesson', 'lesson' => $lesson->id]], 'coupon' => 'NOPE',
         ])->assertStatus(422);
 
         // Used-up code.
         $this->coupon(['code' => 'MAXED', 'value' => 10, 'usage_limit' => 1])->forceFill(['used_count' => 1])->save();
         $this->withHeaders($h)->postJson('/api/v1/checkout/quote', [
-            'items' => [['type' => 'course', 'course' => $course->uuid]], 'coupon' => 'MAXED',
+            'items' => [['type' => 'lesson', 'lesson' => $lesson->id]], 'coupon' => 'MAXED',
         ])->assertStatus(422);
     }
 
@@ -226,12 +220,12 @@ class CouponTest extends TestCase
         $this->coupon(['code' => 'DEMOONLY', 'value' => 20], $other); // belongs to the OTHER tenant
 
         $student = $this->member(TenantUserRole::Student); // demo student
-        $course = $this->course(15000);
+        $lesson = $this->lesson(15000);
         Sanctum::actingAs($student);
 
         // The other tenant's code must not resolve in `demo`.
         $this->withHeaders(['X-Tenant' => 'demo'])->postJson('/api/v1/checkout/quote', [
-            'items' => [['type' => 'course', 'course' => $course->uuid]], 'coupon' => 'DEMOONLY',
+            'items' => [['type' => 'lesson', 'lesson' => $lesson->id]], 'coupon' => 'DEMOONLY',
         ])->assertStatus(422);
     }
 }

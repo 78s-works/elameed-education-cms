@@ -4,7 +4,6 @@ namespace Tests\Feature\Tenancy;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
@@ -49,22 +48,6 @@ class LandingV2Test extends TestCase
         return $u;
     }
 
-    private function publishedCourse(): Course
-    {
-        $c = new Course(['title' => 'Algebra', 'visibility' => ContentVisibility::Visible->value, 'price_minor' => 10000, 'is_free' => false, 'thumbnail_url' => 'https://cdn.example.com/thumb.jpg']);
-        $c->tenant_id = $this->tenant->id;
-        $c->slug = 'algebra-'.uniqid();
-        $c->save();
-
-        foreach ([600, 900] as $d) { // 25 minutes total
-            $l = new Lesson(['course_id' => $c->id, 'title' => 'L', 'duration_sec' => $d]);
-            $l->tenant_id = $this->tenant->id;
-            $l->save();
-        }
-
-        return $c;
-    }
-
     /** A published, individually-purchasable standalone lesson (VD §7 — the
      *  landing "courses" section now lists these instead of courses). */
     private function publishedLesson(int $priceMinor = 5000): Lesson
@@ -96,10 +79,8 @@ class LandingV2Test extends TestCase
 
     public function test_public_landing_resolves_layout_nav_courses_and_reviews(): void
     {
-        $course = $this->publishedCourse();
         $lesson = $this->publishedLesson();
         $student = $this->member(TenantUserRole::Student);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $course, EnrollmentSource::Purchase);
 
         // A review (seeded directly — the write path is covered separately).
         $r = new Review(['target_type' => 'lesson', 'target_id' => $lesson->id, 'user_id' => $student->id, 'rating' => 5, 'comment' => 'Great course']);

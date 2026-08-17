@@ -4,7 +4,7 @@ namespace Tests\Feature\Engagement;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
@@ -33,14 +33,12 @@ class CommentsAndForumTest extends TestCase
 
     private Lesson $lesson;
 
-    private Course $course;
-
     protected function setUp(): void
     {
         parent::setUp();
         Cache::flush();
         $this->tenant = Tenant::create(['slug' => 'demo', 'name' => 'Demo', 'status' => TenantStatus::Active]);
-        [$this->course, $this->lesson] = $this->courseWithLesson();
+        $this->lesson = $this->lessonWithAccess();
     }
 
     private function member(TenantUserRole $role): User
@@ -54,23 +52,23 @@ class CommentsAndForumTest extends TestCase
         return $user;
     }
 
-    private function courseWithLesson(): array
+    private function lessonWithAccess(): Lesson
     {
-        $course = new Course(['title' => 'Physics', 'price_minor' => 10000, 'visibility' => ContentVisibility::Visible->value, 'purchase_enabled' => true]);
-        $course->tenant_id = $this->tenant->id;
-        $course->slug = 'physics-'.uniqid();
-        $course->save();
+        $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
 
-        $lesson = new Lesson(['course_id' => $course->id, 'title' => 'Lesson 1']);
+        $lesson = new Lesson(['title' => 'Lesson 1', 'price_minor' => 10000, 'visibility' => ContentVisibility::Visible->value, 'purchase_enabled' => true]);
         $lesson->tenant_id = $this->tenant->id;
+        $lesson->academic_year_id = $year->id;
         $lesson->save();
 
-        return [$course, $lesson];
+        return $lesson;
     }
 
     private function enroll(User $student): void
     {
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $this->course, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $this->lesson, EnrollmentSource::Purchase);
     }
 
     public function test_enrolled_student_asks_and_staff_reply_marks_answered(): void

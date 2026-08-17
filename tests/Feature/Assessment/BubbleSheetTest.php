@@ -8,7 +8,7 @@ use App\Modules\Assessment\Enums\ExamPassMode;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\AcademicYear;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -34,7 +34,7 @@ class BubbleSheetTest extends TestCase
 
     private AcademicYear $year;
 
-    private Course $course;
+    private Lesson $lesson;
 
     protected function setUp(): void
     {
@@ -42,7 +42,7 @@ class BubbleSheetTest extends TestCase
         Cache::flush();
         $this->tenant = Tenant::create(['slug' => 'demo', 'name' => 'Demo', 'status' => TenantStatus::Active]);
         $this->year = $this->makeYear('2025 / 2026');
-        $this->course = $this->makeCourse();
+        $this->lesson = $this->makeLesson();
     }
 
     // --- helpers -----------------------------------------------------------
@@ -79,20 +79,20 @@ class BubbleSheetTest extends TestCase
         return $user;
     }
 
-    private function makeCourse(): Course
+    private function makeLesson(): Lesson
     {
-        $c = new Course(['title' => 'Course', 'visibility' => ContentVisibility::Visible->value]);
-        $c->tenant_id = $this->tenant->id;
-        $c->slug = 'course-'.uniqid();
-        $c->save();
+        $l = new Lesson(['title' => 'Lesson', 'visibility' => ContentVisibility::Visible->value]);
+        $l->tenant_id = $this->tenant->id;
+        $l->academic_year_id = $this->year->id;
+        $l->save();
 
-        return $c;
+        return $l;
     }
 
     private function enrolledStudent(): User
     {
         $student = $this->member(TenantUserRole::Student);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $this->course, EnrollmentSource::Manual);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $this->lesson, EnrollmentSource::Manual);
 
         return $student;
     }
@@ -103,7 +103,7 @@ class BubbleSheetTest extends TestCase
             'title' => 'Quiz', 'type' => 'lesson_quiz', 'is_published' => true, 'attempts_allowed' => 1,
         ], $attrs));
         $exam->tenant_id = $this->tenant->id;
-        $exam->course_id = $this->course->id;
+        $exam->lesson_id = $this->lesson->id;
         // Exam is year-scoped (site-wide scoping Phase 2); stamp the year so the
         // strict `academic-year` bubble-sheet route can bind it under the header.
         $exam->academic_year_id = $this->year->id;

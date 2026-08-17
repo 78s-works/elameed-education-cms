@@ -42,20 +42,19 @@ class PackageUsage
     {
         return match ($key) {
             'max_students' => $this->countMembers($tenantId, TenantUserRole::Student),
-            'max_courses' => $this->countCourses($tenantId),
+            // `courses` retired (VD §7): the content-quota now counts standalone lessons.
+            'max_courses' => $this->countLessons($tenantId),
             'max_assistants' => $this->countMembers($tenantId, TenantUserRole::Assistant),
             'storage_mb' => $this->storageMb($tenantId),
             default => 0,
         };
     }
 
-    private function countCourses(int $tenantId): int
+    private function countLessons(int $tenantId): int
     {
-        // Query the table directly to sidestep the BelongsToTenant global scope
-        // while still honouring soft deletes.
-        return (int) DB::table('courses')
+        // Query the table directly to sidestep the BelongsToTenant global scope.
+        return (int) DB::table('lessons')
             ->where('tenant_id', $tenantId)
-            ->whereNull('deleted_at')
             ->count();
     }
 

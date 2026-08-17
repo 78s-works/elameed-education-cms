@@ -6,7 +6,8 @@ use App\Models\User;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\Question;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Centers\Models\Center;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
@@ -138,13 +139,13 @@ class HardeningTest extends TestCase
     public function test_answer_key_is_never_exposed_to_students(): void
     {
         app(TenantContext::class)->setTenant($this->tenant);
-        $course = $this->makeCourse();
+        $lesson = $this->makeLesson();
         // show_answers OFF: even a graded result must not carry the key.
-        $exam = $this->makeExam($course, ['show_answers' => false, 'result_visibility' => 'immediate']);
+        $exam = $this->makeExam($lesson, ['show_answers' => false, 'result_visibility' => 'immediate']);
         $q = $this->makeQuestion($exam, ['type' => 'mcq', 'body' => '2+2?', 'options' => ['3', '4', '5'], 'correct' => [1], 'points' => 5]);
 
         $student = $this->member($this->tenant, TenantUserRole::Student);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $course, EnrollmentSource::Manual);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Manual);
         Sanctum::actingAs($student);
 
         // List: no answer key.
@@ -175,8 +176,8 @@ class HardeningTest extends TestCase
         // Tenant B owns the resources; tenant A's teacher tries to reach them by uuid.
         $other = Tenant::create(['slug' => 'other', 'name' => 'Other', 'status' => TenantStatus::Active]);
         app(TenantContext::class)->setTenant($other);
-        $otherCourse = $this->makeCourse('other');
-        $otherExam = $this->makeExam($otherCourse);
+        $otherLesson = $this->makeLesson();
+        $otherExam = $this->makeExam($otherLesson);
         $otherCenter = new Center(['name' => 'B Center']);
         $otherCenter->tenant_id = $other->id;
         $otherCenter->save();
@@ -186,7 +187,7 @@ class HardeningTest extends TestCase
         Sanctum::actingAs($teacherA);
 
         // Valid uuids, but they belong to another tenant → tenant-scoped binding 404s.
-        $this->withHeaders($this->h)->getJson("/api/v1/teacher/courses/{$otherCourse->uuid}")->assertStatus(404);
+        // (`/teacher/courses/{uuid}` retired with the Course entity — VD §7.)
         $this->withHeaders($this->h)->getJson("/api/v1/teacher/exams/{$otherExam->uuid}")->assertStatus(404);
         $this->withHeaders($this->h)->putJson("/api/v1/teacher/centers/{$otherCenter->uuid}", ['name' => 'hijack'])->assertStatus(404);
 
@@ -227,21 +228,29 @@ class HardeningTest extends TestCase
 
     // ── fixtures ──────────────────────────────────────────────────────────────
 
-    private function makeCourse(string $slugPrefix = 'demo'): Course
+    private function makeLesson(): Lesson
     {
-        $c = new Course(['title' => 'Course', 'visibility' => ContentVisibility::Visible->value]);
-        $c->tenant_id = app(TenantContext::class)->tenantId();
-        $c->slug = $slugPrefix.'-course-'.uniqid();
-        $c->save();
+        $tenantId = app(TenantContext::class)->tenantId();
+        $year = AcademicYear::where('tenant_id', $tenantId)->orderBy('id')->first();
+        if ($year === null) {
+            $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+            $year->tenant_id = $tenantId;
+            $year->save();
+        }
 
-        return $c;
+        $l = new Lesson(['title' => 'Lesson', 'visibility' => ContentVisibility::Visible->value]);
+        $l->tenant_id = $tenantId;
+        $l->academic_year_id = $year->id;
+        $l->save();
+
+        return $l;
     }
 
-    private function makeExam(Course $course, array $attrs = []): Exam
+    private function makeExam(Lesson $lesson, array $attrs = []): Exam
     {
         $exam = new Exam(array_merge(['title' => 'Quiz', 'is_published' => true, 'pass_percent' => 50, 'attempts_allowed' => 0], $attrs));
-        $exam->tenant_id = $course->tenant_id;
-        $exam->course_id = $course->id;
+        $exam->tenant_id = $lesson->tenant_id;
+        $exam->lesson_id = $lesson->id;
         $exam->save();
 
         return $exam;

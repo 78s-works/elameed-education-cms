@@ -5,7 +5,6 @@ namespace Tests\Feature\PlatformAdmin;
 use App\Models\User;
 use App\Modules\Billing\Models\SubscriptionPackage;
 use App\Modules\Billing\Services\SubscriptionService;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
@@ -61,10 +60,6 @@ class AdminTenantDetailTest extends TestCase
         $profile->tenant_id = $tenant->id;
         $profile->save();
 
-        $course = new Course(['title' => 'Mechanics', 'slug' => 'mechanics', 'price_minor' => 1000, 'visibility' => 'visible']);
-        $course->tenant_id = $tenant->id;
-        $course->save();
-
         $package = SubscriptionPackage::create([
             'slug' => 'growth', 'name' => 'Growth', 'price_minor' => 150000, 'interval' => 'monthly', 'trial_days' => 0,
             'limits' => ['max_students' => 100, 'max_courses' => 30, 'storage_mb' => 5000, 'max_assistants' => 3],
@@ -80,9 +75,7 @@ class AdminTenantDetailTest extends TestCase
             ->assertJsonPath('data.subscription.package.slug', 'growth')
             ->assertJsonPath('data.usage.max_students.limit', 100)
             ->assertJsonPath('data.usage.max_students.used', 1)
-            ->assertJsonPath('data.stats.students', 1)
-            ->assertJsonPath('data.stats.courses', 1)
-            ->assertJsonPath('data.stats.published_courses', 1);
+            ->assertJsonPath('data.stats.students', 1);
     }
 
     public function test_show_still_requires_admin_and_admin_host(): void

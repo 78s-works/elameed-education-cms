@@ -3,8 +3,7 @@
 namespace Tests\Feature\Media;
 
 use App\Models\User;
-use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
@@ -73,12 +72,12 @@ class EncryptedHlsTest extends TestCase
         ]);
         $this->assertTrue($gen->successful(), 'source gen failed: '.$gen->errorOutput());
 
-        $course = new Course(['title' => 'C', 'visibility' => ContentVisibility::Visible->value, 'price_minor' => 10000]);
-        $course->tenant_id = $this->tenant->id;
-        $course->slug = 'c-'.uniqid();
-        $course->save();
-        $lesson = new Lesson(['course_id' => $course->id, 'title' => 'L']);
+        $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
+        $lesson = new Lesson(['title' => 'L', 'price_minor' => 10000]);
         $lesson->tenant_id = $this->tenant->id;
+        $lesson->academic_year_id = $year->id;
         $lesson->save();
 
         $asset = new MediaAsset(['type' => MediaType::HlsVideo->value, 'status' => MediaStatus::Ready->value, 'source_key' => 'media/source/test.mp4']);
@@ -93,7 +92,7 @@ class EncryptedHlsTest extends TestCase
     {
         $student = $this->member(TenantUserRole::Student);
         $lesson = $this->lessonWithRealVideo();
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);
 
         Sanctum::actingAs($student);
         $data = $this->withHeader('X-Tenant', 'demo')
@@ -128,8 +127,8 @@ class EncryptedHlsTest extends TestCase
         $lesson = $this->lessonWithRealVideo();
         $a = $this->member(TenantUserRole::Student);
         $b = $this->member(TenantUserRole::Student);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $a->id, $lesson->course, EnrollmentSource::Purchase);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $b->id, $lesson->course, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $a->id, $lesson, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $b->id, $lesson, EnrollmentSource::Purchase);
 
         Sanctum::actingAs($a);
         $this->withHeader('X-Tenant', 'demo')->postJson("/api/v1/media/lessons/{$lesson->id}/playback")->assertOk();

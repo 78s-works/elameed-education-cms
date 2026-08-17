@@ -4,7 +4,8 @@ namespace Tests\Feature\Identity;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -32,7 +33,11 @@ class TeacherStudentManagementTest extends TestCase
         parent::setUp();
         Cache::flush();
         $this->tenant = Tenant::create(['slug' => 'demo', 'name' => 'Demo', 'status' => TenantStatus::Active]);
-        $this->h = ['X-Tenant' => 'demo'];
+        // Adding a student now requires a resolved academic year (student pinning).
+        $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
+        $this->h = ['X-Tenant' => 'demo', 'X-Academic-Year' => $year->uuid];
         Sanctum::actingAs($this->member($this->tenant, TenantUserRole::Teacher));
     }
 
@@ -47,14 +52,16 @@ class TeacherStudentManagementTest extends TestCase
         return $user;
     }
 
-    private function course(): Course
+    private function lesson(): Lesson
     {
-        $c = new Course(['title' => 'Course', 'visibility' => ContentVisibility::Visible->value, 'purchase_enabled' => true]);
-        $c->tenant_id = $this->tenant->id;
-        $c->slug = 'course-'.uniqid();
-        $c->save();
+        $year = AcademicYear::where('tenant_id', $this->tenant->id)->orderBy('id')->firstOrFail();
 
-        return $c;
+        $l = new Lesson(['title' => 'Lesson', 'visibility' => ContentVisibility::Visible->value, 'is_purchasable' => true, 'price_minor' => 1000]);
+        $l->tenant_id = $this->tenant->id;
+        $l->academic_year_id = $year->id;
+        $l->save();
+
+        return $l;
     }
 
     public function test_teacher_can_add_student_and_gets_generated_password(): void
@@ -100,10 +107,10 @@ class TeacherStudentManagementTest extends TestCase
     public function test_manual_enroll_then_revoke(): void
     {
         $student = $this->member($this->tenant, TenantUserRole::Student);
-        $course = $this->course();
+        $lesson = $this->lesson();
 
         $enrollmentId = $this->withHeaders($this->h)
-            ->postJson("/api/v1/teacher/students/{$student->uuid}/enrollments", ['course' => $course->uuid])
+            ->postJson("/api/v1/teacher/students/{$student->uuid}/enrollments", ['target_type' => 'lesson', 'target' => (string) $lesson->id])
             ->assertStatus(201)->json('data.id');
 
         $this->withHeaders($this->h)->getJson("/api/v1/teacher/students/{$student->uuid}/enrollments")

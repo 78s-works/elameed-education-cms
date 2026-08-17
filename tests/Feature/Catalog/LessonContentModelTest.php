@@ -4,7 +4,7 @@ namespace Tests\Feature\Catalog;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonAccessWindow;
 use App\Modules\Catalog\Models\LessonSection;
@@ -57,13 +57,13 @@ class LessonContentModelTest extends TestCase
 
     private function lesson(): Lesson
     {
-        $course = new Course(['title' => 'C', 'visibility' => ContentVisibility::Visible->value, 'price_minor' => 10000, 'is_free' => false]);
-        $course->tenant_id = $this->tenant->id;
-        $course->slug = 'c-'.uniqid();
-        $course->save();
+        $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
 
-        $lesson = new Lesson(['course_id' => $course->id, 'title' => 'L']);
+        $lesson = new Lesson(['title' => 'L', 'visibility' => ContentVisibility::Visible->value, 'price_minor' => 10000, 'is_free' => false]);
         $lesson->tenant_id = $this->tenant->id;
+        $lesson->academic_year_id = $year->id;
         $lesson->save();
 
         return $lesson->fresh();
@@ -94,7 +94,7 @@ class LessonContentModelTest extends TestCase
         $student = $this->member(TenantUserRole::Student);
         $lesson = $this->lesson();
         $lesson->update(['availability_days' => 7, 'max_extensions' => 1, 'extension_hours' => 24]);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);
 
         Sanctum::actingAs($student);
 
@@ -114,7 +114,7 @@ class LessonContentModelTest extends TestCase
         $student = $this->member(TenantUserRole::Student);
         $lesson = $this->lessonWithVideo();
         $lesson->update(['availability_days' => 7, 'max_extensions' => 1, 'extension_hours' => 24]);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);
         $this->seedRendition($lesson->video_asset_id, $student->id);
 
         // First play opens the window and succeeds.
@@ -144,7 +144,7 @@ class LessonContentModelTest extends TestCase
         $student = $this->member(TenantUserRole::Student);
         $lesson = $this->lesson();
         $lesson->update(['availability_days' => 7, 'max_extensions' => 0]);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);
 
         Sanctum::actingAs($student);
         $this->withHeader('X-Tenant', 'demo')->postJson("/api/v1/lessons/{$lesson->id}/start")->assertOk();
@@ -200,7 +200,7 @@ class LessonContentModelTest extends TestCase
         $student = $this->member(TenantUserRole::Student);
         $lesson = $this->lesson();
         $lesson->update(['availability_days' => 7, 'self_reopen_limit' => 2, 'extension_hours' => 24]);
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);
 
         Sanctum::actingAs($student);
         // Running (not expired/locked) window → reopen refused, counter untouched.
@@ -235,7 +235,7 @@ class LessonContentModelTest extends TestCase
     /** Enroll, open the window via /start, then age it past expiry. */
     private function expiredWindow(User $student, Lesson $lesson): LessonAccessWindow
     {
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $lesson->course, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);
 
         Sanctum::actingAs($student);
         $this->withHeader('X-Tenant', 'demo')->postJson("/api/v1/lessons/{$lesson->id}/start")->assertOk();

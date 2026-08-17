@@ -5,7 +5,6 @@ namespace Tests\Feature\Commerce;
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\AcademicYear;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Models\PackageItem;
@@ -47,17 +46,21 @@ class CheckoutTest extends TestCase
         return $user;
     }
 
-    private function course(int $priceMinor): Course
+    private function lesson(int $priceMinor): Lesson
     {
-        $course = new Course([
-            'title' => 'Paid Course', 'price_minor' => $priceMinor,
-            'visibility' => ContentVisibility::Visible->value, 'purchase_enabled' => true,
-        ]);
-        $course->tenant_id = $this->tenant->id;
-        $course->slug = 'paid-'.uniqid();
-        $course->save();
+        $year = new AcademicYear(['name' => '2025 / 2026', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
 
-        return $course;
+        $lesson = new Lesson([
+            'title' => 'Paid Lesson', 'price_minor' => $priceMinor,
+            'visibility' => ContentVisibility::Visible->value, 'is_purchasable' => true,
+        ]);
+        $lesson->tenant_id = $this->tenant->id;
+        $lesson->academic_year_id = $year->id;
+        $lesson->save();
+
+        return $lesson;
     }
 
     /** A purchasable package holding two lessons (one nested a level down). */
@@ -114,19 +117,19 @@ class CheckoutTest extends TestCase
     public function test_wallet_purchase_enrolls_student_and_balances_ledger(): void
     {
         $student = $this->student();
-        $course = $this->course(15000);
+        $lesson = $this->lesson(15000);
         $this->creditWallet($student, 20000);
         Sanctum::actingAs($student);
         $h = ['X-Tenant' => 'demo'];
 
         // quote
         $this->withHeaders($h)->postJson('/api/v1/checkout/quote', [
-            'items' => [['type' => 'course', 'course' => $course->uuid]],
+            'items' => [['type' => 'lesson', 'lesson' => $lesson->id]],
         ])->assertOk()->assertJsonPath('data.total_minor', 15000);
 
         // order
         $orderUuid = $this->withHeaders($h)->postJson('/api/v1/checkout/order', [
-            'items' => [['type' => 'course', 'course' => $course->uuid]],
+            'items' => [['type' => 'lesson', 'lesson' => $lesson->id]],
         ])->assertStatus(201)->json('data.uuid');
 
         // pay from wallet
@@ -136,7 +139,7 @@ class CheckoutTest extends TestCase
 
         // Enrollment granted
         $this->assertTrue(
-            Enrollment::withoutGlobalScopes()->where('user_id', $student->id)->where('course_id', $course->id)->exists()
+            Enrollment::withoutGlobalScopes()->where('user_id', $student->id)->where('lesson_id', $lesson->id)->exists()
         );
         // Invoice issued (number 1 for the tenant)
         $this->assertSame(1, (int) Invoice::withoutGlobalScopes()->where('tenant_id', $this->tenant->id)->value('number'));
@@ -204,12 +207,12 @@ class CheckoutTest extends TestCase
     public function test_wallet_purchase_rejected_when_insufficient_balance(): void
     {
         $student = $this->student();
-        $course = $this->course(15000);
+        $lesson = $this->lesson(15000);
         Sanctum::actingAs($student);
         $h = ['X-Tenant' => 'demo'];
 
         $orderUuid = $this->withHeaders($h)->postJson('/api/v1/checkout/order', [
-            'items' => [['type' => 'course', 'course' => $course->uuid]],
+            'items' => [['type' => 'lesson', 'lesson' => $lesson->id]],
         ])->json('data.uuid');
 
         $this->withHeaders($h)->postJson('/api/v1/checkout/pay', [
@@ -224,12 +227,12 @@ class CheckoutTest extends TestCase
     public function test_paymob_webhook_is_idempotent(): void
     {
         $student = $this->student();
-        $course = $this->course(15000);
+        $lesson = $this->lesson(15000);
         Sanctum::actingAs($student);
         $h = ['X-Tenant' => 'demo'];
 
         $orderUuid = $this->withHeaders($h)->postJson('/api/v1/checkout/order', [
-            'items' => [['type' => 'course', 'course' => $course->uuid]],
+            'items' => [['type' => 'lesson', 'lesson' => $lesson->id]],
         ])->json('data.uuid');
 
         $this->withHeaders($h)->postJson('/api/v1/checkout/pay', [
@@ -260,10 +263,10 @@ class CheckoutTest extends TestCase
     public function test_webhook_rejects_bad_signature(): void
     {
         $student = $this->student();
-        $course = $this->course(15000);
+        $lesson = $this->lesson(15000);
         Sanctum::actingAs($student);
         $orderUuid = $this->withHeaders(['X-Tenant' => 'demo'])->postJson('/api/v1/checkout/order', [
-            'items' => [['type' => 'course', 'course' => $course->uuid]],
+            'items' => [['type' => 'lesson', 'lesson' => $lesson->id]],
         ])->json('data.uuid');
 
         $this->withHeaders(['X-Paymob-Hmac' => 'wrong'])->postJson('/api/v1/webhooks/paymob', [

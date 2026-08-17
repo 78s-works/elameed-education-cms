@@ -4,7 +4,8 @@ namespace Tests\Feature\Commerce;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Models\Invoice;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
@@ -51,14 +52,21 @@ class InvoicePdfTest extends TestCase
         return $user;
     }
 
-    private function purchasableCourse(Tenant $tenant): Course
+    private function purchasableLesson(Tenant $tenant): Lesson
     {
-        $c = new Course(['title' => 'Course', 'visibility' => ContentVisibility::Visible->value, 'price_minor' => 50000, 'currency' => 'EGP', 'is_free' => false, 'purchase_enabled' => true]);
-        $c->tenant_id = $tenant->id;
-        $c->slug = 'course-'.uniqid();
-        $c->save();
+        $year = AcademicYear::where('tenant_id', $tenant->id)->orderBy('id')->first();
+        if ($year === null) {
+            $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+            $year->tenant_id = $tenant->id;
+            $year->save();
+        }
 
-        return $c;
+        $l = new Lesson(['title' => 'Lesson', 'visibility' => ContentVisibility::Visible->value, 'price_minor' => 50000, 'currency' => 'EGP', 'is_purchasable' => true]);
+        $l->tenant_id = $tenant->id;
+        $l->academic_year_id = $year->id;
+        $l->save();
+
+        return $l;
     }
 
     private function fund(User $user, int $amount): void
@@ -71,12 +79,12 @@ class InvoicePdfTest extends TestCase
         ], 'seed', $user->id);
     }
 
-    /** Buy a course with wallet funds; returns the issued invoice. */
-    private function buy(User $student, Course $course): Invoice
+    /** Buy a lesson with wallet funds; returns the issued invoice. */
+    private function buy(User $student, Lesson $lesson): Invoice
     {
         Sanctum::actingAs($student);
         $order = $this->withHeaders($this->h)->postJson('/api/v1/checkout/order', [
-            'items' => [['type' => 'course', 'course' => $course->uuid]],
+            'items' => [['type' => 'lesson', 'lesson' => $lesson->id]],
         ])->assertStatus(201)->json('data.uuid');
 
         $this->withHeaders($this->h)->postJson('/api/v1/checkout/pay', ['order' => $order, 'method' => 'wallet'])
@@ -91,9 +99,9 @@ class InvoicePdfTest extends TestCase
         $this->member($this->tenant, TenantUserRole::Teacher);
         $student = $this->member($this->tenant, TenantUserRole::Student, '01090000001');
         $this->fund($student, 1000000);
-        $course = $this->purchasableCourse($this->tenant);
+        $lesson = $this->purchasableLesson($this->tenant);
 
-        $invoice = $this->buy($student, $course);
+        $invoice = $this->buy($student, $lesson);
 
         // pdf_url populated on fulfillment + file actually on the private disk.
         $this->assertTrue($invoice->fresh()->hasPdf());
@@ -110,7 +118,7 @@ class InvoicePdfTest extends TestCase
         app(TenantContext::class)->setTenant($this->tenant);
         $student = $this->member($this->tenant, TenantUserRole::Student, '01090000002');
         $this->fund($student, 1000000);
-        $invoice = $this->buy($student, $this->purchasableCourse($this->tenant));
+        $invoice = $this->buy($student, $this->purchasableLesson($this->tenant));
 
         $this->withHeaders($this->h)->getJson('/api/v1/invoices')
             ->assertOk()
@@ -129,7 +137,7 @@ class InvoicePdfTest extends TestCase
         app(TenantContext::class)->setTenant($this->tenant);
         $buyer = $this->member($this->tenant, TenantUserRole::Student, '01090000003');
         $this->fund($buyer, 1000000);
-        $invoice = $this->buy($buyer, $this->purchasableCourse($this->tenant));
+        $invoice = $this->buy($buyer, $this->purchasableLesson($this->tenant));
 
         $intruder = $this->member($this->tenant, TenantUserRole::Student, '01090000004');
         Sanctum::actingAs($intruder);
@@ -146,7 +154,7 @@ class InvoicePdfTest extends TestCase
         $teacher = $this->member($this->tenant, TenantUserRole::Teacher);
         $student = $this->member($this->tenant, TenantUserRole::Student, '01090000005');
         $this->fund($student, 1000000);
-        $invoice = $this->buy($student, $this->purchasableCourse($this->tenant));
+        $invoice = $this->buy($student, $this->purchasableLesson($this->tenant));
 
         Sanctum::actingAs($teacher);
         $this->withHeaders($this->h)->get("/api/v1/invoices/{$invoice->uuid}/download")
@@ -158,7 +166,7 @@ class InvoicePdfTest extends TestCase
         app(TenantContext::class)->setTenant($this->tenant);
         $student = $this->member($this->tenant, TenantUserRole::Student, '01090000006');
         $this->fund($student, 1000000);
-        $invoice = $this->buy($student, $this->purchasableCourse($this->tenant));
+        $invoice = $this->buy($student, $this->purchasableLesson($this->tenant));
 
         // A user in another tenant cannot resolve tenant A's invoice by uuid.
         $other = Tenant::create(['slug' => 'other', 'name' => 'Other', 'status' => TenantStatus::Active]);

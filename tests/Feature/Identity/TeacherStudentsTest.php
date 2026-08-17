@@ -4,7 +4,8 @@ namespace Tests\Feature\Identity;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -67,12 +68,15 @@ class TeacherStudentsTest extends TestCase
         $sara = $this->member($this->tenant, TenantUserRole::Student, ['name' => 'Sara Ahmed', 'phone' => '01234567890']);
         $this->member($this->tenant, TenantUserRole::Student, ['name' => 'Omar Ali']);
 
-        // Enrol Sara in one course → enrolled_courses should be 1.
-        $course = new Course(['title' => 'Math', 'visibility' => ContentVisibility::Visible->value]);
-        $course->tenant_id = $this->tenant->id;
-        $course->slug = 'math';
-        $course->save();
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $sara->id, $course, EnrollmentSource::Manual);
+        // Enrol Sara in one lesson → enrolled_courses should be 1.
+        $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
+        $lesson = new Lesson(['title' => 'Math', 'visibility' => ContentVisibility::Visible->value]);
+        $lesson->tenant_id = $this->tenant->id;
+        $lesson->academic_year_id = $year->id;
+        $lesson->save();
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $sara->id, $lesson, EnrollmentSource::Manual);
 
         Sanctum::actingAs($teacher);
 

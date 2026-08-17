@@ -3,8 +3,7 @@
 namespace Tests\Feature\Media;
 
 use App\Models\User;
-use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
@@ -51,12 +50,12 @@ class MediaUploadTest extends TestCase
 
     private function lesson(): Lesson
     {
-        $course = new Course(['title' => 'C', 'visibility' => ContentVisibility::Visible->value]);
-        $course->tenant_id = $this->tenant->id;
-        $course->slug = 'c-'.uniqid();
-        $course->save();
-        $lesson = new Lesson(['course_id' => $course->id, 'title' => 'L']);
+        $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
+        $lesson = new Lesson(['title' => 'L']);
         $lesson->tenant_id = $this->tenant->id;
+        $lesson->academic_year_id = $year->id;
         $lesson->save();
 
         return $lesson;

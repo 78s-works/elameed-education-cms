@@ -5,7 +5,6 @@ namespace Tests\Feature\Catalog;
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\AcademicYear;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Commerce\Enums\EnrollmentSource;
@@ -48,19 +47,21 @@ class StudentLibraryTest extends TestCase
 
     private function lesson(bool $purchasable = true): Lesson
     {
-        $course = new Course(['title' => 'Course', 'visibility' => ContentVisibility::Visible->value, 'price_minor' => 0, 'is_free' => true]);
-        $course->tenant_id = $this->tenant->id;
-        $course->slug = 'course-'.uniqid();
-        $course->save();
+        $year = AcademicYear::where('tenant_id', $this->tenant->id)->orderBy('id')->first();
+        if ($year === null) {
+            $year = new AcademicYear(['name' => '2026', 'sort_order' => 0]);
+            $year->tenant_id = $this->tenant->id;
+            $year->save();
+        }
 
         $l = new Lesson([
-            'course_id' => $course->id,
             'title' => 'Lesson',
             'visibility' => ContentVisibility::Visible->value,
             'is_purchasable' => $purchasable,
             'price_minor' => 5000,
         ]);
         $l->tenant_id = $this->tenant->id;
+        $l->academic_year_id = $year->id;
         $l->save();
 
         return $l;
@@ -85,7 +86,7 @@ class StudentLibraryTest extends TestCase
         return $p;
     }
 
-    public function test_me_lessons_returns_bought_lessons_with_course_slug(): void
+    public function test_me_lessons_returns_bought_lessons(): void
     {
         $student = $this->student();
         $lesson = $this->lesson();
@@ -97,7 +98,7 @@ class StudentLibraryTest extends TestCase
 
         $row = collect($data)->firstWhere('id', $lesson->id);
         $this->assertNotNull($row);
-        $this->assertSame($lesson->course->slug, $row['course_slug']);
+        $this->assertSame($lesson->title, $row['title']);
     }
 
     public function test_me_packages_returns_bought_packages(): void
@@ -126,7 +127,7 @@ class StudentLibraryTest extends TestCase
         Sanctum::actingAs($student);
         $ids = collect(
             $this->withHeader('X-Tenant', 'demo')
-                ->getJson('/api/v1/courses?view=lessons&exclude_owned=1')
+                ->getJson('/api/v1/catalogue?view=lessons&exclude_owned=1')
                 ->assertOk()->json('data')
         )->pluck('id');
 
