@@ -130,12 +130,12 @@ use Illuminate\Support\Str;
  *
  * Idempotent: the whole academy is skipped if its tenant already exists.
  * Credentials (all password `password`):
- *   - teacher   01200000001  (tenant `ahmed-tammam`)
+ *   - teacher   01200000001  (tenant `ahmedtammam.com`)
  *   - students  012001<YY><NN>  e.g. 01200110 1 (year 1), 01200130 1 (year 3)…
  */
 class AhmedTammamAcademySeeder extends Seeder
 {
-    private const SLUG = 'ahmed-tammam';
+    private const SLUG = 'ahmedtammam.com';
 
     private const CURRENCY = 'EGP';
 
