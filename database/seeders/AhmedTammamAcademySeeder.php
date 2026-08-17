@@ -17,6 +17,7 @@ use App\Modules\Billing\Enums\SubscriptionStatus;
 use App\Modules\Billing\Models\SubscriptionPackage;
 use App\Modules\Billing\Models\TenantSubscription;
 use App\Modules\Catalog\Enums\AccessMode;
+use App\Modules\Catalog\Enums\ContentAccessTarget;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Enums\DependencyEnforcement;
 use App\Modules\Catalog\Enums\DependencyTrigger;
@@ -38,7 +39,6 @@ use App\Modules\Catalog\Models\PartPassOverride;
 use App\Modules\Catalog\Services\AcademicYearContext;
 use App\Modules\Catalog\Services\ContentAccessOverrideService;
 use App\Modules\Catalog\Services\PackageItemService;
-use App\Modules\Catalog\Enums\ContentAccessTarget;
 use App\Modules\Centers\Enums\CodeStatus;
 use App\Modules\Centers\Enums\CodeType;
 use App\Modules\Centers\Models\ActivationCode;
@@ -46,13 +46,14 @@ use App\Modules\Centers\Models\AttendanceRecord;
 use App\Modules\Centers\Models\Center;
 use App\Modules\Centers\Models\CenterExamGrade;
 use App\Modules\Centers\Models\CenterIdCode;
+use App\Modules\Centers\Models\CenterSession;
+use App\Modules\Centers\Services\CenterSessionAttendanceService;
 use App\Modules\Commerce\Enums\CouponType;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\OrderStatus;
 use App\Modules\Commerce\Models\Coupon;
 use App\Modules\Commerce\Models\Invoice;
 use App\Modules\Commerce\Models\Order;
-use App\Modules\Commerce\Models\OrderItem;
 use App\Modules\Commerce\Models\Payment;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Engagement\Enums\CommentStatus;
@@ -95,16 +96,15 @@ use App\Modules\Notifications\Models\NotificationType;
 use App\Modules\Reporting\Models\AuditLog;
 use App\Modules\Tenancy\Enums\TenantDomainType;
 use App\Modules\Tenancy\Enums\TenantStatus;
-use App\Modules\Tenancy\Models\Tenant;
-use App\Modules\Tenancy\Models\TenantDomain;
 use App\Modules\Tenancy\Models\TeacherMeta;
 use App\Modules\Tenancy\Models\TeacherProfile;
+use App\Modules\Tenancy\Models\Tenant;
+use App\Modules\Tenancy\Models\TenantDomain;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Services\LedgerService;
 use App\Modules\Wallet\Services\PaymentReceiptService;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -237,6 +237,8 @@ class AhmedTammamAcademySeeder extends Seeder
 
     private ContentAccessOverrideService $overrides;
 
+    private CenterSessionAttendanceService $sessionAttendance;
+
     /** @var array<string, AcademicYear> keyed by year label */
     private array $years = [];
 
@@ -250,7 +252,7 @@ class AhmedTammamAcademySeeder extends Seeder
     public function run(): void
     {
         if (Tenant::query()->where('slug', self::SLUG)->exists()) {
-            $this->command?->info('Academy `' . self::SLUG . '` already seeded — skipping.');
+            $this->command?->info('Academy `'.self::SLUG.'` already seeded — skipping.');
 
             return;
         }
@@ -263,13 +265,14 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->points = app(PointsService::class);
         $this->receipts = app(PaymentReceiptService::class);
         $this->overrides = app(ContentAccessOverrideService::class);
+        $this->sessionAttendance = app(CenterSessionAttendanceService::class);
 
-        DB::transaction(fn() => $this->seed());
+        DB::transaction(fn () => $this->seed());
 
         $this->yearContext->forget();
         $this->tenantContext->forget();
 
-        $this->command?->info('Seeded academy `' . self::SLUG . '` (د. أحمد تمّام) with full, diverse demo data.');
+        $this->command?->info('Seeded academy `'.self::SLUG.'` (د. أحمد تمّام) with full, diverse demo data.');
     }
 
     private function seed(): void
@@ -457,7 +460,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'permissions' => ['students', 'support', 'homework'],
             'joined_at' => now()->subMonths(4),
         ]);
-        $m1->academicYears()->sync(array_map(fn($y) => $y->id, $all));
+        $m1->academicYears()->sync(array_map(fn ($y) => $y->id, $all));
 
         // Assistant scoped to the graduating year only (single-year pivot).
         $ali = $this->makeUser('01200000003', 'أ. علي حسن (مساعد)', 'ali.ta@elameed.app');
@@ -652,6 +655,11 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->commentThread($s1, $lessons[1]);
         $this->supportTicket($s3, TicketStatus::Open, TicketPriority::Urgent, 'الفيديو مش بيفتح', 'المحاضرة التانية بتقف عند دقيقة ٣.');
 
+        // Center sessions (attendance is taken against these): one per center,
+        // bundling the year's center/both lessons, with the center students checked in.
+        $this->centerSession($year, $this->centers[0], 'حصة السبت — الأحياء', $lessons, [$s2]);
+        $this->centerSession($year, $this->centers[1], 'حصة الثلاثاء — مراجعة', $lessons, [$s3]);
+
         // Large divergent cohort (flagship year — deepest).
         $this->seedCohort($year, $fullPkg, $lessons, $chapterPkg, yearDigit: 3, count: 22);
 
@@ -738,6 +746,10 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->attendance($s2, $this->centers[1], $year, present: true);
         $this->progressAndAttempt($s2, $l2, passed: false);
         $this->supportTicket($s2, TicketStatus::Closed, TicketPriority::Normal, 'استفسار عن كتاب المايسترو', 'الكتاب متوفر في السنتر ولا أونلاين؟');
+
+        // Center session (attendance) at the student's center, bundling the year's
+        // center/both lessons, with the center student checked in.
+        $this->centerSession($year, $this->centers[1], 'حصة الأحد — الأحياء', [$l1, $l2, $l3, $l4, $l5], [$s2]);
 
         $this->seedCohort($year, $fullPkg, [$l1, $l2, $l3, $l4, $l5], $pkg, yearDigit: 2, count: 14);
 
@@ -1015,7 +1027,7 @@ class AhmedTammamAcademySeeder extends Seeder
 
     private function makeStudent(AcademicYear $year, string $phone, string $name, string $studyMode, string $gender, string $governorate, ?Center $center = null, MembershipStatus $status = MembershipStatus::Active, string $educationType = 'عام'): User
     {
-        $user = $this->makeUser($phone, $name, $phone . '@student.ahmedtammam.com');
+        $user = $this->makeUser($phone, $name, $phone.'@student.ahmedtammam.com');
         TenantUser::create([
             'tenant_id' => $this->tenant->id,
             'user_id' => $user->id,
@@ -1031,7 +1043,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'gender' => $gender,
             'governorate' => $governorate,
             'education_type' => $educationType,
-            'guardian_phone' => '0120099' . substr($phone, -4),
+            'guardian_phone' => '0120099'.substr($phone, -4),
             'center_id' => $center?->id,
         ]);
         $profile->tenant_id = $this->tenant->id;
@@ -1058,7 +1070,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $lesson->save();
 
         $this->makeSections($year, $lesson, $withExam ? $this->makeExam($year, $lesson, [
-            'title' => 'اختبار: ' . $attrs['title'],
+            'title' => 'اختبار: '.$attrs['title'],
             'type' => ExamType::LessonQuiz,
             'grading_mode' => $essay ? ExamGradingMode::Manual : ExamGradingMode::Auto,
         ], $essay) : null);
@@ -1253,7 +1265,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $payment = new Payment([
             'order_id' => $order->id,
             'gateway' => 'paymob',
-            'gateway_txn_id' => 'PM-' . strtoupper(Str::random(10)),
+            'gateway_txn_id' => 'PM-'.strtoupper(Str::random(10)),
             'amount_minor' => $total,
             'status' => 'paid',
             'reference_number' => (string) rand(100000, 999999),
@@ -1270,7 +1282,7 @@ class AhmedTammamAcademySeeder extends Seeder
 
         // Ledger: gateway clearing debit, teacher earnings (85%) + platform (15%).
         $commission = intdiv($total * 15, 100);
-        $this->ledger->post($this->tenant->id, 'order:' . $order->id, [
+        $this->ledger->post($this->tenant->id, 'order:'.$order->id, [
             ['account' => LedgerEntry::GATEWAY_CLEARING, 'direction' => LedgerEntry::DEBIT, 'amount_minor' => $total],
             ['account' => LedgerEntry::TEACHER_EARNINGS, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $total - $commission],
             ['account' => LedgerEntry::PLATFORM_COMMISSION, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $commission],
@@ -1308,7 +1320,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $payment = new Payment([
             'order_id' => $order->id,
             'gateway' => 'wallet',
-            'gateway_txn_id' => 'W-' . strtoupper(Str::random(10)),
+            'gateway_txn_id' => 'W-'.strtoupper(Str::random(10)),
             'amount_minor' => $priceMinor,
             'status' => 'paid',
             'processed_at' => now()->subDays(rand(1, 10)),
@@ -1319,7 +1331,7 @@ class AhmedTammamAcademySeeder extends Seeder
 
         $wallet = $this->ledger->walletFor($this->tenant->id, $user->id);
         $commission = intdiv($priceMinor * 15, 100);
-        $this->ledger->post($this->tenant->id, 'order:' . $order->id, [
+        $this->ledger->post($this->tenant->id, 'order:'.$order->id, [
             ['account' => LedgerEntry::STUDENT_WALLET, 'direction' => LedgerEntry::DEBIT, 'amount_minor' => $priceMinor, 'wallet_id' => $wallet->id],
             ['account' => LedgerEntry::TEACHER_EARNINGS, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $priceMinor - $commission],
             ['account' => LedgerEntry::PLATFORM_COMMISSION, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $commission],
@@ -1345,7 +1357,7 @@ class AhmedTammamAcademySeeder extends Seeder
     {
         $attachment = new Attachment([
             'kind' => 'image',
-            'storage_key' => 'receipts/' . Str::uuid() . '.jpg',
+            'storage_key' => 'receipts/'.Str::uuid().'.jpg',
             'mime' => 'image/jpeg',
             'size_bytes' => rand(50000, 400000),
             'uploaded_by' => $user->id,
@@ -1522,6 +1534,33 @@ class AhmedTammamAcademySeeder extends Seeder
         $rec->save();
     }
 
+    /**
+     * A center session bundling the center-accessible ($center/$both) lessons of
+     * the year, plus a check-in for each given student (opens those lessons
+     * online). Populates the attendance page's session picker, active grants, and
+     * roster. Online-only lessons are skipped — a center session never bundles them.
+     *
+     * @param  Lesson[]  $lessons  the year's lessons (filtered to center/both here)
+     * @param  User[]  $students  center students to check in
+     */
+    private function centerSession(AcademicYear $year, Center $center, string $name, array $lessons, array $students): void
+    {
+        $centerLessonIds = collect($lessons)
+            ->filter(fn (Lesson $l) => in_array($l->access_mode, [AccessMode::Center, AccessMode::Both], true))
+            ->pluck('id')->all();
+
+        $session = new CenterSession(['center_id' => $center->id, 'name' => $name, 'session_at' => now()->subDays(rand(1, 6))]);
+        $session->tenant_id = $this->tenant->id;
+        $session->academic_year_id = $year->id;
+        $session->save();
+        $session->lessons()->sync($centerLessonIds);
+
+        $session->load('lessons');
+        foreach ($students as $student) {
+            $this->sessionAttendance->checkin($this->tenant->id, $center, $session, $student, $this->teacher->id);
+        }
+    }
+
     private function centerGrade(AcademicYear $year, User $user, Center $center, string $title, float $total, float $score): void
     {
         $g = new CenterExamGrade([
@@ -1561,7 +1600,7 @@ class AhmedTammamAcademySeeder extends Seeder
     {
         // Wallet code (active) + course code (redeemed).
         $wallet = new ActivationCode([
-            'code' => 'WAL-' . strtoupper(Str::random(6)),
+            'code' => 'WAL-'.strtoupper(Str::random(6)),
             'type' => CodeType::Wallet->value,
             'amount_minor' => 20000,
             'center_id' => $this->centers[0]->id,
@@ -1575,7 +1614,7 @@ class AhmedTammamAcademySeeder extends Seeder
 
         // A historical, already-redeemed content code (target not needed post-redeem).
         $courseCode = new ActivationCode([
-            'code' => 'CNT-' . strtoupper(Str::random(6)),
+            'code' => 'CNT-'.strtoupper(Str::random(6)),
             'type' => CodeType::Content->value,
             'center_id' => $this->centers[1]->id,
             'generated_by' => $this->teacher->id,
@@ -1599,7 +1638,7 @@ class AhmedTammamAcademySeeder extends Seeder
      */
     private function seedCohort(AcademicYear $year, Package $mainPkg, array $lessons, ?Package $pkg, int $yearDigit, int $count): void
     {
-        $sellable = array_values(array_filter($lessons, fn(Lesson $l) => (int) $l->price_minor > 0));
+        $sellable = array_values(array_filter($lessons, fn (Lesson $l) => (int) $l->price_minor > 0));
         if ($sellable === []) {
             $sellable = $lessons; // fall back to any lesson
         }
@@ -1627,7 +1666,7 @@ class AhmedTammamAcademySeeder extends Seeder
 
         for ($i = 0; $i < $count; $i++) {
             $seq = 100 + $i;
-            $phone = '012001' . $yearDigit . sprintf('%04d', $seq);
+            $phone = '012001'.$yearDigit.sprintf('%04d', $seq);
 
             $male = $i % 2 === 0;
             $namePool = $male ? self::MALE_NAMES : self::FEMALE_NAMES;
@@ -1770,7 +1809,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $payment = new Payment([
             'order_id' => $order->id,
             'gateway' => 'paymob',
-            'gateway_txn_id' => 'PM-' . strtoupper(Str::random(10)),
+            'gateway_txn_id' => 'PM-'.strtoupper(Str::random(10)),
             'amount_minor' => $price,
             'status' => 'failed',
             'reference_number' => (string) rand(100000, 999999),
@@ -1804,7 +1843,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $payment = new Payment([
             'order_id' => $order->id,
             'gateway' => 'paymob',
-            'gateway_txn_id' => 'PM-' . strtoupper(Str::random(10)),
+            'gateway_txn_id' => 'PM-'.strtoupper(Str::random(10)),
             'amount_minor' => $price,
             'status' => 'refunded',
             'reference_number' => (string) rand(100000, 999999),
