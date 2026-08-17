@@ -7,12 +7,11 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /** @mixin AttendanceRecord */
-class SectionAttendanceResource extends JsonResource
+class SessionAttendanceResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        $section = $this->lessonSection;
-        $lesson = $section?->lesson;
+        $session = $this->centerSession;
         $expiresAt = $this->access_expires_at;
 
         return [
@@ -22,14 +21,10 @@ class SectionAttendanceResource extends JsonResource
                 'name' => $this->student?->name,
                 'phone' => $this->student?->phone,
             ],
-            'section' => [
-                'id' => $section?->id,
-                'title' => $section?->title,
-                'access_mode' => $section?->access_mode?->value,
-            ],
-            'lesson' => [
-                'id' => $lesson?->id,
-                'title' => $lesson?->title,
+            'session' => [
+                'id' => $session?->id,
+                'name' => $session?->name,
+                'session_at' => $session?->session_at?->toIso8601String(),
             ],
             'attended_on' => $this->attended_on?->toDateString(),
             'access_expires_at' => $expiresAt?->toIso8601String(),

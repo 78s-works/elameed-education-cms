@@ -3,16 +3,15 @@
 namespace App\Modules\Centers\Models;
 
 use App\Models\User;
-use App\Modules\Catalog\Models\LessonSection;
 use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * A student's attendance at a center (M12). A row with `lesson_section_id = null`
- * is plain per-day attendance; a row with a section is a check-in that opened
- * that part's parent lesson online until `access_expires_at` (center check-in →
+ * A student's attendance at a center (M12). A row with `center_session_id = null`
+ * is plain per-day attendance; a row with a session is a check-in that opened all
+ * of that session's lessons online until `access_expires_at` (center check-in →
  * time-boxed access).
  */
 class AttendanceRecord extends Model
@@ -24,7 +23,7 @@ class AttendanceRecord extends Model
         'academic_year_id',
         'center_id',
         'user_id',
-        'lesson_section_id',
+        'center_session_id',
         'access_expires_at',
         'attended_on',
         'status',
@@ -49,9 +48,9 @@ class AttendanceRecord extends Model
         return $this->belongsTo(User::class, 'user_id');
     }
 
-    /** The lesson part the student checked in for (null for plain day-attendance). */
-    public function lessonSection(): BelongsTo
+    /** The session the student checked in for (null for plain day-attendance). */
+    public function centerSession(): BelongsTo
     {
-        return $this->belongsTo(LessonSection::class);
+        return $this->belongsTo(CenterSession::class);
     }
 }

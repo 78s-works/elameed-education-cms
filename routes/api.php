@@ -31,7 +31,8 @@ use App\Modules\Centers\Http\Controllers\Teacher\CenterController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterExamGradeController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterIdCodeController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterSyncController;
-use App\Modules\Centers\Http\Controllers\Teacher\SectionAttendanceController;
+use App\Modules\Centers\Http\Controllers\Teacher\CenterSessionController;
+use App\Modules\Centers\Http\Controllers\Teacher\SessionAttendanceController;
 use App\Modules\Commerce\Http\Controllers\CheckoutController;
 use App\Modules\Commerce\Http\Controllers\InvoiceController;
 use App\Modules\Commerce\Http\Controllers\PaymentWebhookController;
@@ -608,14 +609,19 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
                     Route::post('/teacher/center-id-codes/batch', [CenterIdCodeController::class, 'batch']);
                 });
 
-                // Section-level attendance (center check-in → time-boxed online
-                // access). Year-scoped: parts/lessons/enrollments live under a year.
+                // Center sessions (a session bundles 0+ lessons) + session-based
+                // attendance: a check-in opens all the session's lessons online.
+                // Year-scoped: sessions/lessons/enrollments live under a year.
                 Route::middleware('academic-year')->group(function (): void {
-                    Route::get('/teacher/attendance/sections', [SectionAttendanceController::class, 'sections']);
-                    Route::get('/teacher/attendance/active', [SectionAttendanceController::class, 'active']);
-                    Route::get('/teacher/attendance/lessons', [SectionAttendanceController::class, 'lessons']);
-                    Route::post('/teacher/attendance/checkin', [SectionAttendanceController::class, 'checkin']);
-                    Route::delete('/teacher/attendance/active/{record}', [SectionAttendanceController::class, 'revoke']);
+                    Route::get('/teacher/center-sessions', [CenterSessionController::class, 'index']);
+                    Route::post('/teacher/center-sessions', [CenterSessionController::class, 'store']);
+                    Route::put('/teacher/center-sessions/{session}', [CenterSessionController::class, 'update']);
+                    Route::delete('/teacher/center-sessions/{session}', [CenterSessionController::class, 'destroy']);
+
+                    Route::get('/teacher/attendance/active', [SessionAttendanceController::class, 'active']);
+                    Route::get('/teacher/attendance/roster', [SessionAttendanceController::class, 'roster']);
+                    Route::post('/teacher/attendance/checkin', [SessionAttendanceController::class, 'checkin']);
+                    Route::delete('/teacher/attendance/active/{record}', [SessionAttendanceController::class, 'revoke']);
                 });
 
                 // Center paper-exam grade entry (VD R12, doc 13 Phase 15). A grade
