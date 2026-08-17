@@ -139,6 +139,90 @@ class AhmedTammamAcademySeeder extends Seeder
 
     private const CURRENCY = 'EGP';
 
+    /** @var string[] */
+    private const MALE_NAMES = [
+        'أحمد سعيد',
+        'محمود عبد الله',
+        'مصطفى ياسر',
+        'خالد وليد',
+        'زياد أيمن',
+        'عبد الرحمن هشام',
+        'كريم طارق',
+        'مازن فؤاد',
+        'يحيى إبراهيم',
+        'أنس رمضان',
+        'باسل نبيل',
+        'حمزة صلاح',
+        'مروان عصام',
+        'سيف الدين جمال',
+        'آدم مجدي',
+        'طه شريف',
+        'إياد ماهر',
+        'رامي فتحي',
+        'عمرو حمدي',
+        'شادي لطفي',
+        'فارس عادل',
+        'نور الدين سمير',
+        'وليد عاطف',
+        'هاني رفعت',
+    ];
+
+    /** @var string[] */
+    private const FEMALE_NAMES = [
+        'سلمى محمد',
+        'نور هاني',
+        'جنى أشرف',
+        'ملك تامر',
+        'رنا وائل',
+        'هبة عماد',
+        'دينا رجب',
+        'ياسمين فوزي',
+        'مايا شوقي',
+        'فاطمة الزهراء',
+        'آية منير',
+        'ندى بهاء',
+        'لينا حسام',
+        'روان طلعت',
+        'شهد ممدوح',
+        'مروة سعد',
+        'إسراء زكي',
+        'تقى مختار',
+        'حنين علاء',
+        'رقية سراج',
+        'بسملة أنور',
+        'أسماء رأفت',
+        'رودينا كمال',
+        'ميرنا فادي',
+    ];
+
+    /** @var string[] */
+    private const GOVERNORATES = [
+        'القاهرة',
+        'الجيزة',
+        'الإسكندرية',
+        'القليوبية',
+        'الدقهلية',
+        'الشرقية',
+        'الغربية',
+        'المنوفية',
+        'البحيرة',
+        'كفر الشيخ',
+        'أسيوط',
+        'سوهاج',
+        'المنيا',
+        'الفيوم',
+        'بني سويف',
+        'قنا',
+        'أسوان',
+        'الأقصر',
+        'دمياط',
+        'بورسعيد',
+        'الإسماعيلية',
+        'السويس',
+        'مطروح',
+        'شمال سيناء',
+    ];
+
     private TenantContext $tenantContext;
 
     private AcademicYearContext $yearContext;
@@ -168,7 +252,7 @@ class AhmedTammamAcademySeeder extends Seeder
     public function run(): void
     {
         if (Tenant::query()->where('slug', self::SLUG)->exists()) {
-            $this->command?->info('Academy `'.self::SLUG.'` already seeded — skipping.');
+            $this->command?->info('Academy `' . self::SLUG . '` already seeded — skipping.');
 
             return;
         }
@@ -182,12 +266,12 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->receipts = app(PaymentReceiptService::class);
         $this->overrides = app(ContentAccessOverrideService::class);
 
-        DB::transaction(fn () => $this->seed());
+        DB::transaction(fn() => $this->seed());
 
         $this->yearContext->forget();
         $this->tenantContext->forget();
 
-        $this->command?->info('Seeded academy `'.self::SLUG.'` (د. أحمد تمّام) with full, diverse demo data.');
+        $this->command?->info('Seeded academy `' . self::SLUG . '` (د. أحمد تمّام) with full, diverse demo data.');
     }
 
     private function seed(): void
@@ -375,7 +459,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'permissions' => ['students', 'support', 'homework'],
             'joined_at' => now()->subMonths(4),
         ]);
-        $m1->academicYears()->sync(array_map(fn ($y) => $y->id, $all));
+        $m1->academicYears()->sync(array_map(fn($y) => $y->id, $all));
 
         // Assistant scoped to the graduating year only (single-year pivot).
         $ali = $this->makeUser('01200000003', 'أ. علي حسن (مساعد)', 'ali.ta@elameed.app');
@@ -473,6 +557,30 @@ class AhmedTammamAcademySeeder extends Seeder
             'sort_order' => 4,
         ], withExam: false, essay: false);
 
+        $lessons[] = $this->makeLesson($year, $course, [
+            'title' => 'الباب الخامس — التكاثر',
+            'access_mode' => AccessMode::Online,
+            'price_minor' => 22000,
+            'is_purchasable' => true,
+            'sort_order' => 5,
+        ], withExam: true, essay: true);
+
+        $lessons[] = $this->makeLesson($year, $course, [
+            'title' => 'الباب السادس — الوراثة الجزيئية',
+            'access_mode' => AccessMode::Center,
+            'price_minor' => 18000,
+            'is_purchasable' => true,
+            'sort_order' => 6,
+        ], withExam: false, essay: false);
+
+        $lessons[] = $this->makeLesson($year, $course, [
+            'title' => 'مراجعة ليلة الامتحان',
+            'access_mode' => AccessMode::Both,
+            'price_minor' => 35000,
+            'is_purchasable' => true,
+            'sort_order' => 7,
+        ], withExam: true, essay: false);
+
         // A content dependency: the quiz of lesson 2 requires passing lesson 1's quiz.
         $this->linkDependency($lessons[0], $lessons[1]);
 
@@ -545,6 +653,9 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->commentThread($s1, $lessons[1]);
         $this->supportTicket($s3, TicketStatus::Open, TicketPriority::Urgent, 'الفيديو مش بيفتح', 'المحاضرة التانية بتقف عند دقيقة ٣.');
 
+        // Large divergent cohort (flagship year — deepest).
+        $this->seedCohort($year, $course, $lessons, $chapterPkg, yearDigit: 3, count: 22);
+
         $this->yearContext->forget();
     }
 
@@ -588,6 +699,20 @@ class AhmedTammamAcademySeeder extends Seeder
             'is_purchasable' => true,
             'sort_order' => 3,
         ], withExam: false, essay: false);
+        $l4 = $this->makeLesson($year, $course, [
+            'title' => 'التنفس الخلوي',
+            'access_mode' => AccessMode::Center,
+            'price_minor' => 18000,
+            'is_purchasable' => true,
+            'sort_order' => 4,
+        ], withExam: true, essay: false);
+        $l5 = $this->makeLesson($year, $course, [
+            'title' => 'الإخراج والاتزان الداخلي',
+            'access_mode' => AccessMode::Online,
+            'price_minor' => 18000,
+            'is_purchasable' => true,
+            'sort_order' => 5,
+        ], withExam: true, essay: true);
 
         $type = $this->makePackageType($year, 'اشتراك بابي', 'hybrid', buyAlone: true);
         $pkg = $this->makePackage($year, $type, [
@@ -613,6 +738,8 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->attendance($s2, $this->centers[1], $course, present: true);
         $this->progressAndAttempt($s2, $l2, passed: false);
         $this->supportTicket($s2, TicketStatus::Closed, TicketPriority::Normal, 'استفسار عن كتاب المايسترو', 'الكتاب متوفر في السنتر ولا أونلاين؟');
+
+        $this->seedCohort($year, $course, [$l1, $l2, $l3, $l4, $l5], $pkg, yearDigit: 2, count: 14);
 
         $this->yearContext->forget();
     }
@@ -650,6 +777,13 @@ class AhmedTammamAcademySeeder extends Seeder
             'is_purchasable' => true,
             'sort_order' => 2,
         ], withExam: true, essay: false);
+        $l3 = $this->makeLesson($year, $course, [
+            'title' => 'الحركة والقوى',
+            'access_mode' => AccessMode::Online,
+            'price_minor' => 15000,
+            'is_purchasable' => true,
+            'sort_order' => 3,
+        ], withExam: true, essay: false);
 
         $type = $this->makePackageType($year, 'اشتراك شهري', 'online', buyAlone: true);
         $pkg = $this->makePackage($year, $type, [
@@ -671,6 +805,8 @@ class AhmedTammamAcademySeeder extends Seeder
         $t->academic_year_id = $year->id;
         $t->user_id = null;
         $t->save();
+
+        $this->seedCohort($year, $course, [$l1, $l2, $l3], $pkg, yearDigit: 1, count: 10);
 
         $this->yearContext->forget();
     }
@@ -876,15 +1012,15 @@ class AhmedTammamAcademySeeder extends Seeder
         ]);
     }
 
-    private function makeStudent(AcademicYear $year, string $phone, string $name, string $studyMode, string $gender, string $governorate, ?Center $center = null): User
+    private function makeStudent(AcademicYear $year, string $phone, string $name, string $studyMode, string $gender, string $governorate, ?Center $center = null, MembershipStatus $status = MembershipStatus::Active, string $educationType = 'عام'): User
     {
-        $user = $this->makeUser($phone, $name, $phone.'@student.ahmedtammam.com');
+        $user = $this->makeUser($phone, $name, $phone . '@student.ahmedtammam.com');
         TenantUser::create([
             'tenant_id' => $this->tenant->id,
             'user_id' => $user->id,
             'role' => TenantUserRole::Student->value,
-            'status' => MembershipStatus::Active->value,
-            'joined_at' => now()->subMonths(rand(1, 6)),
+            'status' => $status->value,
+            'joined_at' => now()->subMonths(rand(1, 9))->subDays(rand(0, 28)),
         ]);
         $profile = new StudentProfile([
             'user_id' => $user->id,
@@ -893,8 +1029,8 @@ class AhmedTammamAcademySeeder extends Seeder
             'study_mode' => $studyMode,
             'gender' => $gender,
             'governorate' => $governorate,
-            'education_type' => 'عام',
-            'guardian_phone' => '0120099'.substr($phone, -4),
+            'education_type' => $educationType,
+            'guardian_phone' => '0120099' . substr($phone, -4),
             'center_id' => $center?->id,
         ]);
         $profile->tenant_id = $this->tenant->id;
@@ -950,7 +1086,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $lesson->save();
 
         $this->makeSections($year, $lesson, $withExam ? $this->makeExam($year, $course, $lesson, [
-            'title' => 'اختبار: '.$attrs['title'],
+            'title' => 'اختبار: ' . $attrs['title'],
             'type' => ExamType::LessonQuiz,
             'grading_mode' => $essay ? ExamGradingMode::Manual : ExamGradingMode::Auto,
         ], $essay) : null);
@@ -1146,7 +1282,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $payment = new Payment([
             'order_id' => $order->id,
             'gateway' => 'paymob',
-            'gateway_txn_id' => 'PM-'.strtoupper(Str::random(10)),
+            'gateway_txn_id' => 'PM-' . strtoupper(Str::random(10)),
             'amount_minor' => $total,
             'status' => 'paid',
             'reference_number' => (string) rand(100000, 999999),
@@ -1163,7 +1299,7 @@ class AhmedTammamAcademySeeder extends Seeder
 
         // Ledger: gateway clearing debit, teacher earnings (85%) + platform (15%).
         $commission = intdiv($total * 15, 100);
-        $this->ledger->post($this->tenant->id, 'order:'.$order->id, [
+        $this->ledger->post($this->tenant->id, 'order:' . $order->id, [
             ['account' => LedgerEntry::GATEWAY_CLEARING, 'direction' => LedgerEntry::DEBIT, 'amount_minor' => $total],
             ['account' => LedgerEntry::TEACHER_EARNINGS, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $total - $commission],
             ['account' => LedgerEntry::PLATFORM_COMMISSION, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $commission],
@@ -1203,7 +1339,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $payment = new Payment([
             'order_id' => $order->id,
             'gateway' => 'wallet',
-            'gateway_txn_id' => 'W-'.strtoupper(Str::random(10)),
+            'gateway_txn_id' => 'W-' . strtoupper(Str::random(10)),
             'amount_minor' => $priceMinor,
             'status' => 'paid',
             'processed_at' => now()->subDays(rand(1, 10)),
@@ -1214,7 +1350,7 @@ class AhmedTammamAcademySeeder extends Seeder
 
         $wallet = $this->ledger->walletFor($this->tenant->id, $user->id);
         $commission = intdiv($priceMinor * 15, 100);
-        $this->ledger->post($this->tenant->id, 'order:'.$order->id, [
+        $this->ledger->post($this->tenant->id, 'order:' . $order->id, [
             ['account' => LedgerEntry::STUDENT_WALLET, 'direction' => LedgerEntry::DEBIT, 'amount_minor' => $priceMinor, 'wallet_id' => $wallet->id],
             ['account' => LedgerEntry::TEACHER_EARNINGS, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $priceMinor - $commission],
             ['account' => LedgerEntry::PLATFORM_COMMISSION, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $commission],
@@ -1240,7 +1376,7 @@ class AhmedTammamAcademySeeder extends Seeder
     {
         $attachment = new Attachment([
             'kind' => 'image',
-            'storage_key' => 'receipts/'.Str::uuid().'.jpg',
+            'storage_key' => 'receipts/' . Str::uuid() . '.jpg',
             'mime' => 'image/jpeg',
             'size_bytes' => rand(50000, 400000),
             'uploaded_by' => $user->id,
@@ -1456,7 +1592,7 @@ class AhmedTammamAcademySeeder extends Seeder
     {
         // Wallet code (active) + course code (redeemed).
         $wallet = new ActivationCode([
-            'code' => 'WAL-'.strtoupper(Str::random(6)),
+            'code' => 'WAL-' . strtoupper(Str::random(6)),
             'type' => CodeType::Wallet->value,
             'amount_minor' => 20000,
             'center_id' => $this->centers[0]->id,
@@ -1469,7 +1605,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $wallet->save();
 
         $courseCode = new ActivationCode([
-            'code' => 'CRS-'.strtoupper(Str::random(6)),
+            'code' => 'CRS-' . strtoupper(Str::random(6)),
             'type' => CodeType::Course->value,
             'center_id' => $this->centers[1]->id,
             'generated_by' => $this->teacher->id,
@@ -1480,6 +1616,233 @@ class AhmedTammamAcademySeeder extends Seeder
         ]);
         $courseCode->tenant_id = $this->tenant->id;
         $courseCode->save();
+    }
+
+    // -- bulk cohort (divergence engine) --------------------------------------
+
+    /**
+     * Generate a large, DIVERGENT student cohort for a year: every access channel,
+     * membership status, enrollment source, order state, exam outcome and review
+     * rating is represented, so no UI branch stays empty.
+     *
+     * @param  Lesson[]  $lessons
+     */
+    private function seedCohort(AcademicYear $year, Course $course, array $lessons, ?Package $pkg, int $yearDigit, int $count): void
+    {
+        $sellable = array_values(array_filter($lessons, fn(Lesson $l) => (int) $l->price_minor > 0));
+        if ($sellable === []) {
+            $sellable = $lessons; // fall back to any lesson
+        }
+        $freeLesson = $lessons[0];
+
+        $modes = ['online', 'center', 'both'];
+        $eduTypes = ['عام', 'عام', 'عام', 'أزهر', 'لغات'];
+        $ratings = [5, 4, 5, 3, 4, 2, 5, 1];
+        $reviewText = [
+            'شرح ممتاز وسهل الفهم، ربنا يوفقك يا دكتور.',
+            'الخرائط الذهنية غيّرت طريقة مذاكرتي.',
+            'المتابعة والواجبات محترمة جداً.',
+            'الفيديو أحياناً بيقطع بس المحتوى تحفة.',
+            'محتاج أمثلة أكتر على المسائل.',
+            'أحسن مدرس أحياء اتعاملت معاه.',
+            'الاختبارات بعد كل حصة بتثبّت المعلومة.',
+            'السعر مناسب مقابل المحتوى.',
+        ];
+        $ticketSubjects = [
+            ['الكود مش شغال', 'اشتريت كود من السنتر وبيقولي غير صالح.'],
+            ['استرجاع مبلغ', 'اتخصم مني مرتين على نفس المحاضرة.'],
+            ['طلب تفعيل', 'حوّلت على فودافون كاش ولسه مفعّلش.'],
+            ['سؤال في الواجب', 'مش لاقي مكان رفع الواجب.'],
+        ];
+
+        for ($i = 0; $i < $count; $i++) {
+            $seq = 100 + $i;
+            $phone = '012001' . $yearDigit . sprintf('%04d', $seq);
+
+            $male = $i % 2 === 0;
+            $namePool = $male ? self::MALE_NAMES : self::FEMALE_NAMES;
+            $name = $namePool[($i >> 1) % count($namePool)];
+            $gender = $male ? 'ذكر' : 'أنثى';
+            $mode = $modes[$i % 3];
+            $gov = self::GOVERNORATES[$i % count(self::GOVERNORATES)];
+            $center = in_array($mode, ['center', 'both'], true) ? $this->centers[$i % count($this->centers)] : null;
+            $edu = $eduTypes[$i % count($eduTypes)];
+
+            $status = MembershipStatus::Active;
+            if ($i % 11 === 5) {
+                $status = MembershipStatus::Pending;   // registered, awaiting approval
+            } elseif ($i % 17 === 7) {
+                $status = MembershipStatus::Suspended;  // blocked account
+            }
+
+            $student = $this->makeStudent($year, $phone, $name, $mode, $gender, $gov, $center, $status, $edu);
+
+            // Pending/suspended members stay inactive — no purchases (realistic funnel drop-off).
+            if ($status !== MembershipStatus::Active) {
+                if ($i % 2 === 0) {
+                    $this->failedOrder($student, $sellable[$i % count($sellable)]);
+                }
+
+                continue;
+            }
+
+            $lesson = $sellable[$i % count($sellable)];
+            $path = $i % 8;
+            $hasAccess = true;
+
+            switch ($path) {
+                case 0: // full paid course, some with coupon
+                    $this->paidPurchase($student, $course, 'course', $course->price_minor, couponPercent: $i % 3 === 0 ? 25 : null);
+                    break;
+                case 1: // paid package (or course fallback)
+                    if ($pkg) {
+                        $this->paidPurchase($student, $pkg, 'package', $pkg->price_minor);
+                    } else {
+                        $this->paidPurchase($student, $course, 'course', $course->price_minor);
+                    }
+                    break;
+                case 2: // wallet: top-up then buy a lesson
+                    $this->walletTopupViaReceipt($student, max($lesson->price_minor, 20000), $i % 2 ? 'vodafone_cash' : 'instapay', 'approved');
+                    $this->walletPurchase($student, $lesson, $lesson->price_minor);
+                    break;
+                case 3: // manual teacher grant
+                    $this->enroll->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Manual);
+                    break;
+                case 4: // activation-code grant
+                    $this->enroll->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Code);
+                    break;
+                case 5: // center enrolment + attendance + paper grade
+                    $c = $center ?? $this->centers[0];
+                    $this->enroll->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Center);
+                    $this->attendance($student, $c, $course, present: $i % 4 !== 0);
+                    $this->centerGrade($year, $student, $c, 'اختبار الشهر', 40, rand(18, 40));
+                    break;
+                case 6: // abandoned cart — failed payment, no access
+                    $this->failedOrder($student, $lesson);
+                    $hasAccess = false;
+                    break;
+                case 7: // bought then refunded — no access
+                    $this->refundedOrder($student, $lesson);
+                    $hasAccess = false;
+                    break;
+            }
+
+            if (! $hasAccess) {
+                // Some abandoned/refunded students still leave a support ticket.
+                if ($i % 3 === 0) {
+                    [$sub, $bd] = $ticketSubjects[$i % count($ticketSubjects)];
+                    $this->supportTicket($student, TicketStatus::Open, TicketPriority::Urgent, $sub, $bd);
+                }
+
+                continue;
+            }
+
+            // Activity divergence for enrolled students.
+            $outcome = $i % 3; // 0 pass, 1 fail, 2 in-progress
+            if ($outcome === 2) {
+                $exam = Exam::query()->where('lesson_id', $lesson->id)->first();
+                if ($exam) {
+                    $this->enroll->grantExam($this->tenant->id, $student->id, $exam, EnrollmentSource::Manual);
+                    $this->attemptExam($student, $exam, AttemptStatus::InProgress, null);
+                } else {
+                    $this->progressAndAttempt($student, $lesson, passed: false);
+                }
+            } else {
+                $this->progressAndAttempt($student, $lesson, passed: $outcome === 0);
+            }
+
+            if ($i % 2 === 0) {
+                $this->reviewCourse($student, $course, $ratings[$i % count($ratings)], $reviewText[$i % count($reviewText)]);
+            }
+            if ($i % 3 === 0) {
+                $this->favorite($student, $course);
+            }
+            if ($outcome === 0 && $i % 4 === 0) {
+                $this->points->award($this->tenant->id, $student->id, 100 + ($i % 5) * 20, 'exam_passed', 'lesson', $lesson->id);
+            }
+            if ($i % 6 === 1) {
+                $this->commentThread($student, $freeLesson);
+            }
+            if ($i % 9 === 4) {
+                [$sub, $bd] = $ticketSubjects[$i % count($ticketSubjects)];
+                $st = [TicketStatus::Open, TicketStatus::InProgress, TicketStatus::Closed][$i % 3];
+                $pr = [TicketPriority::Normal, TicketPriority::Urgent][$i % 2];
+                $this->supportTicket($student, $st, $pr, $sub, $bd);
+            }
+            // A rejected receipt shows the failed top-up branch.
+            if ($i % 13 === 3) {
+                $this->walletTopupViaReceipt($student, 10000, 'instapay', 'rejected');
+            }
+        }
+    }
+
+    /** Order that never completed — failed gateway, no invoice / enrolment / ledger. */
+    private function failedOrder(User $user, $item): void
+    {
+        $price = (int) ($item->price_minor ?? 20000);
+        $order = new Order([
+            'user_id' => $user->id,
+            'subtotal_minor' => $price,
+            'discount_minor' => 0,
+            'total_minor' => $price,
+            'currency' => self::CURRENCY,
+            'status' => OrderStatus::Failed->value,
+        ]);
+        $order->tenant_id = $this->tenant->id;
+        $order->save();
+        $order->items()->create([
+            'tenant_id' => $this->tenant->id,
+            'item_type' => $item instanceof Lesson ? 'lesson' : 'course',
+            'item_id' => $item->id,
+            'price_minor' => $price,
+            'title' => $item->name ?? $item->title,
+        ]);
+        $payment = new Payment([
+            'order_id' => $order->id,
+            'gateway' => 'paymob',
+            'gateway_txn_id' => 'PM-' . strtoupper(Str::random(10)),
+            'amount_minor' => $price,
+            'status' => 'failed',
+            'reference_number' => (string) rand(100000, 999999),
+            'processed_at' => now()->subDays(rand(1, 15)),
+        ]);
+        $payment->tenant_id = $this->tenant->id;
+        $payment->save();
+    }
+
+    /** Order paid then refunded — invoice kept, payment refunded, no active access. */
+    private function refundedOrder(User $user, $item): void
+    {
+        $price = (int) ($item->price_minor ?? 20000);
+        $order = new Order([
+            'user_id' => $user->id,
+            'subtotal_minor' => $price,
+            'discount_minor' => 0,
+            'total_minor' => $price,
+            'currency' => self::CURRENCY,
+            'status' => OrderStatus::Refunded->value,
+        ]);
+        $order->tenant_id = $this->tenant->id;
+        $order->save();
+        $order->items()->create([
+            'tenant_id' => $this->tenant->id,
+            'item_type' => $item instanceof Lesson ? 'lesson' : 'course',
+            'item_id' => $item->id,
+            'price_minor' => $price,
+            'title' => $item->name ?? $item->title,
+        ]);
+        $payment = new Payment([
+            'order_id' => $order->id,
+            'gateway' => 'paymob',
+            'gateway_txn_id' => 'PM-' . strtoupper(Str::random(10)),
+            'amount_minor' => $price,
+            'status' => 'refunded',
+            'reference_number' => (string) rand(100000, 999999),
+            'processed_at' => now()->subDays(rand(5, 25)),
+        ]);
+        $payment->tenant_id = $this->tenant->id;
+        $payment->save();
+        $this->makeInvoice($order);
     }
 
     private function makeBadge(string $name, string $desc, int $threshold): Badge
