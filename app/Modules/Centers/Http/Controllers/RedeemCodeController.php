@@ -8,8 +8,8 @@ use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 
 /**
- * POST /codes/redeem (M12) — a student redeems an activation code → wallet credit
- * or course enrollment.
+ * POST /codes/redeem (M12) — a student redeems an activation code: wallet credit
+ * or a content (lesson|package) grant (VD §7).
  */
 class RedeemCodeController
 {

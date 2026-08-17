@@ -16,11 +16,16 @@ class ReviewResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $target = $this->target();
+
         return [
             'id' => $this->id,
             // Linked student's name, or the teacher-authored testimonial's author name.
             'student_name' => $this->displayName(),
-            'course_title' => $this->course?->title,
+            'target_type' => $this->target_type,
+            'target_id' => $this->target_id,
+            // Lesson uses `title`, package uses `name`.
+            'target_title' => $target?->title ?? $target?->name,
             'rating' => $this->rating,
             'comment' => $this->comment,
             'is_visible' => (bool) $this->is_visible,

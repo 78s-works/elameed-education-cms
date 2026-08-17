@@ -21,7 +21,6 @@ class MarkAttendanceRequest extends FormRequest
         return [
             'attended_on' => ['nullable', 'date'],
             'status' => ['nullable', Rule::in(['present', 'absent'])],
-            'course_id' => ['nullable', 'integer'],
             'students' => ['required', 'array', 'min:1', 'max:500'],
             'students.*' => ['string'], // student uuids
         ];

@@ -15,24 +15,21 @@ use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /**
  * Teacher authoring of exams (M08), managed from the sidebar — NOT nested under a
- * course. The exam `type` fixes the link and course_id/unit_id/lesson_id are
- * auto-filled from it (single source of truth); the client never sets them
- * directly. All exams are tenant-scoped by the BelongsToTenant global scope.
+ * course. The exam `type` fixes the link and `lesson_id` is auto-filled from it
+ * (single source of truth); the client never sets it directly. All exams are
+ * tenant-scoped by the BelongsToTenant global scope. (`courses`/units retired — VD §7.)
  *
  * Convention constraints (enforced here, not configured by the teacher):
  *   - a lesson has at most ONE lesson_quiz and ONE homework
- *   - a unit has at most ONE unit_exam
  */
 class ExamController
 {
-    /** Filterable list: ?type=&course_id=&unit_id=&lesson_id= . */
+    /** Filterable list: ?type=&lesson_id= . */
     public function index(Request $request): AnonymousResourceCollection
     {
         $exams = Exam::query()
             ->withCount('questions')
             ->when($request->filled('type'), fn ($q) => $q->where('type', $request->string('type')))
-            ->when($request->filled('course_id'), fn ($q) => $q->where('course_id', $request->integer('course_id')))
-            ->when($request->filled('unit_id'), fn ($q) => $q->where('unit_id', $request->integer('unit_id')))
             ->when($request->filled('lesson_id'), fn ($q) => $q->where('lesson_id', $request->integer('lesson_id')))
             ->latest('id')
             ->get();
@@ -49,13 +46,11 @@ class ExamController
         }
 
         $type = ExamType::from($data['type']);
-        $links = $this->resolveLinks($type, $data);
-        $this->assertUniquePerLink($type, $links, null);
+        $lessonId = $this->resolveLessonLink($type, $data);
+        $this->assertUniquePerLink($type, $lessonId, null);
 
         $exam = new Exam($data);
-        $exam->course_id = $links['course_id'];
-        $exam->unit_id = $links['unit_id'];
-        $exam->lesson_id = $links['lesson_id'];
+        $exam->lesson_id = $lessonId;
         $exam->save(); // BelongsToTenant fills tenant_id
 
         return (new ExamResource($exam->loadCount('questions')))->response()->setStatusCode(201);
@@ -76,17 +71,12 @@ class ExamController
             throw new ConflictHttpException('Add questions before publishing this exam.');
         }
 
-        // Re-derive links when the type or the link target is (re)sent.
+        // Re-derive the lesson link when the type or the link target is (re)sent.
         $type = array_key_exists('type', $data) ? ExamType::from($data['type']) : $exam->type;
-        if (array_key_exists('type', $data) || array_key_exists('lesson_id', $data) || array_key_exists('unit_id', $data)) {
-            $links = $this->resolveLinks($type, $data + [
-                'lesson_id' => $exam->lesson_id,
-                'unit_id' => $exam->unit_id,
-            ]);
-            $this->assertUniquePerLink($type, $links, $exam->id);
-            $data['course_id'] = $links['course_id'];
-            $data['unit_id'] = $links['unit_id'];
-            $data['lesson_id'] = $links['lesson_id'];
+        if (array_key_exists('type', $data) || array_key_exists('lesson_id', $data)) {
+            $lessonId = $this->resolveLessonLink($type, $data + ['lesson_id' => $exam->lesson_id]);
+            $this->assertUniquePerLink($type, $lessonId, $exam->id);
+            $data['lesson_id'] = $lessonId;
         }
 
         $exam->update($data);
@@ -102,49 +92,32 @@ class ExamController
     }
 
     /**
-     * Resolve course_id/unit_id/lesson_id from the exam type + its link input.
-     * lesson_quiz/homework derive course+unit from the lesson; free_exam links to
-     * nothing. `unit_exam` is retired (Unit removed, VD §7): the `unit_id` it may
-     * carry is a dormant passthrough scalar, no longer resolved against a table.
+     * Resolve the `lesson_id` link from the exam type. lesson_quiz/homework bind to
+     * a lesson (validated tenant-scoped); free_exam links to nothing. (`courses`/
+     * units retired — VD §7, so no course/unit derivation.)
      *
      * @param  array<string, mixed>  $data
-     * @return array{course_id: ?int, unit_id: ?int, lesson_id: ?int}
      */
-    private function resolveLinks(ExamType $type, array $data): array
+    private function resolveLessonLink(ExamType $type, array $data): ?int
     {
         if ($type->linksLesson()) {
-            $lesson = Lesson::query()->findOrFail($data['lesson_id']);
-
-            return ['course_id' => $lesson->course_id, 'unit_id' => $lesson->unit_id, 'lesson_id' => $lesson->id];
+            return Lesson::query()->findOrFail($data['lesson_id'])->id;
         }
 
-        if ($type->linksUnit()) {
-            $unitId = isset($data['unit_id']) ? (int) $data['unit_id'] : null;
-
-            return ['course_id' => null, 'unit_id' => $unitId, 'lesson_id' => null];
-        }
-
-        // free_exam — no links.
-        return ['course_id' => null, 'unit_id' => null, 'lesson_id' => null];
+        return null; // free_exam — no link
     }
 
     /**
      * Enforce the one-per-link convention: a lesson holds at most one lesson_quiz
-     * and one homework; a unit holds at most one unit_exam. free_exam is unlimited.
-     *
-     * @param  array{course_id: ?int, unit_id: ?int, lesson_id: ?int}  $links
+     * and one homework. free_exam is unlimited.
      */
-    private function assertUniquePerLink(ExamType $type, array $links, ?int $ignoreExamId): void
+    private function assertUniquePerLink(ExamType $type, ?int $lessonId, ?int $ignoreExamId): void
     {
-        $query = Exam::query()->where('type', $type->value);
-
-        if ($type->linksLesson()) {
-            $query->where('lesson_id', $links['lesson_id']);
-        } elseif ($type->linksUnit()) {
-            $query->where('unit_id', $links['unit_id']);
-        } else {
+        if (! $type->linksLesson()) {
             return; // free_exam — no uniqueness
         }
+
+        $query = Exam::query()->where('type', $type->value)->where('lesson_id', $lessonId);
 
         if ($ignoreExamId !== null) {
             $query->where('id', '!=', $ignoreExamId);
@@ -154,7 +127,6 @@ class ExamController
             $label = match ($type) {
                 ExamType::LessonQuiz => 'This lesson already has a quiz.',
                 ExamType::Homework => 'This lesson already has a homework.',
-                ExamType::UnitExam => 'This unit already has an exam.',
                 default => 'A conflicting exam already exists.',
             };
             throw new ConflictHttpException($label);

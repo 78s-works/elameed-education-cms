@@ -6,9 +6,10 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `reviews` — course ratings. Squashed create (folds the later teacher review
- * fields — author_name / user_id nullability / is_visible — and the
- * academic_year_id scoping column).
+ * `reviews` — content ratings on EITHER a standalone lesson OR a recursive package
+ * (`target_type`/`target_id`, VD §7 — `courses` retired). Squashed create (folds
+ * the later teacher review fields — author_name / user_id nullability / is_visible
+ * — and the academic_year_id scoping column).
  */
 return new class extends Migration
 {
@@ -18,7 +19,8 @@ return new class extends Migration
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
-            $table->foreignId('course_id')->constrained('courses')->cascadeOnDelete();
+            $table->string('target_type');           // 'lesson' | 'package'
+            $table->unsignedBigInteger('target_id');
             $table->foreignId('user_id')->nullable()->constrained('users')->cascadeOnDelete();
             $table->string('author_name')->nullable();
             $table->unsignedTinyInteger('rating');
@@ -26,8 +28,8 @@ return new class extends Migration
             $table->boolean('is_visible')->default(true);
             $table->timestamps();
 
-            $table->unique(['course_id', 'user_id']);
-            $table->index(['tenant_id', 'course_id', 'rating']);
+            $table->unique(['target_type', 'target_id', 'user_id']);
+            $table->index(['tenant_id', 'target_type', 'target_id', 'rating']);
             $table->index(['tenant_id', 'academic_year_id']);
         });
 

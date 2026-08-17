@@ -168,21 +168,16 @@ class SequentialUnlockService
             ->values();
     }
 
-    /** A non-package grant (standalone lesson buy, or whole-course) that covers the lesson. */
+    /** A non-package grant (standalone lesson buy) that covers the lesson. (`courses` retired — VD §7.) */
     private function hasDirectGrant(int $tenantId, int $userId, Lesson $lesson): bool
     {
-        $base = fn () => Enrollment::withoutGlobalScopes()
+        return Enrollment::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('user_id', $userId)
             ->whereNull('package_id')
-            ->grantsAccess();
-
-        if ($base()->where('lesson_id', $lesson->getKey())->exists()) {
-            return true;
-        }
-
-        return $lesson->course_id !== null
-            && $base()->where('course_id', $lesson->course_id)->exists();
+            ->grantsAccess()
+            ->where('lesson_id', $lesson->getKey())
+            ->exists();
     }
 
     /** Has the student watched this lesson to completion (`lesson_progress.completed_at`)? */

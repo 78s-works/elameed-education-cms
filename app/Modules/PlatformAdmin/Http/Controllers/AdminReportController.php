@@ -2,7 +2,6 @@
 
 namespace App\Modules\PlatformAdmin\Http\Controllers;
 
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Models\Tenant;
@@ -25,7 +24,6 @@ class AdminReportController
         return response()->json(['data' => [
             'teachers' => Tenant::query()->count(),
             'students' => $students,
-            'courses' => Course::withoutGlobalScopes()->count(),
             'gross_earnings_minor' => (int) LedgerEntry::withoutGlobalScopes()
                 ->where('account', LedgerEntry::TEACHER_EARNINGS)
                 ->where('direction', LedgerEntry::CREDIT)

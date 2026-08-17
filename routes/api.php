@@ -16,9 +16,7 @@ use App\Modules\Catalog\Http\Controllers\StudentLessonAccessController;
 use App\Modules\Catalog\Http\Controllers\StudentLessonSectionsController;
 use App\Modules\Catalog\Http\Controllers\StudentLibraryController;
 use App\Modules\Catalog\Http\Controllers\Teacher\AcademicYearController;
-use App\Modules\Catalog\Http\Controllers\Teacher\CategoryController;
 use App\Modules\Catalog\Http\Controllers\Teacher\ContentPackageController;
-use App\Modules\Catalog\Http\Controllers\Teacher\CourseListController;
 use App\Modules\Catalog\Http\Controllers\Teacher\ExtensionRequestController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonAttachmentController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonAvailabilityController;
@@ -200,13 +198,15 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
     // scopes to that year (courses/packages/types/reviews all carry academic_year_id
     // now); with no header it stays tenant-wide, so anonymous browse never 422s.
     Route::middleware('academic-year:optional')->group(function (): void {
-        Route::get('/courses', [PublicCatalogController::class, 'index']);
+        // Public catalogue (VD §7 — `courses` retired): default lists packages,
+        // ?view=lessons lists standalone lessons.
+        Route::get('/catalogue', [PublicCatalogController::class, 'index']);
         // Content-package types (B27) — for the student-facing package filter.
         Route::get('/package-types', [PublicCatalogController::class, 'packageTypes']);
         // Public package detail (name + ordered items) for the package-detail page.
         Route::get('/packages/{package:uuid}', [PublicCatalogController::class, 'showPackage']);
-        Route::get('/courses/{course:slug}', [PublicCatalogController::class, 'show']);
-        Route::get('/courses/{course:slug}/reviews', [ReviewController::class, 'index']);
+        // Public reviews for a content target (?target_type=lesson|package&target_id=).
+        Route::get('/reviews', [ReviewController::class, 'index']);
     });
 
     // Public academic-year (grade) list for the registration grade picker. Tenant-
@@ -238,8 +238,8 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::post('/auth/logout', [AuthController::class, 'logout']);
         Route::get('/me', MeController::class);
 
-        // Course reviews — a student with access rates their course (upsert)
-        Route::post('/courses/{course:slug}/reviews', [ReviewController::class, 'store']);
+        // Content reviews — a student with access rates a lesson/package (upsert)
+        Route::post('/reviews', [ReviewController::class, 'store']);
 
         // Redeem an activation/recharge code (M12) → wallet credit or course enroll
         Route::post('/codes/redeem', RedeemCodeController::class);
@@ -306,10 +306,11 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::post('/support/tickets', [SupportTicketController::class, 'store']);
         Route::get('/support/tickets/{ticket}', [SupportTicketController::class, 'show']);
 
-        // Favorites (M20)
+        // Favorites (M20) — target a lesson|package (VD §7)
         Route::get('/me/favorites', [FavoriteController::class, 'index']);
         Route::post('/me/favorites', [FavoriteController::class, 'store']);
-        Route::delete('/me/favorites/{course:uuid}', [FavoriteController::class, 'destroy']);
+        Route::delete('/me/favorites/{type}/{id}', [FavoriteController::class, 'destroy'])
+            ->where('type', 'lesson|package')->where('id', '[0-9]+');
 
         // Gamification (M19)
         Route::get('/me/points', [GamificationController::class, 'points']);
@@ -426,19 +427,6 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::put('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'update']);
             Route::delete('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'destroy']);
 
-            // Read-only course list (VD): teacher course CRUD retired (managed via
-            // lessons/packages now), but courses still exist as the public catalogue
-            // unit and several features still scope to them (coupons, reviews,
-            // center activation-codes). This lister is their picker source — no
-            // create/update/delete.
-            Route::get('/teacher/courses', [CourseListController::class, 'index']);
-
-            // Catalog (M04) — course taxonomy + structure. Courses bind by uuid
-            // (no id enumeration); nested units/lessons bind by id (own data).
-            Route::get('/teacher/categories', [CategoryController::class, 'index']);
-            Route::post('/teacher/categories', [CategoryController::class, 'store']);
-            Route::put('/teacher/categories/{category}', [CategoryController::class, 'update']);
-            Route::delete('/teacher/categories/{category}', [CategoryController::class, 'destroy']);
 
             // Standalone lessons + their parts (VD change set §7/§8, doc 13 Phase
             // 3). Year-scoped: every request carries X-Academic-Year (academic-year
@@ -532,8 +520,8 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::delete('/teacher/remote-videos/versions/{version}', [RemoteVideoController::class, 'purge']);
 
             // Exams — teacher authoring + grading (M08). Managed from the sidebar
-            // (top-level, NOT course-nested). `type` drives the link + auto-fill;
-            // filter the index by ?type=&course_id=&unit_id=&lesson_id=.
+            // (top-level). `type` drives the link + auto-fill; filter the index by
+            // ?type=&lesson_id= (`courses`/units retired — VD §7).
             Route::get('/teacher/exams', [ExamController::class, 'index']);
             Route::post('/teacher/exams', [ExamController::class, 'store']);
             // Link-target dropdown for the exam editor (lesson picker).

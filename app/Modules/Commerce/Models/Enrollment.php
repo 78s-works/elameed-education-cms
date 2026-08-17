@@ -3,7 +3,6 @@
 namespace App\Modules\Commerce\Models;
 
 use App\Models\User;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Commerce\Enums\EnrollmentSource;
@@ -15,12 +14,11 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * Grants a student access to a course, or a single lesson — the single source of
- * truth for access (03_Data_Model.md §5). A row carries `course_id` (whole
- * course), `lesson_id` (one lesson), or `exam_id`. A package purchase fans out
- * into per-lesson rows (B15 / VD LP-D2); each carries the source `package_id` as
- * provenance (never an access key — access is always by `lesson_id`). `unit_id` /
- * `bundle_id` are dormant columns (Unit + Bundle retired — VD change set §7).
+ * Grants a student access to a single lesson or exam — the single source of truth
+ * for access (03_Data_Model.md §5). A row carries `lesson_id` (one lesson) or
+ * `exam_id`. A package purchase fans out into per-lesson rows (B15 / VD LP-D2);
+ * each carries the source `package_id` as provenance (never an access key — access
+ * is always by `lesson_id`). (`courses`/units/bundles retired — VD §7.)
  *
  * @property EnrollmentStatus $status
  * @property EnrollmentSource $source
@@ -33,11 +31,8 @@ class Enrollment extends Model
     protected $fillable = [
         'academic_year_id',
         'user_id',
-        'course_id',
-        'unit_id',
         'lesson_id',
         'exam_id',
-        'bundle_id',
         'package_id',
         'source',
         'starts_at',
@@ -60,11 +55,6 @@ class Enrollment extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
-    }
-
-    public function course(): BelongsTo
-    {
-        return $this->belongsTo(Course::class);
     }
 
     public function lesson(): BelongsTo

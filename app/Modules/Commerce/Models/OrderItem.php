@@ -10,8 +10,6 @@ class OrderItem extends Model
 {
     use BelongsToTenant;
 
-    public const TYPE_COURSE = 'course';
-
     /** Recursive content package (B15) — fans out into per-lesson enrollments on buy. */
     public const TYPE_PACKAGE = 'package';
 

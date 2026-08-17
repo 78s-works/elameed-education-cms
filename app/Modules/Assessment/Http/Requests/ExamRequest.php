@@ -8,11 +8,10 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 /**
- * Validates a teacher exam. `type` (one of the four ExamTypes) fixes the required
- * link: lesson_quiz/homework need a `lesson_id`; unit_exam needs a `unit_id`;
- * free_exam links to nothing. course_id/unit_id/lesson_id are auto-filled from the
- * link by the controller — never trusted from the client. depends_on_exam_id is
- * retired (no exam→exam gating).
+ * Validates a teacher exam. `type` (one of the ExamTypes) fixes the required link:
+ * lesson_quiz/homework need a `lesson_id`; free_exam links to nothing. `lesson_id`
+ * is auto-filled/validated by the controller — never trusted from the client.
+ * depends_on_exam_id is retired (no exam→exam gating); `courses`/units retired (VD §7).
  */
 class ExamRequest extends FormRequest
 {
@@ -36,13 +35,6 @@ class ExamRequest extends FormRequest
                 'nullable',
                 'required_if:type,'.ExamType::LessonQuiz->value.','.ExamType::Homework->value,
                 Rule::exists('lessons', 'id')->where('tenant_id', $tenantId),
-            ],
-            // Units retired (VD §7): unit_id is a dormant passthrough scalar for a
-            // unit_exam — no units table to validate against any more.
-            'unit_id' => [
-                'nullable',
-                'required_if:type,'.ExamType::UnitExam->value,
-                'integer',
             ],
 
             'pass_percent' => ['nullable', 'integer', 'min:0', 'max:100'],

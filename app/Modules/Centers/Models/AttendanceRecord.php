@@ -24,7 +24,6 @@ class AttendanceRecord extends Model
         'academic_year_id',
         'center_id',
         'user_id',
-        'course_id',
         'lesson_section_id',
         'access_expires_at',
         'attended_on',

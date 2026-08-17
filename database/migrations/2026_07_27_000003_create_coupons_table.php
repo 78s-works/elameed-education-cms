@@ -8,8 +8,10 @@ use Illuminate\Support\Facades\Schema;
 /**
  * Discount coupons / promo codes (M21, FR-M21-01/02). Tenant-scoped. A coupon is
  * either `percent` (value = 0–100) or `fixed` (value = minor units). Optionally
- * scoped to one course; otherwise it applies to the whole content subtotal. The
- * teacher absorbs the discount (it reduces their earnings at fulfilment).
+ * scoped to one content target — a standalone lesson OR a recursive package
+ * (`target_type`/`target_id`, VD §7 — `courses` retired); otherwise it applies to
+ * the whole content subtotal. The teacher absorbs the discount (it reduces their
+ * earnings at fulfilment).
  */
 return new class extends Migration
 {
@@ -23,7 +25,9 @@ return new class extends Migration
             $table->string('code');
             $table->string('type')->default('percent');   // percent | fixed
             $table->unsignedInteger('value');              // percent 1..100, or minor units
-            $table->unsignedBigInteger('course_id')->nullable(); // null = whole cart
+            // Optional content scope: 'lesson' | 'package' (null pair = whole cart).
+            $table->string('target_type')->nullable();
+            $table->unsignedBigInteger('target_id')->nullable();
             $table->unsignedBigInteger('min_subtotal_minor')->nullable();
             $table->unsignedInteger('usage_limit')->nullable(); // null = unlimited
             $table->unsignedInteger('used_count')->default(0);
@@ -36,6 +40,7 @@ return new class extends Migration
 
             $table->unique(['tenant_id', 'code']);
             $table->index(['tenant_id', 'is_active']);
+            $table->index(['tenant_id', 'target_type', 'target_id']);
         });
 
         TenantRls::enableFor('coupons');

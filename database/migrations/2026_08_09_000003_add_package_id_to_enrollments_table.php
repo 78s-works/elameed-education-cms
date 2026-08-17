@@ -20,7 +20,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('enrollments', function (Blueprint $table): void {
-            $table->foreignId('package_id')->nullable()->after('bundle_id')->constrained('packages')->nullOnDelete();
+            $table->foreignId('package_id')->nullable()->after('lesson_id')->constrained('packages')->nullOnDelete();
             $table->index(['tenant_id', 'user_id', 'package_id']);
         });
     }

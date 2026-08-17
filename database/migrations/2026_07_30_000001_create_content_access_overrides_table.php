@@ -6,9 +6,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `content_access_overrides` — manual per-student access grants. Squashed create
- * (folds academic_year_id). `unit_id` is a dormant FK-less column (Units retired)
- * keeping its legacy index name.
+ * `content_access_overrides` — manual per-student access grants (lesson or
+ * section). Squashed create (folds academic_year_id). (`courses`/units retired — VD §7.)
  */
 return new class extends Migration
 {
@@ -21,18 +20,15 @@ return new class extends Migration
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('lesson_id')->nullable()->constrained('lessons')->cascadeOnDelete();
             $table->foreignId('section_id')->nullable()->constrained('lesson_sections')->cascadeOnDelete();
-            $table->unsignedBigInteger('unit_id')->nullable();
             $table->foreignId('granted_by')->nullable()->constrained('users')->nullOnDelete();
             $table->string('note')->nullable();
             $table->timestamp('granted_at')->nullable();
             $table->timestamp('revoked_at')->nullable();
             $table->timestamps();
 
-            $table->index('unit_id', 'content_access_overrides_unit_id_foreign');
             $table->index(['tenant_id', 'user_id']);
             $table->index(['tenant_id', 'user_id', 'lesson_id']);
             $table->index(['tenant_id', 'user_id', 'section_id']);
-            $table->index(['tenant_id', 'user_id', 'unit_id']);
             $table->index(['tenant_id', 'academic_year_id']);
         });
 

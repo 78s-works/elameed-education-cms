@@ -5,7 +5,6 @@ namespace App\Modules\Commerce\Services;
 use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Catalog\Enums\AccessMode;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Services\LessonAvailabilityService;
@@ -21,13 +20,12 @@ use Illuminate\Support\Collection;
  * Grants and checks content access. Takes an explicit tenant id so it works from
  * webhook contexts where no tenant is resolved from the host.
  *
- * Access lives in the `enrollments` table. A grant targets a whole course
- * (`course_id`), a single lesson (`lesson_id`), a single exam (`exam_id`), or a
- * recursive package. A package grant is NOT stored as one row: it fans out
- * (depth-first) into a per-lesson enrollment for every descendant lesson, each
- * tagged with the source `package_id` (B15 / VD LP-D2). Course grants open
- * everything in the course (lessons + exams); lesson grants open just that lesson.
- * (`unit_id` / `bundle_id` are dormant columns — Unit + Bundle retired, VD §7.)
+ * Access lives in the `enrollments` table. A grant targets a single lesson
+ * (`lesson_id`) or a single exam (`exam_id`). A package grant is NOT stored as one
+ * row: it fans out (depth-first) into a per-lesson enrollment for every descendant
+ * lesson, each tagged with the source `package_id` (B15 / VD LP-D2). Access is
+ * always resolved per-lesson (or per-exam) — the `courses` entity was retired
+ * (VD §7), so there is no whole-course grant.
  */
 class EnrollmentService
 {
@@ -53,17 +51,6 @@ class EnrollmentService
     }
 
     /**
-     * Grant a whole-course enrollment. `$bundleId` records the package it came
-     * from, when the grant originates from a bundle purchase.
-     */
-    public function grantCourse(int $tenantId, int $userId, Course $course, EnrollmentSource $source, ?int $bundleId = null): Enrollment
-    {
-        $expiresAt = $course->access_days ? now()->addDays($course->access_days) : null;
-
-        return $this->grant($tenantId, $userId, $source, $course->getKey(), null, null, null, $bundleId, null, $expiresAt);
-    }
-
-    /**
      * Grant access to a single lesson (doc 11 R4 "pay lesson" + R7). Opens the
      * time-boxed availability window immediately so the "week" counts from the
      * grant/payment (decision D3); no-op window when the lesson is unlimited.
@@ -71,7 +58,7 @@ class EnrollmentService
      */
     public function grantLesson(int $tenantId, int $userId, Lesson $lesson, EnrollmentSource $source, ?int $packageId = null): Enrollment
     {
-        $enrollment = $this->grant($tenantId, $userId, $source, null, null, $lesson->getKey(), null, null, $packageId, null);
+        $enrollment = $this->grant($tenantId, $userId, $source, $lesson->getKey(), null, $packageId, null);
         $this->availability->start($tenantId, $userId, $lesson);
 
         return $enrollment;
@@ -108,46 +95,41 @@ class EnrollmentService
     /** Grant access to a single exam (doc 11 R7 / decision D7). */
     public function grantExam(int $tenantId, int $userId, Exam $exam, EnrollmentSource $source): Enrollment
     {
-        return $this->grant($tenantId, $userId, $source, null, null, null, $exam->getKey(), null, null, null);
+        return $this->grant($tenantId, $userId, $source, null, $exam->getKey(), null, null);
     }
 
-    /** Does the user currently have access to the whole course? Free courses are open. */
-    public function hasAccess(int $tenantId, int $userId, Course $course): bool
+    /**
+     * Does the user have access to this recursive package? True when they hold an
+     * access-granting enrollment for at least one of the package's descendant
+     * lessons (the fan-out grants per-lesson rows, B15) — enough to say they engaged
+     * with it, e.g. to leave a review. An empty package grants nothing → no access.
+     */
+    public function hasPackageAccess(int $tenantId, int $userId, Package $package): bool
     {
-        // Channel scope first: a center student never reaches an online course (or
-        // vice-versa), even a free one — the whole course is off their channel.
-        if (! $this->channelAllows($tenantId, $userId, $course->access_mode)) {
-            return false;
-        }
+        $lessonIds = $this->packageItems->descendantLessonIds($package);
 
-        if ($course->is_free) {
-            return true;
+        if ($lessonIds->isEmpty()) {
+            return false;
         }
 
         return Enrollment::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('user_id', $userId)
-            ->where('course_id', $course->getKey())
+            ->whereIn('lesson_id', $lessonIds->all())
             ->grantsAccess()
             ->exists();
     }
 
     /**
      * Does the user have access to this specific lesson? True when the lesson is a
-     * free preview, its course is free, OR the user holds any grant that covers it:
-     * a whole-course enrollment, a unit enrollment for the lesson's unit, or a
-     * lesson enrollment for this exact lesson (a package that bundled just it).
+     * free preview OR the user holds a lesson enrollment that covers it (bought
+     * alone, or fanned out from a package). Channel scope (VD §7) is checked first:
+     * a single-channel student can't reach a lesson on the other channel, even a
+     * free preview.
      */
     public function hasLessonAccess(int $tenantId, int $userId, Lesson $lesson): bool
     {
-        $course = $lesson->course;
-
-        // Channel scope first (VD §7): a single-channel student can't reach a lesson
-        // on the other channel — checked against BOTH the lesson's own access_mode
-        // and its parent course's, so neither an off-channel standalone lesson nor a
-        // lesson inside an off-channel course opens, even as a free preview.
-        if (! $this->channelAllows($tenantId, $userId, $lesson->access_mode)
-            || ($course !== null && ! $this->channelAllows($tenantId, $userId, $course->access_mode))) {
+        if (! $this->channelAllows($tenantId, $userId, $lesson->access_mode)) {
             return false;
         }
 
@@ -155,37 +137,18 @@ class EnrollmentService
             return true;
         }
 
-        if ($course !== null && $course->is_free) {
-            return true;
-        }
-
-        // A soft-deleted (or missing) parent course takes all of its lessons
-        // offline, even for a student who still holds a grant (H3): the `course`
-        // relation is null once the course is trashed, so serving the lesson would
-        // leave access inconsistent with the now-hidden course.
-        if ($lesson->course_id !== null && $course === null) {
-            return false;
-        }
-
         return Enrollment::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('user_id', $userId)
             ->grantsAccess()
-            ->where(function ($q) use ($lesson): void {
-                $q->where('course_id', $lesson->course_id)
-                    ->orWhere('lesson_id', $lesson->getKey());
-                if ($lesson->unit_id !== null) {
-                    $q->orWhere('unit_id', $lesson->unit_id);
-                }
-            })
+            ->where('lesson_id', $lesson->getKey())
             ->exists();
     }
 
     /**
      * Does the user have access to this exam? A free_exam is open to any logged-in
-     * student (no enrollment). Otherwise true when the exam's course is free, or the
-     * user holds any grant covering it: the whole course, the exam's unit, the
-     * exam's lesson, or a direct exam grant.
+     * student (no enrollment). Otherwise true when the user holds a grant covering
+     * it: a direct exam grant, or the exam's lesson.
      */
     public function hasExamAccess(int $tenantId, int $userId, Exam $exam): bool
     {
@@ -194,21 +157,12 @@ class EnrollmentService
             return true;
         }
 
-        $course = $exam->course;
-        if ($course !== null && $course->is_free) {
-            return true;
-        }
-
         return Enrollment::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('user_id', $userId)
             ->grantsAccess()
             ->where(function ($q) use ($exam): void {
-                $q->where('course_id', $exam->course_id)
-                    ->orWhere('exam_id', $exam->getKey());
-                if ($exam->unit_id !== null) {
-                    $q->orWhere('unit_id', $exam->unit_id);
-                }
+                $q->where('exam_id', $exam->getKey());
                 if ($exam->lesson_id !== null) {
                     $q->orWhere('lesson_id', $exam->lesson_id);
                 }
@@ -229,24 +183,21 @@ class EnrollmentService
 
         return $lesson === null
             ? null
-            : $this->grant($tenantId, $userId, $source, null, null, $lesson->getKey(), null, null, $packageId, null);
+            : $this->grant($tenantId, $userId, $source, $lesson->getKey(), null, $packageId, null);
     }
 
     /**
-     * Upsert an active enrollment for a course, unit, lesson, OR exam (exactly one
-     * id is non-null). Returns the existing active grant if one is already present
-     * (so replays / repeat purchases don't stack). `$packageId` is provenance only
-     * — carried on a lesson row that fanned out from a package, never a match key.
+     * Upsert an active enrollment for a lesson OR exam (exactly one id is non-null).
+     * Returns the existing active grant if one is already present (so replays /
+     * repeat purchases don't stack). `$packageId` is provenance only — carried on a
+     * lesson row that fanned out from a package, never a match key.
      */
     private function grant(
         int $tenantId,
         int $userId,
         EnrollmentSource $source,
-        ?int $courseId,
-        ?int $unitId,
         ?int $lessonId,
         ?int $examId,
-        ?int $bundleId,
         ?int $packageId,
         ?\DateTimeInterface $expiresAt,
     ): Enrollment {
@@ -254,8 +205,6 @@ class EnrollmentService
             ->where('tenant_id', $tenantId)
             ->where('user_id', $userId)
             ->where('status', EnrollmentStatus::Active->value)
-            ->when($courseId !== null, fn ($q) => $q->where('course_id', $courseId))
-            ->when($unitId !== null, fn ($q) => $q->where('unit_id', $unitId))
             ->when($lessonId !== null, fn ($q) => $q->where('lesson_id', $lessonId))
             ->when($examId !== null, fn ($q) => $q->where('exam_id', $examId))
             ->first();
@@ -266,11 +215,8 @@ class EnrollmentService
 
         $enrollment = new Enrollment([
             'user_id' => $userId,
-            'course_id' => $courseId,
-            'unit_id' => $unitId,
             'lesson_id' => $lessonId,
             'exam_id' => $examId,
-            'bundle_id' => $bundleId,
             'package_id' => $packageId,
             'source' => $source->value,
             'starts_at' => now(),

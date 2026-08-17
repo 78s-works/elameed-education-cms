@@ -5,7 +5,6 @@ namespace App\Modules\PlatformAdmin\Services;
 use App\Modules\Billing\Http\Resources\TenantSubscriptionResource;
 use App\Modules\Billing\Services\PackageUsage;
 use App\Modules\Billing\Services\SubscriptionService;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
@@ -115,8 +114,6 @@ class TenantInsights
             'students' => (int) ($members[TenantUserRole::Student->value] ?? 0),
             'assistants' => (int) ($members[TenantUserRole::Assistant->value] ?? 0),
             'parents' => (int) ($members[TenantUserRole::Parent->value] ?? 0),
-            'courses' => (int) Course::withoutGlobalScopes()->where('tenant_id', $tenantId)->count(),
-            'published_courses' => (int) Course::withoutGlobalScopes()->where('tenant_id', $tenantId)->published()->count(),
             'enrollments' => (int) Enrollment::withoutGlobalScopes()->where('tenant_id', $tenantId)->count(),
             'gross_earnings_minor' => (int) LedgerEntry::withoutGlobalScopes()
                 ->where('tenant_id', $tenantId)

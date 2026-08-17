@@ -62,7 +62,7 @@ class StudentLessonSectionsController
                 'is_free_preview' => (bool) $lesson->is_free_preview,
                 'access_mode' => $lesson->access_mode?->value,
                 'completed' => $completed,
-                'thumbnail_url' => $lesson->course?->thumbnail_url,
+                'thumbnail_url' => null,
             ],
         ]);
     }

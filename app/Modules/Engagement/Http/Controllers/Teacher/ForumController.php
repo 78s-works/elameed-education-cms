@@ -29,7 +29,7 @@ class ForumController
 
         $query = Comment::query()
             ->topLevel()
-            ->with(['user', 'lesson:id,title,course_id', 'attachments', 'replies' => fn ($q) => $q->with('user', 'attachments')->orderBy('id')])
+            ->with(['user', 'lesson:id,title', 'attachments', 'replies' => fn ($q) => $q->with('user', 'attachments')->orderBy('id')])
             ->when($status, fn ($q) => $q->where('status', $status))
             ->latest('id');
 

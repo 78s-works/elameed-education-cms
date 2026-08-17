@@ -59,7 +59,6 @@ class SectionAttendanceService
                 'lesson_section_id' => $section->getKey(),
             ],
             [
-                'course_id' => $lesson->course_id,
                 'access_expires_at' => $expiresAt,
                 'status' => 'present',
                 'marked_by' => $markedBy,

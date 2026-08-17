@@ -68,7 +68,7 @@ class ContentAccessOverrideService
     /**
      * The student's active override target-id sets.
      *
-     * @return array{lessons: array<int, bool>, sections: array<int, bool>, units: array<int, bool>}
+     * @return array{lessons: array<int, bool>, sections: array<int, bool>}
      */
     public function activeTargetSets(int $tenantId, int $userId): array
     {
@@ -76,9 +76,9 @@ class ContentAccessOverrideService
             ->where('tenant_id', $tenantId)
             ->where('user_id', $userId)
             ->active()
-            ->get(['lesson_id', 'section_id', 'unit_id']);
+            ->get(['lesson_id', 'section_id']);
 
-        $sets = ['lessons' => [], 'sections' => [], 'units' => []];
+        $sets = ['lessons' => [], 'sections' => []];
         foreach ($rows as $row) {
             if ($row->lesson_id !== null) {
                 $sets['lessons'][(int) $row->lesson_id] = true;
@@ -86,36 +86,31 @@ class ContentAccessOverrideService
             if ($row->section_id !== null) {
                 $sets['sections'][(int) $row->section_id] = true;
             }
-            if ($row->unit_id !== null) {
-                $sets['units'][(int) $row->unit_id] = true;
-            }
         }
 
         return $sets;
     }
 
     /**
-     * Does an active override cover this section? (section itself, its lesson, or
-     * its unit).
+     * Does an active override cover this section? (the section itself or its lesson;
+     * unit targets retired — VD §7).
      *
-     * @param  array{lessons: array<int, bool>, sections: array<int, bool>, units: array<int, bool>}  $sets
+     * @param  array{lessons: array<int, bool>, sections: array<int, bool>}  $sets
      */
-    public function sectionCovered(array $sets, LessonSection $section, ?int $unitId): bool
+    public function sectionCovered(array $sets, LessonSection $section): bool
     {
         return isset($sets['sections'][(int) $section->id])
-            || ($section->lesson_id !== null && isset($sets['lessons'][(int) $section->lesson_id]))
-            || ($unitId !== null && isset($sets['units'][$unitId]));
+            || ($section->lesson_id !== null && isset($sets['lessons'][(int) $section->lesson_id]));
     }
 
     /**
-     * Does an active override cover this lesson? (the lesson itself or its unit).
+     * Does an active override cover this lesson?
      *
-     * @param  array{lessons: array<int, bool>, sections: array<int, bool>, units: array<int, bool>}  $sets
+     * @param  array{lessons: array<int, bool>, sections: array<int, bool>}  $sets
      */
     public function lessonCovered(array $sets, Lesson $lesson): bool
     {
-        return isset($sets['lessons'][(int) $lesson->id])
-            || ($lesson->unit_id !== null && isset($sets['units'][(int) $lesson->unit_id]));
+        return isset($sets['lessons'][(int) $lesson->id]);
     }
 
     /** Single-shot convenience: is this lesson override-unlocked for the user? */

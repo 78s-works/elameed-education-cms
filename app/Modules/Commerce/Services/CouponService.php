@@ -10,7 +10,7 @@ use Illuminate\Validation\ValidationException;
 /**
  * Validates a coupon against a priced cart and computes the discount (M21). The
  * lookup is tenant-scoped (BelongsToTenant), so a code only resolves within the
- * academy that issued it. Discounts apply to CONTENT lines (courses/bundles) —
+ * academy that issued it. Discounts apply to CONTENT lines (lessons/packages) —
  * never wallet top-ups — and the teacher absorbs them at fulfilment.
  */
 class CouponService
@@ -45,14 +45,14 @@ class CouponService
         return ['coupon' => $coupon, 'discount_minor' => $coupon->discountFor($base)];
     }
 
-    /** Sum of content (course + package) line prices; top-ups are never discountable. */
+    /** Sum of content (lesson + package) line prices; top-ups are never discountable. */
     private function contentSubtotal(array $lines): int
     {
         $sum = 0;
 
         foreach ($lines as $line) {
-            // `package` replaces the retired `bundle` as the content grouping (B15).
-            if (in_array($line['item_type'], [OrderItem::TYPE_COURSE, OrderItem::TYPE_PACKAGE], true)) {
+            // Content = standalone lessons + recursive packages (course/bundle retired, VD §7).
+            if (in_array($line['item_type'], [OrderItem::TYPE_LESSON, OrderItem::TYPE_PACKAGE], true)) {
                 $sum += (int) $line['price_minor'];
             }
         }
@@ -60,17 +60,18 @@ class CouponService
         return $sum;
     }
 
-    /** The base the coupon discounts against: a scoped course's price, or the whole content subtotal. */
+    /** The base the coupon discounts against: a scoped lesson/package price, or the whole content subtotal. */
     private function applicableBase(Coupon $coupon, array $lines): int
     {
-        if ($coupon->course_id === null) {
+        if ($coupon->target_type === null) {
             return $this->contentSubtotal($lines);
         }
 
+        // `target_type` tokens (lesson|package) match OrderItem's line `item_type`.
         $sum = 0;
 
         foreach ($lines as $line) {
-            if ($line['item_type'] === OrderItem::TYPE_COURSE && (int) $line['item_id'] === (int) $coupon->course_id) {
+            if ($line['item_type'] === $coupon->target_type && (int) $line['item_id'] === (int) $coupon->target_id) {
                 $sum += (int) $line['price_minor'];
             }
         }

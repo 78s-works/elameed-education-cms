@@ -102,7 +102,7 @@ class LandingV2Test extends TestCase
         app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $course, EnrollmentSource::Purchase);
 
         // A review (seeded directly — the write path is covered separately).
-        $r = new Review(['course_id' => $course->id, 'user_id' => $student->id, 'rating' => 5, 'comment' => 'Great course']);
+        $r = new Review(['target_type' => 'lesson', 'target_id' => $lesson->id, 'user_id' => $student->id, 'rating' => 5, 'comment' => 'Great course']);
         $r->tenant_id = $this->tenant->id;
         $r->save();
 
@@ -127,7 +127,7 @@ class LandingV2Test extends TestCase
         $reviews = $this->sectionOfType($data['sections'], 'testimonials');
         $this->assertNotNull($reviews);
         $this->assertSame('Great course', $reviews['items'][0]['comment']);
-        $this->assertSame($course->title, $reviews['items'][0]['course_title']);
+        $this->assertSame($lesson->title, $reviews['items'][0]['target_title']);
     }
 
     public function test_default_landing_carries_a_per_section_variant(): void
@@ -265,26 +265,30 @@ class LandingV2Test extends TestCase
 
     public function test_only_enrolled_student_can_review_and_review_is_upserted(): void
     {
-        $course = $this->publishedCourse();
+        $lesson = $this->publishedLesson();
         $student = $this->member(TenantUserRole::Student);
 
         Sanctum::actingAs($student);
-        // Not enrolled → 403.
+        $body = fn (array $extra): array => array_merge(['target_type' => 'lesson', 'target_id' => $lesson->id], $extra);
+
+        // No access → 403.
         $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/courses/{$course->slug}/reviews", ['rating' => 4])
+            ->postJson('/api/v1/reviews', $body(['rating' => 4]))
             ->assertStatus(403);
 
-        app(EnrollmentService::class)->grantCourse($this->tenant->id, $student->id, $course, EnrollmentSource::Purchase);
+        app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);
 
         $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/courses/{$course->slug}/reviews", ['rating' => 4, 'comment' => 'good'])
+            ->postJson('/api/v1/reviews', $body(['rating' => 4, 'comment' => 'good']))
             ->assertStatus(201)->assertJsonPath('data.rating', 4);
 
-        // Second submit updates the same row (one review per student per course).
+        // Second submit updates the same row (one review per student per target).
         $this->withHeader('X-Tenant', 'demo')
-            ->postJson("/api/v1/courses/{$course->slug}/reviews", ['rating' => 5, 'comment' => 'even better'])
+            ->postJson('/api/v1/reviews', $body(['rating' => 5, 'comment' => 'even better']))
             ->assertStatus(201)->assertJsonPath('data.rating', 5);
 
-        $this->assertSame(1, Review::withoutGlobalScopes()->where('course_id', $course->id)->where('user_id', $student->id)->count());
+        $this->assertSame(1, Review::withoutGlobalScopes()
+            ->where('target_type', 'lesson')->where('target_id', $lesson->id)
+            ->where('user_id', $student->id)->count());
     }
 }

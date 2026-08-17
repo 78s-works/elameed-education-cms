@@ -21,7 +21,7 @@ class Question extends Model
 
     protected $fillable = [
         'academic_year_id',
-        'exam_id', 'category_id', 'type', 'body', 'options', 'correct', 'points', 'book_ref', 'sort_order',
+        'exam_id', 'type', 'body', 'options', 'correct', 'points', 'book_ref', 'sort_order',
     ];
 
     protected $casts = [

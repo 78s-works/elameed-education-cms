@@ -190,7 +190,6 @@ class LessonSectionController
 
         return [
             'lesson_id' => $lesson->id,
-            'course_id' => $lesson->course_id,
             'title' => $request->input('name') ?: ucfirst($type->value),
             'type' => ($type === LessonSectionType::Quiz ? ExamType::LessonQuiz : ExamType::Homework)->value,
             'mode' => ($delivery === SectionDelivery::BubbleSheet ? ExamMode::BubbleSheet : ExamMode::Standard)->value,

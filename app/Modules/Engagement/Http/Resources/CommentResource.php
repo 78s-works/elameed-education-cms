@@ -25,7 +25,6 @@ class CommentResource extends JsonResource
             'lesson' => $this->whenLoaded('lesson', fn () => [
                 'id' => $this->lesson?->getKey(),
                 'title' => $this->lesson?->title,
-                'course_id' => $this->lesson?->course_id,
             ]),
             'attachments' => AttachmentResource::collection($this->whenLoaded('attachments')),
             'replies' => CommentResource::collection($this->whenLoaded('replies')),

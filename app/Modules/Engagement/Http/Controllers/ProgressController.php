@@ -74,7 +74,7 @@ class ProgressController
     {
         $items = LessonProgress::query()
             ->where('user_id', $request->user()->getKey())
-            ->with('lesson:id,title,course_id')
+            ->with('lesson:id,title')
             ->latest('updated_at')
             ->limit(50)
             ->get()
@@ -96,14 +96,13 @@ class ProgressController
             ->where('user_id', $request->user()->getKey())
             ->whereNull('completed_at')
             ->where('watch_percent', '>', 0)
-            ->with('lesson:id,title,course_id')
+            ->with('lesson:id,title')
             ->latest('updated_at')
             ->limit(20)
             ->get()
             ->map(fn ($p) => [
                 'lesson_id' => $p->lesson_id,
                 'lesson_title' => $p->lesson?->title,
-                'course_id' => $p->lesson?->course_id,
                 'watch_percent' => $p->watch_percent,
                 'last_position_sec' => $p->last_position_sec,
             ]);

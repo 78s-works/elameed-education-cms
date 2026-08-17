@@ -3,7 +3,8 @@
 namespace App\Modules\Centers\Services;
 
 use App\Models\User;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Package;
 use App\Modules\Centers\Enums\CodeStatus;
 use App\Modules\Centers\Enums\CodeType;
 use App\Modules\Centers\Models\ActivationCode;
@@ -16,9 +17,10 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Redeems an activation code for a student (M12): wallet codes credit the wallet
- * (balanced against teacher_earnings, like a manual top-up); course codes grant a
- * course enrollment. Atomic + one-time — the code row is locked and flipped to
- * `redeemed`, so a double-submit or offline re-sync can't double-apply.
+ * (balanced against teacher_earnings, like a manual top-up); content codes grant
+ * access to a lesson or package (`target_type`/`target_id`, VD §7 — `courses`
+ * retired). Atomic + one-time — the code row is locked and flipped to `redeemed`,
+ * so a double-submit or offline re-sync can't double-apply.
  */
 class CodeRedemptionService
 {
@@ -28,7 +30,7 @@ class CodeRedemptionService
     ) {}
 
     /**
-     * @return array{code: string, type: string, amount_minor?: int, course_id?: int}
+     * @return array{code: string, type: string, amount_minor?: int, target_type?: string, target_id?: int}
      */
     public function redeem(int $tenantId, string $code, User $student): array
     {
@@ -61,12 +63,21 @@ class CodeRedemptionService
                 ], 'activation_code', $ac->id);
                 $result = ['type' => 'wallet', 'amount_minor' => $amount];
             } else {
-                $course = Course::withoutGlobalScopes()->find($ac->course_id);
-                if ($course === null) {
-                    throw ValidationException::withMessages(['code' => __('The course for this code is no longer available.')]);
+                // Content code: grant the targeted lesson or package (VD §7).
+                if ($ac->target_type === ActivationCode::TARGET_PACKAGE) {
+                    $package = Package::withoutGlobalScopes()->find($ac->target_id);
+                    if ($package === null) {
+                        throw ValidationException::withMessages(['code' => __('The content for this code is no longer available.')]);
+                    }
+                    $this->enrollments->grantPackage($tenantId, $student->getKey(), $package, EnrollmentSource::Code);
+                } else {
+                    $lesson = Lesson::withoutGlobalScopes()->find($ac->target_id);
+                    if ($lesson === null) {
+                        throw ValidationException::withMessages(['code' => __('The content for this code is no longer available.')]);
+                    }
+                    $this->enrollments->grantLesson($tenantId, $student->getKey(), $lesson, EnrollmentSource::Code);
                 }
-                $this->enrollments->grantCourse($tenantId, $student->getKey(), $course, EnrollmentSource::Code);
-                $result = ['type' => 'course', 'course_id' => (int) $ac->course_id];
+                $result = ['type' => 'content', 'target_type' => $ac->target_type, 'target_id' => (int) $ac->target_id];
             }
 
             $ac->update([

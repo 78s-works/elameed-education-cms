@@ -18,7 +18,6 @@ return new class extends Migration
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->foreignId('exam_id')->nullable()->constrained('exams')->cascadeOnDelete();
-            $table->foreignId('category_id')->nullable()->constrained('course_categories')->nullOnDelete();
             $table->string('type');
             $table->text('body')->nullable();
             $table->json('options')->nullable();

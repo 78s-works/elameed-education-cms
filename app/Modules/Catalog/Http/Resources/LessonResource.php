@@ -24,8 +24,6 @@ class LessonResource extends JsonResource
             'currency' => $this->currency,
             'is_purchasable' => (bool) $this->is_purchasable,
             'academic_year_id' => $this->whenLoaded('academicYear', fn () => $this->academicYear?->uuid),
-            'unit_id' => $this->unit_id,
-            'course_id' => $this->course_id,
             'title' => $this->title,
             'description' => $this->description,
             'sort_order' => $this->sort_order,

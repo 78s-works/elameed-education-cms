@@ -24,7 +24,7 @@ return new class extends Migration
     {
         Schema::table('attendance_records', function (Blueprint $table) {
             if (! Schema::hasColumn('attendance_records', 'lesson_section_id')) {
-                $table->foreignId('lesson_section_id')->nullable()->after('course_id')
+                $table->foreignId('lesson_section_id')->nullable()->after('user_id')
                     ->constrained('lesson_sections')->nullOnDelete();
             }
             if (! Schema::hasColumn('attendance_records', 'access_expires_at')) {

@@ -59,7 +59,6 @@ class ContentUnlockService
             ->get();
 
         $overrideSets = $this->overrides->activeTargetSets($tenantId, $userId);
-        $unitId = $lesson->unit_id !== null ? (int) $lesson->unit_id : null;
 
         // Each solution kind depends on ONE lesson-level exam — resolve once.
         $quizSubmitted = $this->examSubmitted($tenantId, $userId, (int) $lesson->getKey(), ExamType::LessonQuiz);
@@ -69,7 +68,7 @@ class ContentUnlockService
         $gateBlocked = false; // flipped once a preceding part's gate_rule is unmet (LP-13)
 
         foreach ($sections as $section) {
-            $covered = $this->overrides->sectionCovered($overrideSets, $section, $unitId);
+            $covered = $this->overrides->sectionCovered($overrideSets, $section);
 
             // Displayed lock: an override opens the part outright; otherwise a
             // preceding unmet gate (new model) OR the legacy solution gate locks it.

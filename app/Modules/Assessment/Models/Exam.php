@@ -6,7 +6,6 @@ use App\Modules\Assessment\Enums\ExamGradingMode;
 use App\Modules\Assessment\Enums\ExamMode;
 use App\Modules\Assessment\Enums\ExamPassMode;
 use App\Modules\Assessment\Enums\ExamType;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
@@ -36,7 +35,7 @@ class Exam extends Model
     // dormant in the DB; deliberately not fillable so nothing writes it.
     protected $fillable = [
         'academic_year_id',
-        'course_id', 'lesson_id', 'unit_id', 'title', 'type', 'pass_percent', 'duration_min',
+        'lesson_id', 'title', 'type', 'pass_percent', 'duration_min',
         'max_time_extensions', 'attempts_allowed', 'question_order', 'scoring', 'starts_at', 'ends_at',
         'result_visibility', 'show_answers', 'mode', 'is_published',
         // Degree of success (VD change set §7, LP-11/LP-12).
@@ -70,18 +69,10 @@ class Exam extends Model
         return 'uuid';
     }
 
-    public function course(): BelongsTo
-    {
-        return $this->belongsTo(Course::class);
-    }
-
     public function lesson(): BelongsTo
     {
         return $this->belongsTo(Lesson::class);
     }
-
-    // `unit_id` is a dormant column (Unit retired — VD change set §7; the units
-    // table was dropped, lessons/packages replace it). No relation any more.
 
     public function questions(): HasMany
     {

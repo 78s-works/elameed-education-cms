@@ -14,7 +14,6 @@ use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Assessment\Services\ExamTimeExtensionService;
 use App\Modules\Assessment\Services\GradingService;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\LessonSection;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Services\EnrollmentService;
@@ -44,9 +43,9 @@ class AttemptController
 
     /**
      * Published, in-window exams the student can reach: every free_exam, plus any
-     * exam covered by a grant (whole course / free course / unit / lesson / direct
-     * exam). Optional ?lesson_id= narrows to one lesson (the course player's quiz +
-     * homework). Discovery only — start-time re-checks access via hasExamAccess.
+     * exam covered by a grant (lesson / direct exam). Optional ?lesson_id= narrows
+     * to one lesson (the player's quiz + homework). Discovery only — start-time
+     * re-checks access via hasExamAccess. (`courses`/units retired — VD §7.)
      */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -54,13 +53,10 @@ class AttemptController
 
         $grants = Enrollment::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)->where('user_id', $request->user()->getKey())
-            ->grantsAccess()->get(['course_id', 'unit_id', 'lesson_id', 'exam_id']);
+            ->grantsAccess()->get(['lesson_id', 'exam_id']);
 
-        $courseIds = $grants->pluck('course_id')->filter()->unique()->values()->all();
-        $unitIds = $grants->pluck('unit_id')->filter()->unique()->values()->all();
         $lessonIds = $grants->pluck('lesson_id')->filter()->unique()->values()->all();
         $examIds = $grants->pluck('exam_id')->filter()->unique()->values()->all();
-        $freeCourseIds = Course::query()->where('is_free', true)->pluck('id')->all();
 
         $exams = Exam::query()
             ->withCount('questions')
@@ -68,10 +64,8 @@ class AttemptController
             ->where(fn ($q) => $q->whereNull('starts_at')->orWhere('starts_at', '<=', now()))
             ->where(fn ($q) => $q->whereNull('ends_at')->orWhere('ends_at', '>=', now()))
             ->when($request->filled('lesson_id'), fn ($q) => $q->where('lesson_id', $request->integer('lesson_id')))
-            ->where(function ($q) use ($courseIds, $unitIds, $lessonIds, $examIds, $freeCourseIds): void {
+            ->where(function ($q) use ($lessonIds, $examIds): void {
                 $q->where('type', ExamType::FreeExam->value)
-                    ->orWhereIn('course_id', array_merge($courseIds, $freeCourseIds))
-                    ->orWhereIn('unit_id', $unitIds)
                     ->orWhereIn('lesson_id', $lessonIds)
                     ->orWhereIn('id', $examIds);
             })

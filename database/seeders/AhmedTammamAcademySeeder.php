@@ -28,8 +28,6 @@ use App\Modules\Catalog\Enums\SectionDelivery;
 use App\Modules\Catalog\Enums\VideoSource;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\ContentDependency;
-use App\Modules\Catalog\Models\Course;
-use App\Modules\Catalog\Models\CourseCategory;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonAccessWindow;
 use App\Modules\Catalog\Models\LessonExtensionRequest;
@@ -510,21 +508,10 @@ class AhmedTammamAcademySeeder extends Seeder
         $year = $this->years['الثالث الثانوي'];
         $this->yearContext->set($year->id);
 
-        $category = $this->makeCategory($year, 'أحياء — الثالث الثانوي', 'أحياء', 'الثالث الثانوي');
-
-        $course = $this->makeCourse($year, $category, [
-            'title' => 'كورس الأحياء الشامل — الثالث الثانوي',
-            'subtitle' => 'المنهج كامل بالخرائط الذهنية على أفضل سبورة في مصر',
-            'description' => 'شرح منهج الأحياء للصف الثالث الثانوي بالكامل: الدعامة والحركة، التنسيق الهرموني، الإخراج، التكاثر، المناعة والوراثة.',
-            'price_minor' => 120000,
-            'access_days' => 300,
-            'points' => 500,
-            'access_mode' => AccessMode::Both,
-        ]);
-
-        // Chapter lessons across all channels; first is a free preview.
+        // Chapter lessons across all channels; first is a free preview. Lessons are
+        // standalone under the year (no course grouping — VD §7); packages sell them.
         $lessons = [];
-        $lessons[] = $this->makeLesson($year, $course, [
+        $lessons[] = $this->makeLesson($year, [
             'title' => 'الباب الأول — الدعامة والحركة',
             'access_mode' => AccessMode::Both,
             'is_free_preview' => true,
@@ -533,7 +520,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'sort_order' => 1,
         ], withExam: true, essay: false);
 
-        $lessons[] = $this->makeLesson($year, $course, [
+        $lessons[] = $this->makeLesson($year, [
             'title' => 'الباب الثاني — التنسيق الهرموني',
             'access_mode' => AccessMode::Online,
             'price_minor' => 25000,
@@ -541,7 +528,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'sort_order' => 2,
         ], withExam: true, essay: true);
 
-        $lessons[] = $this->makeLesson($year, $course, [
+        $lessons[] = $this->makeLesson($year, [
             'title' => 'الباب الثالث — الإخراج',
             'access_mode' => AccessMode::Center,
             'price_minor' => 25000,
@@ -549,7 +536,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'sort_order' => 3,
         ], withExam: true, essay: false);
 
-        $lessons[] = $this->makeLesson($year, $course, [
+        $lessons[] = $this->makeLesson($year, [
             'title' => 'الباب الرابع — المناعة والوراثة',
             'access_mode' => AccessMode::Both,
             'price_minor' => 30000,
@@ -557,7 +544,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'sort_order' => 4,
         ], withExam: false, essay: false);
 
-        $lessons[] = $this->makeLesson($year, $course, [
+        $lessons[] = $this->makeLesson($year, [
             'title' => 'الباب الخامس — التكاثر',
             'access_mode' => AccessMode::Online,
             'price_minor' => 22000,
@@ -565,7 +552,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'sort_order' => 5,
         ], withExam: true, essay: true);
 
-        $lessons[] = $this->makeLesson($year, $course, [
+        $lessons[] = $this->makeLesson($year, [
             'title' => 'الباب السادس — الوراثة الجزيئية',
             'access_mode' => AccessMode::Center,
             'price_minor' => 18000,
@@ -573,7 +560,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'sort_order' => 6,
         ], withExam: false, essay: false);
 
-        $lessons[] = $this->makeLesson($year, $course, [
+        $lessons[] = $this->makeLesson($year, [
             'title' => 'مراجعة ليلة الامتحان',
             'access_mode' => AccessMode::Both,
             'price_minor' => 35000,
@@ -584,11 +571,23 @@ class AhmedTammamAcademySeeder extends Seeder
         // A content dependency: the quiz of lesson 2 requires passing lesson 1's quiz.
         $this->linkDependency($lessons[0], $lessons[1]);
 
-        // Package types: chapter (بابي) + monthly (شهري).
+        // Package types: full-course + chapter (بابي) + monthly (شهري).
+        $fullType = $this->makePackageType($year, 'الكورس الكامل', 'hybrid', buyAlone: true);
         $chapterType = $this->makePackageType($year, 'اشتراك بابي', 'hybrid', buyAlone: true);
         $monthlyType = $this->makePackageType($year, 'اشتراك شهري', 'hybrid', buyAlone: true);
 
-        // Chapter package bundling three lessons (recursive items).
+        // Full-course package (all lessons) — replaces the old "كورس الأحياء الشامل".
+        $fullPkg = $this->makePackage($year, $fullType, [
+            'name' => 'كورس الأحياء الشامل — الثالث الثانوي',
+            'description' => 'شرح منهج الأحياء للصف الثالث الثانوي بالكامل: الدعامة والحركة، التنسيق الهرموني، الإخراج، التكاثر، المناعة والوراثة.',
+            'price_minor' => 120000,
+            'access_mode' => AccessMode::Both,
+        ]);
+        foreach ($lessons as $lesson) {
+            $this->packageItems->attach($fullPkg, 'lesson', $lesson->id);
+        }
+
+        // Chapter package bundling a few lessons (recursive items).
         $chapterPkg = $this->makePackage($year, $chapterType, [
             'name' => 'باقة الأبواب — الثالث الثانوي',
             'description' => 'الأبواب الأساسية في اشتراك واحد بسعر أوفر.',
@@ -598,7 +597,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->packageItems->attach($chapterPkg, 'lesson', $lessons[1]->id);
         $this->packageItems->attach($chapterPkg, 'lesson', $lessons[3]->id);
 
-        // Monthly package (single lesson) + nests the chapter package (package-in-package).
+        // Monthly package (single lesson).
         $monthlyPkg = $this->makePackage($year, $monthlyType, [
             'name' => 'الاشتراك الشهري — الثالث الثانوي',
             'description' => 'وصول شهري لأحدث المحاضرات.',
@@ -607,10 +606,10 @@ class AhmedTammamAcademySeeder extends Seeder
         ]);
         $this->packageItems->attach($monthlyPkg, 'lesson', $lessons[3]->id);
 
-        // A standalone unit exam (مراجعة نهائية) with mixed questions.
-        $unitExam = $this->makeExam($year, $course, null, [
+        // A standalone review exam (مراجعة نهائية) — free_exam, bound to no lesson.
+        $reviewExam = $this->makeExam($year, null, [
             'title' => 'المراجعة النهائية — الثالث الثانوي',
-            'type' => ExamType::UnitExam,
+            'type' => ExamType::FreeExam,
             'grading_mode' => ExamGradingMode::Manual,
             'attempts_allowed' => 2,
             'duration_min' => 120,
@@ -625,25 +624,25 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->paidPurchase($s1, $chapterPkg, 'package', $chapterPkg->price_minor, couponPercent: 25);
         $this->progressAndAttempt($s1, $lessons[1], passed: true);
         $this->progressAndAttempt($s1, $lessons[3], passed: false);
-        $this->reviewCourse($s1, $course, 5, 'أفضل شرح أحياء على الإطلاق، ربّنا يكرمك يا دكتور.');
-        $this->favorite($s1, $course);
+        $this->reviewLesson($s1, $lessons[1], 5, 'أفضل شرح أحياء على الإطلاق، ربّنا يكرمك يا دكتور.');
+        $this->favorite($s1, $lessons[1]);
         $this->points->award($this->tenant->id, $s1->id, 150, 'exam_passed', 'lesson', $lessons[1]->id);
 
         // --- s2: center student — code + center enrolments, attendance, center grade.
         $this->enroll->grantLesson($this->tenant->id, $s2->id, $lessons[2], EnrollmentSource::Center);
         $this->enroll->grantLesson($this->tenant->id, $s2->id, $lessons[0], EnrollmentSource::Manual);
-        $this->attendance($s2, $this->centers[0], $course, present: true);
-        $this->attendance($s2, $this->centers[0], $course, present: false);
+        $this->attendance($s2, $this->centers[0], $year, present: true);
+        $this->attendance($s2, $this->centers[0], $year, present: false);
         $this->centerGrade($year, $s2, $this->centers[0], 'اختبار الباب الثالث', 40, 34);
         $this->progressAndAttempt($s2, $lessons[2], passed: true);
-        $this->reviewCourse($s2, $course, 4, 'الشرح في السنتر ممتاز والمتابعة مستمرة.');
+        $this->reviewLesson($s2, $lessons[2], 4, 'الشرح في السنتر ممتاز والمتابعة مستمرة.');
 
         // --- s3: wallet path — top up via receipt then buy from wallet balance.
         $this->walletTopupViaReceipt($s3, 30000, 'vodafone_cash', 'approved');
         $this->walletTopupViaReceipt($s3, 15000, 'instapay', 'pending');
         $this->walletPurchase($s3, $lessons[1], $lessons[1]->price_minor);
-        $this->enroll->grantExam($this->tenant->id, $s3->id, $unitExam, EnrollmentSource::Manual);
-        $this->attemptExam($s3, $unitExam, status: AttemptStatus::InProgress, passed: null);
+        $this->enroll->grantExam($this->tenant->id, $s3->id, $reviewExam, EnrollmentSource::Manual);
+        $this->attemptExam($s3, $reviewExam, status: AttemptStatus::InProgress, passed: null);
 
         // Content access override (manual free grant) + a lesson extension request.
         $this->overrides->grant($this->tenant->id, $s1->id, ContentAccessTarget::Lesson, $lessons[2]->id, $this->teacher->id, 'منحة تعويض غياب');
@@ -654,7 +653,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->supportTicket($s3, TicketStatus::Open, TicketPriority::Urgent, 'الفيديو مش بيفتح', 'المحاضرة التانية بتقف عند دقيقة ٣.');
 
         // Large divergent cohort (flagship year — deepest).
-        $this->seedCohort($year, $course, $lessons, $chapterPkg, yearDigit: 3, count: 22);
+        $this->seedCohort($year, $fullPkg, $lessons, $chapterPkg, yearDigit: 3, count: 22);
 
         $this->yearContext->forget();
     }
@@ -666,18 +665,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $year = $this->years['الثاني الثانوي'];
         $this->yearContext->set($year->id);
 
-        $category = $this->makeCategory($year, 'أحياء — الثاني الثانوي', 'أحياء', 'الثاني الثانوي');
-        $course = $this->makeCourse($year, $category, [
-            'title' => 'كورس الأحياء — الثاني الثانوي',
-            'subtitle' => 'الطاقة، التغذية، النقل والتنفس',
-            'description' => 'أساسيات الأحياء للصف الثاني الثانوي مع بنك أسئلة على كل درس.',
-            'price_minor' => 90000,
-            'access_days' => 240,
-            'points' => 400,
-            'access_mode' => AccessMode::Both,
-        ]);
-
-        $l1 = $this->makeLesson($year, $course, [
+        $l1 = $this->makeLesson($year, [
             'title' => 'الطاقة وأنظمة الحياة',
             'access_mode' => AccessMode::Both,
             'is_free_preview' => true,
@@ -685,34 +673,46 @@ class AhmedTammamAcademySeeder extends Seeder
             'is_purchasable' => false,
             'sort_order' => 1,
         ], withExam: true, essay: false);
-        $l2 = $this->makeLesson($year, $course, [
+        $l2 = $this->makeLesson($year, [
             'title' => 'التغذية والتمثيل الغذائي (البناء الضوئي)',
             'access_mode' => AccessMode::Online,
             'price_minor' => 20000,
             'is_purchasable' => true,
             'sort_order' => 2,
         ], withExam: true, essay: false);
-        $l3 = $this->makeLesson($year, $course, [
+        $l3 = $this->makeLesson($year, [
             'title' => 'النقل في الكائنات الحية',
             'access_mode' => AccessMode::Both,
             'price_minor' => 20000,
             'is_purchasable' => true,
             'sort_order' => 3,
         ], withExam: false, essay: false);
-        $l4 = $this->makeLesson($year, $course, [
+        $l4 = $this->makeLesson($year, [
             'title' => 'التنفس الخلوي',
             'access_mode' => AccessMode::Center,
             'price_minor' => 18000,
             'is_purchasable' => true,
             'sort_order' => 4,
         ], withExam: true, essay: false);
-        $l5 = $this->makeLesson($year, $course, [
+        $l5 = $this->makeLesson($year, [
             'title' => 'الإخراج والاتزان الداخلي',
             'access_mode' => AccessMode::Online,
             'price_minor' => 18000,
             'is_purchasable' => true,
             'sort_order' => 5,
         ], withExam: true, essay: true);
+
+        // Full-course package (all lessons) — replaces the old "كورس الأحياء".
+        $fullType = $this->makePackageType($year, 'الكورس الكامل', 'hybrid', buyAlone: true);
+        $fullPkg = $this->makePackage($year, $fullType, [
+            'name' => 'كورس الأحياء — الثاني الثانوي',
+            'description' => 'أساسيات الأحياء للصف الثاني الثانوي مع بنك أسئلة على كل درس.',
+            'price_minor' => 90000,
+            'access_mode' => AccessMode::Both,
+        ]);
+        foreach ([$l1, $l2, $l3, $l4, $l5] as $lesson) {
+            $this->packageItems->attach($fullPkg, 'lesson', $lesson->id);
+        }
 
         $type = $this->makePackageType($year, 'اشتراك بابي', 'hybrid', buyAlone: true);
         $pkg = $this->makePackage($year, $type, [
@@ -727,19 +727,19 @@ class AhmedTammamAcademySeeder extends Seeder
         $s1 = $this->makeStudent($year, '01200120001', 'حبيبة سمير', 'online', 'أنثى', 'الإسكندرية');
         $s2 = $this->makeStudent($year, '01200120002', 'كريم أشرف', 'center', 'ذكر', 'الجيزة', $this->centers[1]);
 
-        // Course purchase (paid) with fixed-price flow, no coupon.
-        $this->paidPurchase($s1, $course, 'course', $course->price_minor);
+        // Full-course package purchase (paid) with fixed-price flow, no coupon.
+        $this->paidPurchase($s1, $fullPkg, 'package', $fullPkg->price_minor);
         $this->progressAndAttempt($s1, $l2, passed: true);
-        $this->reviewCourse($s1, $course, 5, 'المنهج بقى سهل بعد الخرائط الذهنية.');
-        $this->favorite($s1, $course);
+        $this->reviewLesson($s1, $l2, 5, 'المنهج بقى سهل بعد الخرائط الذهنية.');
+        $this->favorite($s1, $l2);
 
         // Manual grant + attendance for the center student.
         $this->enroll->grantPackage($this->tenant->id, $s2->id, $pkg, EnrollmentSource::Manual);
-        $this->attendance($s2, $this->centers[1], $course, present: true);
+        $this->attendance($s2, $this->centers[1], $year, present: true);
         $this->progressAndAttempt($s2, $l2, passed: false);
         $this->supportTicket($s2, TicketStatus::Closed, TicketPriority::Normal, 'استفسار عن كتاب المايسترو', 'الكتاب متوفر في السنتر ولا أونلاين؟');
 
-        $this->seedCohort($year, $course, [$l1, $l2, $l3, $l4, $l5], $pkg, yearDigit: 2, count: 14);
+        $this->seedCohort($year, $fullPkg, [$l1, $l2, $l3, $l4, $l5], $pkg, yearDigit: 2, count: 14);
 
         $this->yearContext->forget();
     }
@@ -751,18 +751,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $year = $this->years['الأول الثانوي'];
         $this->yearContext->set($year->id);
 
-        $category = $this->makeCategory($year, 'علوم متكاملة — الأول الثانوي', 'علوم متكاملة', 'الأول الثانوي');
-        $course = $this->makeCourse($year, $category, [
-            'title' => 'العلوم المتكاملة — الأول الثانوي',
-            'subtitle' => 'أحياء وكيمياء وفيزياء في منهج واحد',
-            'description' => 'شرح العلوم المتكاملة للصف الأول الثانوي بأسلوب مبسّط ومنظّم.',
-            'price_minor' => 70000,
-            'access_days' => 210,
-            'points' => 300,
-            'access_mode' => AccessMode::Online,
-        ]);
-
-        $l1 = $this->makeLesson($year, $course, [
+        $l1 = $this->makeLesson($year, [
             'title' => 'الخلية — وحدة بناء الكائن الحي',
             'access_mode' => AccessMode::Online,
             'is_free_preview' => true,
@@ -770,20 +759,32 @@ class AhmedTammamAcademySeeder extends Seeder
             'is_purchasable' => false,
             'sort_order' => 1,
         ], withExam: true, essay: false);
-        $l2 = $this->makeLesson($year, $course, [
+        $l2 = $this->makeLesson($year, [
             'title' => 'المادة وتركيبها',
             'access_mode' => AccessMode::Online,
             'price_minor' => 15000,
             'is_purchasable' => true,
             'sort_order' => 2,
         ], withExam: true, essay: false);
-        $l3 = $this->makeLesson($year, $course, [
+        $l3 = $this->makeLesson($year, [
             'title' => 'الحركة والقوى',
             'access_mode' => AccessMode::Online,
             'price_minor' => 15000,
             'is_purchasable' => true,
             'sort_order' => 3,
         ], withExam: true, essay: false);
+
+        // Full-course package (all lessons) — replaces the old "العلوم المتكاملة".
+        $fullType = $this->makePackageType($year, 'الكورس الكامل', 'online', buyAlone: true);
+        $fullPkg = $this->makePackage($year, $fullType, [
+            'name' => 'العلوم المتكاملة — الأول الثانوي',
+            'description' => 'شرح العلوم المتكاملة للصف الأول الثانوي بأسلوب مبسّط ومنظّم.',
+            'price_minor' => 70000,
+            'access_mode' => AccessMode::Online,
+        ]);
+        foreach ([$l1, $l2, $l3] as $lesson) {
+            $this->packageItems->attach($fullPkg, 'lesson', $lesson->id);
+        }
 
         $type = $this->makePackageType($year, 'اشتراك شهري', 'online', buyAlone: true);
         $pkg = $this->makePackage($year, $type, [
@@ -798,15 +799,15 @@ class AhmedTammamAcademySeeder extends Seeder
 
         $this->paidPurchase($s1, $pkg, 'package', $pkg->price_minor);
         $this->progressAndAttempt($s1, $l2, passed: true);
-        $this->reviewCourse($s1, $course, 4, 'مقدمة ممتازة للثانوي.');
+        $this->reviewLesson($s1, $l2, 4, 'مقدمة ممتازة للثانوي.');
         // A visible testimonial with no linked user (author_name only).
-        $t = new Review(['course_id' => $course->id, 'rating' => 5, 'author_name' => 'ولي أمر — أ. سامية', 'comment' => 'ابنتي اتحسّن مستواها كتير.', 'is_visible' => true]);
+        $t = new Review(['target_type' => 'lesson', 'target_id' => $l2->id, 'rating' => 5, 'author_name' => 'ولي أمر — أ. سامية', 'comment' => 'ابنتي اتحسّن مستواها كتير.', 'is_visible' => true]);
         $t->tenant_id = $this->tenant->id;
         $t->academic_year_id = $year->id;
         $t->user_id = null;
         $t->save();
 
-        $this->seedCohort($year, $course, [$l1, $l2, $l3], $pkg, yearDigit: 1, count: 10);
+        $this->seedCohort($year, $fullPkg, [$l1, $l2, $l3], $pkg, yearDigit: 1, count: 10);
 
         $this->yearContext->forget();
     }
@@ -969,12 +970,12 @@ class AhmedTammamAcademySeeder extends Seeder
             $ppo->save();
         }
 
-        // An exam time-extension (granted) on the year-3 unit exam.
-        $unitExam = Exam::query()->where('academic_year_id', $year3->id)->where('type', ExamType::UnitExam->value)->first();
+        // An exam time-extension (granted) on the year-3 standalone review exam.
+        $reviewExam = Exam::query()->where('academic_year_id', $year3->id)->where('type', ExamType::FreeExam->value)->first();
         $s3 = User::query()->where('phone', '01200130003')->first();
-        if ($unitExam && $s3) {
+        if ($reviewExam && $s3) {
             $ext = new ExamTimeExtension([
-                'exam_id' => $unitExam->id,
+                'exam_id' => $reviewExam->id,
                 'user_id' => $s3->id,
                 'requested_minutes' => 20,
                 'granted_minutes' => 15,
@@ -1039,35 +1040,7 @@ class AhmedTammamAcademySeeder extends Seeder
         return $user;
     }
 
-    private function makeCategory(AcademicYear $year, string $name, string $subject, string $grade): CourseCategory
-    {
-        $cat = new CourseCategory(['name' => $name, 'subject' => $subject, 'grade' => $grade, 'sort_order' => $year->sort_order]);
-        $cat->tenant_id = $this->tenant->id;
-        $cat->academic_year_id = $year->id;
-        $cat->save();
-
-        return $cat;
-    }
-
-    private function makeCourse(AcademicYear $year, CourseCategory $category, array $attrs): Course
-    {
-        $course = new Course(array_merge([
-            'currency' => self::CURRENCY,
-            'visibility' => ContentVisibility::Visible->value,
-            'is_free' => false,
-            'purchase_enabled' => true,
-        ], $attrs));
-        $course->tenant_id = $this->tenant->id;
-        $course->academic_year_id = $year->id;
-        $course->category_id = $category->id;
-        $course->slug = Course::makeUniqueSlug($attrs['title']);
-        $course->access_mode = $attrs['access_mode'] ?? AccessMode::Both;
-        $course->save();
-
-        return $course;
-    }
-
-    private function makeLesson(AcademicYear $year, Course $course, array $attrs, bool $withExam, bool $essay): Lesson
+    private function makeLesson(AcademicYear $year, array $attrs, bool $withExam, bool $essay): Lesson
     {
         $lesson = new Lesson(array_merge([
             'currency' => self::CURRENCY,
@@ -1081,11 +1054,10 @@ class AhmedTammamAcademySeeder extends Seeder
         ], $attrs));
         $lesson->tenant_id = $this->tenant->id;
         $lesson->academic_year_id = $year->id;
-        $lesson->course_id = $course->id;
         $lesson->access_mode = $attrs['access_mode'];
         $lesson->save();
 
-        $this->makeSections($year, $lesson, $withExam ? $this->makeExam($year, $course, $lesson, [
+        $this->makeSections($year, $lesson, $withExam ? $this->makeExam($year, $lesson, [
             'title' => 'اختبار: ' . $attrs['title'],
             'type' => ExamType::LessonQuiz,
             'grading_mode' => $essay ? ExamGradingMode::Manual : ExamGradingMode::Auto,
@@ -1201,7 +1173,7 @@ class AhmedTammamAcademySeeder extends Seeder
         return $pkg;
     }
 
-    private function makeExam(AcademicYear $year, Course $course, ?Lesson $lesson, array $attrs, bool $essay): Exam
+    private function makeExam(AcademicYear $year, ?Lesson $lesson, array $attrs, bool $essay): Exam
     {
         $exam = new Exam(array_merge([
             'pass_percent' => 50,
@@ -1213,7 +1185,6 @@ class AhmedTammamAcademySeeder extends Seeder
         ], $attrs));
         $exam->tenant_id = $this->tenant->id;
         $exam->academic_year_id = $year->id;
-        $exam->course_id = $course->id;
         $exam->lesson_id = $lesson?->id;
         $exam->type = ($attrs['type'] ?? ExamType::LessonQuiz)->value;
         $exam->grading_mode = ($attrs['grading_mode'] ?? ExamGradingMode::Auto)->value;
@@ -1308,8 +1279,6 @@ class AhmedTammamAcademySeeder extends Seeder
         // Grant access.
         if ($type === 'package') {
             $this->enroll->grantPackage($this->tenant->id, $user->id, $item, EnrollmentSource::Purchase);
-        } elseif ($type === 'course') {
-            $this->enroll->grantCourse($this->tenant->id, $user->id, $item, EnrollmentSource::Purchase);
         } else {
             $this->enroll->grantLesson($this->tenant->id, $user->id, $item, EnrollmentSource::Purchase);
         }
@@ -1439,20 +1408,21 @@ class AhmedTammamAcademySeeder extends Seeder
         $attempt->save();
     }
 
-    private function reviewCourse(User $user, Course $course, int $rating, string $comment): void
+    private function reviewLesson(User $user, Lesson $lesson, int $rating, string $comment): void
     {
-        $r = new Review(['course_id' => $course->id, 'rating' => $rating, 'comment' => $comment, 'is_visible' => true]);
+        // Reviews target a lesson|package now (VD §7).
+        $r = new Review(['target_type' => 'lesson', 'target_id' => $lesson->id, 'rating' => $rating, 'comment' => $comment, 'is_visible' => true]);
         $r->tenant_id = $this->tenant->id;
-        $r->academic_year_id = $course->academic_year_id;
+        $r->academic_year_id = $lesson->academic_year_id;
         $r->user_id = $user->id;
         $r->save();
     }
 
-    private function favorite(User $user, Course $course): void
+    private function favorite(User $user, Lesson $lesson): void
     {
-        $f = new Favorite(['user_id' => $user->id, 'course_id' => $course->id]);
+        $f = new Favorite(['user_id' => $user->id, 'target_type' => 'lesson', 'target_id' => $lesson->id]);
         $f->tenant_id = $this->tenant->id;
-        $f->academic_year_id = $course->academic_year_id;
+        $f->academic_year_id = $lesson->academic_year_id;
         $f->save();
     }
 
@@ -1537,19 +1507,18 @@ class AhmedTammamAcademySeeder extends Seeder
 
     // -- centers --------------------------------------------------------------
 
-    private function attendance(User $user, Center $center, Course $course, bool $present): void
+    private function attendance(User $user, Center $center, AcademicYear $year, bool $present): void
     {
         $rec = new AttendanceRecord([
             'center_id' => $center->id,
             'user_id' => $user->id,
-            'course_id' => $course->id,
             'attended_on' => now()->subDays($present ? rand(1, 5) : rand(6, 12))->toDateString(),
             'status' => $present ? 'present' : 'absent',
             'marked_by' => $this->teacher->id,
             'source' => 'center',
         ]);
         $rec->tenant_id = $this->tenant->id;
-        $rec->academic_year_id = $course->academic_year_id;
+        $rec->academic_year_id = $year->id;
         $rec->save();
     }
 
@@ -1604,9 +1573,10 @@ class AhmedTammamAcademySeeder extends Seeder
         $wallet->tenant_id = $this->tenant->id;
         $wallet->save();
 
+        // A historical, already-redeemed content code (target not needed post-redeem).
         $courseCode = new ActivationCode([
-            'code' => 'CRS-' . strtoupper(Str::random(6)),
-            'type' => CodeType::Course->value,
+            'code' => 'CNT-' . strtoupper(Str::random(6)),
+            'type' => CodeType::Content->value,
             'center_id' => $this->centers[1]->id,
             'generated_by' => $this->teacher->id,
             'batch' => 'batch-course-1',
@@ -1627,7 +1597,7 @@ class AhmedTammamAcademySeeder extends Seeder
      *
      * @param  Lesson[]  $lessons
      */
-    private function seedCohort(AcademicYear $year, Course $course, array $lessons, ?Package $pkg, int $yearDigit, int $count): void
+    private function seedCohort(AcademicYear $year, Package $mainPkg, array $lessons, ?Package $pkg, int $yearDigit, int $count): void
     {
         $sellable = array_values(array_filter($lessons, fn(Lesson $l) => (int) $l->price_minor > 0));
         if ($sellable === []) {
@@ -1691,14 +1661,14 @@ class AhmedTammamAcademySeeder extends Seeder
             $hasAccess = true;
 
             switch ($path) {
-                case 0: // full paid course, some with coupon
-                    $this->paidPurchase($student, $course, 'course', $course->price_minor, couponPercent: $i % 3 === 0 ? 25 : null);
+                case 0: // full-course package, some with coupon
+                    $this->paidPurchase($student, $mainPkg, 'package', $mainPkg->price_minor, couponPercent: $i % 3 === 0 ? 25 : null);
                     break;
-                case 1: // paid package (or course fallback)
+                case 1: // paid chapter package (or full-course fallback)
                     if ($pkg) {
                         $this->paidPurchase($student, $pkg, 'package', $pkg->price_minor);
                     } else {
-                        $this->paidPurchase($student, $course, 'course', $course->price_minor);
+                        $this->paidPurchase($student, $mainPkg, 'package', $mainPkg->price_minor);
                     }
                     break;
                 case 2: // wallet: top-up then buy a lesson
@@ -1714,7 +1684,7 @@ class AhmedTammamAcademySeeder extends Seeder
                 case 5: // center enrolment + attendance + paper grade
                     $c = $center ?? $this->centers[0];
                     $this->enroll->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Center);
-                    $this->attendance($student, $c, $course, present: $i % 4 !== 0);
+                    $this->attendance($student, $c, $year, present: $i % 4 !== 0);
                     $this->centerGrade($year, $student, $c, 'اختبار الشهر', 40, rand(18, 40));
                     break;
                 case 6: // abandoned cart — failed payment, no access
@@ -1752,10 +1722,10 @@ class AhmedTammamAcademySeeder extends Seeder
             }
 
             if ($i % 2 === 0) {
-                $this->reviewCourse($student, $course, $ratings[$i % count($ratings)], $reviewText[$i % count($reviewText)]);
+                $this->reviewLesson($student, $lesson, $ratings[$i % count($ratings)], $reviewText[$i % count($reviewText)]);
             }
             if ($i % 3 === 0) {
-                $this->favorite($student, $course);
+                $this->favorite($student, $lesson);
             }
             if ($outcome === 0 && $i % 4 === 0) {
                 $this->points->award($this->tenant->id, $student->id, 100 + ($i % 5) * 20, 'exam_passed', 'lesson', $lesson->id);
@@ -1792,7 +1762,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $order->save();
         $order->items()->create([
             'tenant_id' => $this->tenant->id,
-            'item_type' => $item instanceof Lesson ? 'lesson' : 'course',
+            'item_type' => $item instanceof Lesson ? 'lesson' : 'package',
             'item_id' => $item->id,
             'price_minor' => $price,
             'title' => $item->name ?? $item->title,
@@ -1826,7 +1796,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $order->save();
         $order->items()->create([
             'tenant_id' => $this->tenant->id,
-            'item_type' => $item instanceof Lesson ? 'lesson' : 'course',
+            'item_type' => $item instanceof Lesson ? 'lesson' : 'package',
             'item_id' => $item->id,
             'price_minor' => $price,
             'title' => $item->name ?? $item->title,

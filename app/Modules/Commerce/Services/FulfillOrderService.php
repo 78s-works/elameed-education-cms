@@ -2,7 +2,6 @@
 
 namespace App\Modules\Commerce\Services;
 
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Commerce\Enums\EnrollmentSource;
@@ -15,8 +14,9 @@ use App\Modules\Wallet\Services\LedgerService;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Turns a funded order into: balanced ledger postings, course enrollments, an
- * invoice, and a notification. Idempotent — safe to call from a wallet payment
+ * Turns a funded order into: balanced ledger postings, content enrollments
+ * (per-lesson + package fan-out), an invoice, and a notification. Idempotent —
+ * safe to call from a wallet payment
  * OR a (possibly replayed) gateway webhook. The ledger post + invoice + "already
  * paid" checks each dedupe independently (02_Architecture.md §8).
  *
@@ -43,15 +43,11 @@ class FulfillOrderService
 
         $legs = [];
         $contentTotal = 0;
-        $courseIds = [];
         $lessonIds = [];
         $packageIds = [];
 
         foreach ($order->items as $item) {
-            if ($item->item_type === OrderItem::TYPE_COURSE) {
-                $contentTotal += (int) $item->price_minor;
-                $courseIds[] = (int) $item->item_id;
-            } elseif ($item->item_type === OrderItem::TYPE_LESSON) {
+            if ($item->item_type === OrderItem::TYPE_LESSON) {
                 $contentTotal += (int) $item->price_minor;
                 $lessonIds[] = (int) $item->item_id;
             } elseif ($item->item_type === OrderItem::TYPE_PACKAGE) {
@@ -67,7 +63,7 @@ class FulfillOrderService
         // the ledger balances against the discounted order total.
         $contentTotal = max(0, $contentTotal - (int) $order->discount_minor);
 
-        // Split content revenue (courses + lessons) between teacher earnings and
+        // Split content revenue (lessons + packages) between teacher earnings and
         // platform commission.
         if ($contentTotal > 0) {
             $commission = (int) floor($contentTotal * (float) config('commerce.commission_percent', 0) / 100);
@@ -81,16 +77,10 @@ class FulfillOrderService
         $fundingWalletId = $funding === LedgerEntry::STUDENT_WALLET ? $wallet->id : null;
         $legs[] = $this->leg($funding, LedgerEntry::DEBIT, (int) $order->total_minor, $fundingWalletId);
 
-        DB::transaction(function () use ($order, $tenantId, $legs, $courseIds, $lessonIds, $packageIds, $funding): void {
+        DB::transaction(function () use ($order, $tenantId, $legs, $lessonIds, $packageIds, $funding): void {
             $this->ledger->post($tenantId, "order:{$order->id}:fulfill", $legs, 'order', (int) $order->id);
 
             $source = $funding === LedgerEntry::STUDENT_WALLET ? EnrollmentSource::Wallet : EnrollmentSource::Purchase;
-            foreach (array_unique($courseIds) as $courseId) {
-                $course = Course::withoutGlobalScopes()->find($courseId);
-                if ($course !== null) {
-                    $this->enrollments->grantCourse($tenantId, (int) $order->user_id, $course, $source);
-                }
-            }
 
             // A single lesson purchase (doc 11 R4 "pay lesson") — grants lesson
             // access and opens its time-boxed window (the "week" from payment).

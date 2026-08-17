@@ -3,15 +3,17 @@
 namespace App\Modules\Commerce\Http\Requests;
 
 use App\Modules\Commerce\Enums\CouponType;
+use App\Modules\Commerce\Models\Coupon;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 /**
- * Create/update a coupon (M21). `code` is unique per tenant; `course` (a course
- * uuid) optionally scopes the discount to one course. All fields are required on
- * create and optional on update.
+ * Create/update a coupon (M21). `code` is unique per tenant; an optional content
+ * scope (`target_type` = lesson|package + numeric `target_id`) narrows the discount
+ * to one lesson or package — both null means cart-wide (VD §7, `courses` retired).
+ * All fields are required on create and optional on update.
  */
 class CouponRequest extends FormRequest
 {
@@ -30,7 +32,14 @@ class CouponRequest extends FormRequest
             'code' => [$required, 'string', 'max:64', Rule::unique('coupons', 'code')->where('tenant_id', $tenantId)->ignore($couponId)],
             'type' => [$required, Rule::enum(CouponType::class)],
             'value' => [$required, 'integer', 'min:1'],
-            'course' => ['sometimes', 'nullable', 'string', Rule::exists('courses', 'uuid')->where('tenant_id', $tenantId)],
+            'target_type' => ['sometimes', 'nullable', 'required_with:target_id', Rule::in(Coupon::targetTypes())],
+            'target_id' => [
+                'sometimes', 'nullable', 'required_with:target_type', 'integer',
+                Rule::exists(
+                    $this->input('target_type') === Coupon::TARGET_PACKAGE ? 'packages' : 'lessons',
+                    'id',
+                )->where('tenant_id', $tenantId),
+            ],
             'min_subtotal_minor' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'usage_limit' => ['sometimes', 'nullable', 'integer', 'min:1'],
             'starts_at' => ['sometimes', 'nullable', 'date'],

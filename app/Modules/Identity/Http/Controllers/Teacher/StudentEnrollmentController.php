@@ -4,8 +4,8 @@ namespace App\Modules\Identity\Http\Controllers\Teacher;
 
 use App\Models\User;
 use App\Modules\Assessment\Models\Exam;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Package;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Modules\Commerce\Models\Enrollment;
@@ -18,9 +18,9 @@ use Illuminate\Http\Response;
 
 /**
  * A teacher granting/revoking a student's access directly (no payment) — e.g.
- * offline/center students. A grant can target a whole course, a single lesson,
- * or a single exam (doc 11 R7). Manual enrollments are source=manual. (Unit
- * grants retired — Unit removed, VD §7.)
+ * offline/center students. A grant targets a single lesson, an exam, or a
+ * recursive package (which fans out into per-lesson grants, B15). Manual
+ * enrollments are source=manual. (`courses`/units/bundles retired — VD §7.)
  */
 class StudentEnrollmentController
 {
@@ -39,13 +39,15 @@ class StudentEnrollmentController
         $rows = Enrollment::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('user_id', $student->getKey())
-            ->with('course:id,uuid,title')
+            ->with('lesson:id,title')
             ->latest('id')
             ->get()
             ->map(fn (Enrollment $e) => [
                 'id' => $e->id,
-                'course' => $e->course?->uuid,
-                'course_title' => $e->course?->title,
+                'lesson_id' => $e->lesson_id,
+                'lesson_title' => $e->lesson?->title,
+                'exam_id' => $e->exam_id,
+                'package_id' => $e->package_id,
                 'source' => $e->source->value,
                 'status' => $e->status->value,
                 'starts_at' => $e->starts_at?->toIso8601String(),
@@ -60,14 +62,20 @@ class StudentEnrollmentController
         $tenantId = (int) $this->context->tenantOrFail()->getKey();
         $this->membershipOrFail($tenantId, $student);
 
-        $type = $request->validated('target_type') ?? 'course';
-        $target = $request->validated('target') ?? $request->validated('course');
+        $type = (string) $request->validated('target_type');
+        $target = $request->validated('target');
         $userId = (int) $student->getKey();
+
+        // A package grant fans out into per-lesson rows — report the count, not one id.
+        if ($type === 'package') {
+            $grants = $this->enrollments->grantPackage($tenantId, $userId, $this->findPackage($target), EnrollmentSource::Manual);
+
+            return response()->json(['data' => ['target_type' => 'package', 'granted' => $grants->count()]], 201);
+        }
 
         $enrollment = match ($type) {
             'lesson' => $this->enrollments->grantLesson($tenantId, $userId, $this->findLesson($target), EnrollmentSource::Manual),
             'exam' => $this->enrollments->grantExam($tenantId, $userId, $this->findExam($target), EnrollmentSource::Manual),
-            default => $this->enrollments->grantCourse($tenantId, $userId, $this->findCourse($target), EnrollmentSource::Manual),
         };
 
         return response()->json(['data' => [
@@ -78,20 +86,20 @@ class StudentEnrollmentController
         ]], 201);
     }
 
-    private function findCourse(?string $uuid): Course
-    {
-        $course = Course::query()->where('uuid', $uuid)->first();
-        abort_if($course === null, 404, 'Course not found in this academy.');
-
-        return $course;
-    }
-
     private function findLesson(?string $id): Lesson
     {
         $lesson = Lesson::query()->find((int) $id);
         abort_if($lesson === null, 404, 'Lesson not found in this academy.');
 
         return $lesson;
+    }
+
+    private function findPackage(?string $uuid): Package
+    {
+        $package = Package::query()->where('uuid', $uuid)->first();
+        abort_if($package === null, 404, 'Package not found in this academy.');
+
+        return $package;
     }
 
     private function findExam(?string $uuid): Exam

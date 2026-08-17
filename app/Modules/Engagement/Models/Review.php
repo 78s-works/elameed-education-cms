@@ -3,27 +3,30 @@
 namespace App\Modules\Engagement\Models;
 
 use App\Models\User;
-use App\Modules\Catalog\Models\Course;
 use App\Support\Traits\BelongsToAcademicYear;
 use App\Support\Traits\BelongsToTenant;
+use App\Support\Traits\HasContentTarget;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * A rating + comment on a course. Either a student's own review (one per student
- * per course, `user_id` set) or a teacher-authored testimonial (`user_id` null,
- * `author_name` set), managed from the teacher panel. Feeds the landing
- * `testimonials` section and a course's aggregate rating — visible rows only.
+ * A rating + comment on a content target — EITHER a standalone lesson OR a
+ * recursive package (`target_type`/`target_id`, VD §7 — `courses` retired). Either
+ * a student's own review (one per student per target, `user_id` set) or a
+ * teacher-authored testimonial (`user_id` null, `author_name` set), managed from
+ * the teacher panel. Feeds the landing `testimonials` section — visible rows only.
  */
 class Review extends Model
 {
     use BelongsToAcademicYear;
     use BelongsToTenant;
+    use HasContentTarget;
 
     protected $fillable = [
         'academic_year_id',
-        'course_id',
+        'target_type',
+        'target_id',
         'user_id',
         'author_name',
         'rating',
@@ -37,14 +40,10 @@ class Review extends Model
     ];
 
     protected $casts = [
+        'target_id' => 'integer',
         'rating' => 'integer',
         'is_visible' => 'boolean',
     ];
-
-    public function course(): BelongsTo
-    {
-        return $this->belongsTo(Course::class);
-    }
 
     public function user(): BelongsTo
     {

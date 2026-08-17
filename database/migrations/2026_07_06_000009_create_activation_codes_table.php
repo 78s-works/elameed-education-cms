@@ -19,7 +19,9 @@ return new class extends Migration
             $table->string('code', 40);
             $table->string('type');
             $table->unsignedBigInteger('amount_minor')->nullable();
-            $table->foreignId('course_id')->nullable()->constrained('courses')->nullOnDelete();
+            // Content grant target for `content`-type codes: 'lesson' | 'package' (VD §7).
+            $table->string('target_type')->nullable();
+            $table->unsignedBigInteger('target_id')->nullable();
             $table->foreignId('center_id')->nullable()->constrained('centers')->nullOnDelete();
             $table->foreignId('generated_by')->nullable()->constrained('users')->nullOnDelete();
             $table->string('batch')->nullable();

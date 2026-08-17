@@ -19,7 +19,6 @@ class AttendanceResource extends JsonResource
                 'name' => $this->student?->name,
                 'phone' => $this->student?->phone,
             ],
-            'course_id' => $this->course_id,
             'attended_on' => $this->attended_on?->toDateString(),
             'status' => $this->status,
             'source' => $this->source,

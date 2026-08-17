@@ -2,7 +2,6 @@
 
 namespace App\Modules\Commerce\Services;
 
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Services\PackageItemService;
@@ -16,10 +15,10 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Prices a cart server-side (never trusts client prices — 04_API_Spec §4) and
- * persists orders. Supports single-course purchase, single-lesson purchase,
- * recursive-package purchase (B15 — fans out into per-lesson enrollments at
- * fulfilment), wallet top-up, and an optional coupon discount (M21) applied to
- * the content subtotal. (Bundle purchase retired — Bundle removed, VD §7.)
+ * persists orders. Supports single-lesson purchase, recursive-package purchase
+ * (B15 — fans out into per-lesson enrollments at fulfilment), wallet top-up, and
+ * an optional coupon discount (M21) applied to the content subtotal. (Course +
+ * bundle purchase retired — `courses`/Bundle removed, VD §7.)
  */
 class CheckoutService
 {
@@ -41,7 +40,6 @@ class CheckoutService
 
         foreach ($items as $item) {
             $line = match ($item['type']) {
-                OrderItem::TYPE_COURSE => $this->priceCourse($item),
                 OrderItem::TYPE_LESSON => $this->priceLesson($item),
                 OrderItem::TYPE_PACKAGE => $this->pricePackage($item),
                 OrderItem::TYPE_WALLET_TOPUP => $this->priceTopup($item),
@@ -114,7 +112,6 @@ class CheckoutService
     private function assertChannelAllowed(int $userId, array $line): void
     {
         $model = match ($line['item_type']) {
-            OrderItem::TYPE_COURSE => Course::query()->find($line['item_id']),
             OrderItem::TYPE_LESSON => Lesson::query()->find($line['item_id']),
             OrderItem::TYPE_PACKAGE => Package::withoutGlobalScope('academic_year')->find($line['item_id']),
             default => null, // wallet top-up: no channel
@@ -141,7 +138,6 @@ class CheckoutService
         }
 
         $column = match ($line['item_type']) {
-            OrderItem::TYPE_COURSE => 'course_id',
             OrderItem::TYPE_LESSON => 'lesson_id',
             default => null, // wallet top-up: nothing to dedupe
         };
@@ -183,22 +179,6 @@ class CheckoutService
         if ($owned >= $lessonIds->count()) {
             throw ValidationException::withMessages(['items' => 'You already have access to one of these items.']);
         }
-    }
-
-    private function priceCourse(array $item): array
-    {
-        $course = Course::query()->where('uuid', $item['course'] ?? null)->first();
-
-        if ($course === null || ! $course->purchase_enabled) {
-            throw ValidationException::withMessages(['items' => 'Course not available for purchase.']);
-        }
-
-        return [
-            'item_type' => OrderItem::TYPE_COURSE,
-            'item_id' => $course->id,
-            'price_minor' => $course->is_free ? 0 : (int) $course->price_minor,
-            'title' => $course->title,
-        ];
     }
 
     private function priceLesson(array $item): array

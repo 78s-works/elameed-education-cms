@@ -35,7 +35,7 @@ class StudentActivityController
         $rows = LessonProgress::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('user_id', $student->getKey())
-            ->with('lesson:id,title,course_id')
+            ->with('lesson:id,title')
             ->latest('updated_at')
             ->get()
             ->map(fn (LessonProgress $p) => [

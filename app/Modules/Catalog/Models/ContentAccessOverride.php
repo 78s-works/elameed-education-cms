@@ -24,7 +24,6 @@ class ContentAccessOverride extends Model
         'academic_year_id',
         'lesson_id',
         'section_id',
-        'unit_id',
         'granted_by',
         'note',
         'granted_at',
@@ -61,9 +60,4 @@ class ContentAccessOverride extends Model
     {
         return $this->belongsTo(LessonSection::class, 'section_id');
     }
-
-    // No `unit()` relation: the `Unit` model was retired (VD change set §7,
-    // migration 2026_08_04_000010_retire_units_bundles). `unit_id` remains only as
-    // a dormant nullable scalar read by legacy override rows — never resolved to a
-    // model. See docs (1)/03_Data_Model.md §6.
 }

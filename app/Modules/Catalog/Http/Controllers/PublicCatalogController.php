@@ -3,13 +3,10 @@
 namespace App\Modules\Catalog\Http\Controllers;
 
 use App\Modules\Catalog\Enums\AccessMode;
-use App\Modules\Catalog\Http\Resources\CourseDetailResource;
-use App\Modules\Catalog\Http\Resources\CourseResource;
 use App\Modules\Catalog\Http\Resources\LessonResource;
 use App\Modules\Catalog\Http\Resources\PackageResource;
 use App\Modules\Catalog\Http\Resources\PackageTypeResource;
 use App\Modules\Catalog\Models\AcademicYear;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Models\PackageType;
@@ -27,14 +24,13 @@ use Illuminate\Validation\Rule;
  * Only published (visible + due) content is returned; tenant isolation is via
  * the BelongsToTenant scope. No auth.
  *
- * GET /courses serves the three discovery granularities (VD R8 / doc 12 §7 LP-9):
- *   - default          → published courses (unchanged; backward compatible).
+ * GET /catalogue serves the two discovery granularities (VD R8 / doc 12 §7 LP-9;
+ * `courses` view retired — VD §7):
+ *   - default          → purchasable recursive content packages.
  *   - ?view=lessons     → published, individually-purchasable standalone lessons.
- *   - ?view=packages    → purchasable recursive content packages.
  *
- * All three accept ?access_mode=center|online|both (channel filter, wildcard on
- * `both` via {@see AccessMode::isVisibleTo}) and — for the year-scoped lessons/
- * packages views — an optional ?academic_year=<uuid> narrowing.
+ * Both accept ?access_mode=center|online|both (channel filter, wildcard on `both`
+ * via {@see AccessMode::isVisibleTo}) and an optional ?academic_year=<uuid> narrowing.
  */
 class PublicCatalogController
 {
@@ -46,14 +42,13 @@ class PublicCatalogController
     public function index(Request $request): AnonymousResourceCollection
     {
         $request->validate([
-            'view' => ['sometimes', Rule::in(['courses', 'lessons', 'packages'])],
+            'view' => ['sometimes', Rule::in(['lessons', 'packages'])],
             'access_mode' => ['sometimes', Rule::enum(AccessMode::class)],
         ]);
 
         return match ((string) $request->string('view')) {
             'lessons' => $this->lessons($request),
-            'packages' => $this->packages($request),
-            default => $this->courses($request),
+            default => $this->packages($request),
         };
     }
 
@@ -76,38 +71,6 @@ class PublicCatalogController
             ->all();
 
         return response()->json(['data' => $years]);
-    }
-
-    public function show(Course $course): CourseDetailResource
-    {
-        // Route binding scopes to the tenant; hidden/scheduled courses 404 publicly.
-        abort_unless($course->isPublished(), 404);
-
-        $course->load([
-            'category',
-            // Units retired (VD §7): the course's published lessons are loaded
-            // directly (those still linked by lesson.course_id).
-            'lessons' => fn ($q) => $q->published()->orderBy('sort_order'),
-        ]);
-
-        return new CourseDetailResource($course);
-    }
-
-    /** Default view — published courses of the tenant. */
-    private function courses(Request $request): AnonymousResourceCollection
-    {
-        $courses = Course::query()
-            ->published()
-            ->with('category')
-            ->when($request->input('filter.category_id'), fn ($q, $id) => $q->where('category_id', $id))
-            ->when($request->input('filter.grade'), fn ($q, $grade) => $q->whereHas('category', fn ($c) => $c->where('grade', $grade)))
-            ->when($request->input('filter.subject'), fn ($q, $subject) => $q->whereHas('category', fn ($c) => $c->where('subject', $subject)))
-            ->when($request->input('q'), fn ($q, $term) => $q->where('title', 'like', '%'.$term.'%'))
-            ->tap(fn (Builder $q) => $this->applyAccessMode($q, $request))
-            ->latest()
-            ->paginate(20);
-
-        return CourseResource::collection($courses);
     }
 
     /** view=lessons — published, individually-purchasable standalone lessons (R8 "single lectures"). */

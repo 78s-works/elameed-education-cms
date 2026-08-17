@@ -39,8 +39,6 @@ class Lesson extends Model
 
     protected $fillable = [
         'academic_year_id',
-        'unit_id',
-        'course_id',
         'access_mode',
         'title',
         'description',
@@ -124,13 +122,8 @@ class Lesson extends Model
         return $this->availability_days !== null && $this->availability_days > 0;
     }
 
-    // `unit_id` is a dormant column (Unit retired — VD change set §7; lessons are
-    // standalone and grouped by packages now). No relation any more.
-
-    public function course(): BelongsTo
-    {
-        return $this->belongsTo(Course::class);
-    }
+    // Lessons are standalone and grouped by packages now (`courses`/units retired
+    // — VD §7). No course/unit relation any more.
 
     /**
      * The MANY assets of a lesson — its supporting materials (pdf/file/link).

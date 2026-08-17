@@ -2,12 +2,11 @@
 
 namespace App\Modules\Commerce\Models;
 
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Commerce\Enums\CouponType;
 use App\Support\Traits\BelongsToTenant;
+use App\Support\Traits\HasContentTarget;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 
@@ -20,6 +19,7 @@ use Illuminate\Support\Carbon;
 class Coupon extends Model
 {
     use BelongsToTenant;
+    use HasContentTarget;
     use HasUuids;
     use SoftDeletes;
 
@@ -27,7 +27,8 @@ class Coupon extends Model
         'code',
         'type',
         'value',
-        'course_id',
+        'target_type',
+        'target_id',
         'min_subtotal_minor',
         'usage_limit',
         'starts_at',
@@ -44,7 +45,7 @@ class Coupon extends Model
     protected $casts = [
         'type' => CouponType::class,
         'value' => 'integer',
-        'course_id' => 'integer',
+        'target_id' => 'integer',
         'min_subtotal_minor' => 'integer',
         'usage_limit' => 'integer',
         'used_count' => 'integer',
@@ -61,12 +62,6 @@ class Coupon extends Model
     public function getRouteKeyName(): string
     {
         return 'uuid';
-    }
-
-    /** The course this coupon is scoped to, or null when it applies cart-wide. */
-    public function course(): BelongsTo
-    {
-        return $this->belongsTo(Course::class);
     }
 
     /** Whether the coupon is currently usable (ignores cart-specific rules). */

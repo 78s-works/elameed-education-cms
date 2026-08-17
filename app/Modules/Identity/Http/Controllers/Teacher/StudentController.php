@@ -253,7 +253,7 @@ class StudentController
                 'status' => $membership->status->value,
                 'joined_at' => $membership->joined_at?->toIso8601String(),
             ],
-            'enrollments' => $scoped(Enrollment::class)->get(['course_id', 'status', 'expires_at']),
+            'enrollments' => $scoped(Enrollment::class)->get(['lesson_id', 'package_id', 'status', 'expires_at']),
             'orders' => $scoped(Order::class)->get(['uuid', 'status', 'total_minor', 'created_at']),
             'progress' => $scoped(LessonProgress::class)->get(['lesson_id', 'watch_percent', 'completed_at']),
             'wallet_balance_minor' => $this->ledger->balance($this->ledger->walletFor($tenantId, $student->getKey())),

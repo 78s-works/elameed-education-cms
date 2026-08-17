@@ -6,10 +6,10 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `lessons` — standalone content units (the Course-grouping tables were retired).
- * Squashed create: folds youtube video source, availability/extension windows,
- * price, self-reopen, access_mode and the NOT-NULL academic_year_id. `unit_id`
- * stays as a dormant FK-less column (Units retired) keeping its legacy index name.
+ * `lessons` — standalone content units (the Course/unit grouping tables were
+ * retired — VD §7; lessons are grouped by recursive packages now). Squashed
+ * create: folds youtube video source, availability/extension windows, price,
+ * self-reopen, access_mode and the NOT-NULL academic_year_id.
  */
 return new class extends Migration
 {
@@ -19,8 +19,6 @@ return new class extends Migration
             $table->bigIncrements('id');
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->foreignId('academic_year_id')->constrained('academic_years')->cascadeOnDelete();
-            $table->unsignedBigInteger('unit_id')->nullable();
-            $table->foreignId('course_id')->nullable()->constrained('courses')->cascadeOnDelete();
             $table->enum('access_mode', ['center', 'online', 'both'])->default('both');
             $table->string('title');
             $table->text('description')->nullable();
@@ -43,9 +41,6 @@ return new class extends Migration
             $table->timestamp('publish_at')->nullable();
             $table->timestamps();
 
-            $table->index('unit_id', 'lessons_unit_id_foreign');
-            $table->index(['tenant_id', 'unit_id']);
-            $table->index(['tenant_id', 'course_id']);
             $table->index('video_asset_id');
             $table->index(['tenant_id', 'academic_year_id']);
         });

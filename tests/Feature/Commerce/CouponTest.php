@@ -5,6 +5,7 @@ namespace Tests\Feature\Commerce;
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Models\Coupon;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -21,8 +22,8 @@ use Tests\TestCase;
 
 /**
  * Coupons & promo codes (M21): teacher CRUD, quote/order discounting, ledger
- * balance with a discount, usage-limit + validity enforcement, course scoping,
- * and tenant isolation of codes.
+ * balance with a discount, usage-limit + validity enforcement, content-target
+ * (lesson/package) scoping, and tenant isolation of codes.
  */
 class CouponTest extends TestCase
 {
@@ -60,6 +61,18 @@ class CouponTest extends TestCase
         $course->save();
 
         return $course;
+    }
+
+    private function lesson(int $priceMinor): Lesson
+    {
+        $lesson = new Lesson([
+            'title' => 'Lecture', 'price_minor' => $priceMinor, 'is_purchasable' => true,
+            'visibility' => ContentVisibility::Visible->value,
+        ]);
+        $lesson->tenant_id = $this->tenant->id;
+        $lesson->save(); // academic_year_id auto-filled by Lesson::booted()
+
+        return $lesson;
     }
 
     private function coupon(array $attrs, ?Tenant $tenant = null): Coupon
@@ -174,24 +187,37 @@ class CouponTest extends TestCase
         ])->assertStatus(422);
     }
 
-    public function test_course_scoped_coupon_only_applies_to_that_course(): void
+    public function test_target_scoped_coupon_only_applies_to_that_lesson(): void
     {
         $student = $this->member(TenantUserRole::Student);
-        $scoped = $this->course(10000);
-        $other = $this->course(10000);
-        $this->coupon(['code' => 'PHYS', 'value' => 50, 'course_id' => $scoped->id]);
+        $scoped = $this->lesson(10000);
+        $other = $this->lesson(10000);
+        $this->coupon(['code' => 'PHYS', 'value' => 50, 'target_type' => 'lesson', 'target_id' => $scoped->id]);
         Sanctum::actingAs($student);
         $h = ['X-Tenant' => 'demo'];
 
-        // Applies to the scoped course.
+        // Applies to the scoped lesson.
         $this->withHeaders($h)->postJson('/api/v1/checkout/quote', [
-            'items' => [['type' => 'course', 'course' => $scoped->uuid]], 'coupon' => 'PHYS',
+            'items' => [['type' => 'lesson', 'lesson' => $scoped->id]], 'coupon' => 'PHYS',
         ])->assertOk()->assertJsonPath('data.discount_minor', 5000);
 
-        // Not to a different course.
+        // Not to a different lesson.
         $this->withHeaders($h)->postJson('/api/v1/checkout/quote', [
-            'items' => [['type' => 'course', 'course' => $other->uuid]], 'coupon' => 'PHYS',
+            'items' => [['type' => 'lesson', 'lesson' => $other->id]], 'coupon' => 'PHYS',
         ])->assertStatus(422);
+    }
+
+    public function test_teacher_can_scope_coupon_to_a_lesson(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+        $lesson = $this->lesson(10000);
+
+        $this->withHeaders(['X-Tenant' => 'demo'])->postJson('/api/v1/teacher/coupons', [
+            'code' => 'LEC', 'type' => 'percent', 'value' => 10,
+            'target_type' => 'lesson', 'target_id' => $lesson->id,
+        ])->assertStatus(201)
+            ->assertJsonPath('data.target_type', 'lesson')
+            ->assertJsonPath('data.target_id', $lesson->id);
     }
 
     public function test_coupon_codes_are_tenant_isolated(): void

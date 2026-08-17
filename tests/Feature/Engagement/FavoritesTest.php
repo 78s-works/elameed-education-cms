@@ -4,7 +4,7 @@ namespace Tests\Feature\Engagement;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
@@ -31,14 +31,13 @@ class FavoritesTest extends TestCase
         $this->h = ['X-Tenant' => 'demo'];
     }
 
-    private function course(): Course
+    private function lesson(): Lesson
     {
-        $c = new Course(['title' => 'Fav Course', 'visibility' => ContentVisibility::Visible->value]);
-        $c->tenant_id = $this->tenant->id;
-        $c->slug = 'fav-'.uniqid();
-        $c->save();
+        $l = new Lesson(['title' => 'Fav Lesson', 'visibility' => ContentVisibility::Visible->value]);
+        $l->tenant_id = $this->tenant->id;
+        $l->save(); // academic_year_id auto-filled by Lesson::booted()
 
-        return $c;
+        return $l;
     }
 
     private function student(): User
@@ -54,16 +53,18 @@ class FavoritesTest extends TestCase
 
     public function test_add_list_and_remove_favorite(): void
     {
-        $course = $this->course();
+        $lesson = $this->lesson();
         Sanctum::actingAs($this->student());
 
-        $this->withHeaders($this->h)->postJson('/api/v1/me/favorites', ['course' => $course->uuid])
+        $this->withHeaders($this->h)->postJson('/api/v1/me/favorites', ['target_type' => 'lesson', 'target_id' => $lesson->id])
             ->assertStatus(201)->assertJsonPath('data.favorited', true);
 
         $this->withHeaders($this->h)->getJson('/api/v1/me/favorites')
-            ->assertOk()->assertJsonPath('data.0.uuid', $course->uuid);
+            ->assertOk()
+            ->assertJsonPath('data.0.target_type', 'lesson')
+            ->assertJsonPath('data.0.target_id', $lesson->id);
 
-        $this->withHeaders($this->h)->deleteJson("/api/v1/me/favorites/{$course->uuid}")
+        $this->withHeaders($this->h)->deleteJson("/api/v1/me/favorites/lesson/{$lesson->id}")
             ->assertOk()->assertJsonPath('data.favorited', false);
 
         $this->withHeaders($this->h)->getJson('/api/v1/me/favorites')

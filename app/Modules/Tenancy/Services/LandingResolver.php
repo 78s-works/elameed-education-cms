@@ -4,15 +4,12 @@ namespace App\Modules\Tenancy\Services;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\AccessMode;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Engagement\Models\Review;
-use App\Modules\Media\Models\MediaAsset;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Support\LandingSchema;
-use Illuminate\Support\Collection;
 
 /**
  * Resolves a teacher's stored landing config into the fully-rendered public
@@ -153,23 +150,25 @@ class LandingResolver
      */
     public function applyEnrollment(array $payload, int $tenantId, User $viewer): array
     {
-        $courseIds = [];
+        // The "courses" section lists standalone lessons now (VD §7); overlay the
+        // viewer's per-lesson access onto each card by its `lesson_id`.
+        $lessonIds = [];
         foreach ($payload['sections'] ?? [] as $section) {
             if (($section['type'] ?? null) === 'courses') {
                 foreach ($section['items'] ?? [] as $item) {
-                    if (isset($item['id'])) {
-                        $courseIds[] = (int) $item['id'];
+                    if (isset($item['lesson_id'])) {
+                        $lessonIds[] = (int) $item['lesson_id'];
                     }
                 }
             }
         }
 
-        if ($courseIds === []) {
+        if ($lessonIds === []) {
             return $payload;
         }
 
         $enrolled = array_flip(
-            $this->viewerEnrolledIds($tenantId, (int) $viewer->getKey(), array_values(array_unique($courseIds)))
+            $this->viewerEnrolledIds($tenantId, (int) $viewer->getKey(), array_values(array_unique($lessonIds)))
         );
 
         foreach ($payload['sections'] as &$section) {
@@ -177,7 +176,7 @@ class LandingResolver
                 continue;
             }
             foreach ($section['items'] as &$item) {
-                $item['enrolled'] = isset($enrolled[(int) $item['id']]);
+                $item['enrolled'] = isset($item['lesson_id']) && isset($enrolled[(int) $item['lesson_id']]);
             }
             unset($item);
         }
@@ -230,75 +229,6 @@ class LandingResolver
         ])->all();
     }
 
-    /**
-     * Per-course poster fallback: for each course id, the `thumbnail_url` of the
-     * first published lesson (in order) whose video actually has a poster.
-     * Batched into two queries regardless of course count.
-     *
-     * @param  list<int>  $courseIds
-     * @return array<int, string> course_id => thumbnail_url
-     */
-    private function lessonPosters(int $tenantId, array $courseIds): array
-    {
-        // Published, video-bearing lessons for these courses, in display order.
-        $lessons = Lesson::withoutGlobalScopes()
-            ->published()
-            ->where('tenant_id', $tenantId)
-            ->whereIn('course_id', $courseIds)
-            ->whereNotNull('video_asset_id')
-            ->orderBy('sort_order')->orderBy('id')
-            ->get(['course_id', 'video_asset_id']);
-
-        if ($lessons->isEmpty()) {
-            return [];
-        }
-
-        // Only the video assets that actually carry a poster.
-        $thumbs = MediaAsset::withoutGlobalScopes()
-            ->where('tenant_id', $tenantId)
-            ->whereIn('id', $lessons->pluck('video_asset_id')->unique()->values()->all())
-            ->whereNotNull('thumbnail_url')
-            ->pluck('thumbnail_url', 'id');
-
-        $posters = [];
-        foreach ($lessons as $lesson) {
-            if (isset($posters[$lesson->course_id])) {
-                continue; // keep the first (earliest) poster found for the course
-            }
-            if (isset($thumbs[$lesson->video_asset_id])) {
-                $posters[$lesson->course_id] = $thumbs[$lesson->video_asset_id];
-            }
-        }
-
-        return $posters;
-    }
-
-    private function baseCourses(int $tenantId, string $source, array $config): Collection
-    {
-        if ($source === 'selected') {
-            $ids = array_values(array_map('intval', (array) ($config['course_ids'] ?? [])));
-            if ($ids === []) {
-                return collect();
-            }
-            // published() too: a hand-picked course that is later unpublished /
-            // archived must NOT keep leaking onto the public landing.
-            $found = Course::query()->published()->whereIn('id', $ids)->with('category')->get()->keyBy('id');
-
-            // Preserve the teacher's chosen order.
-            return collect($ids)->map(fn ($id) => $found->get($id))->filter()->values();
-        }
-
-        $query = Course::query()->published()->with('category');
-
-        if ($source === 'category' && ! empty($config['category_id'])) {
-            $query->where('category_id', (int) $config['category_id']);
-        }
-
-        // `featured` needs counts before ranking, so pull a bounded set; others
-        // just take the newest.
-        return $query->latest('id')->limit($source === 'featured' ? 60 : 24)->get();
-    }
-
     /** @return array<int, array<string, mixed>> */
     private function resolveReviews(int $tenantId, array $config): array
     {
@@ -308,7 +238,7 @@ class LandingResolver
         $query = Review::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('is_visible', true)       // only teacher-approved reviews reach the landing
-            ->with(['user:id,name', 'course:id,title']);
+            ->with('user:id,name');
 
         if ($source === 'top_rated') {
             $query->where('rating', '>=', (int) ($config['min_rating'] ?? 0))
@@ -317,48 +247,30 @@ class LandingResolver
             $query->latest();
         }
 
-        return $query->limit($limit)->get()->map(fn (Review $r) => [
-            'id' => $r->id,
-            'student_name' => $r->displayName(),
-            'course_title' => $r->course?->title,
-            'rating' => $r->rating,
-            'comment' => $r->comment,
-            'created_at' => $r->created_at?->toIso8601String(),
-        ])->all();
+        return $query->limit($limit)->get()->map(function (Review $r): array {
+            // Review targets a lesson|package now (VD §7); resolve its display title.
+            $target = $r->target();
+
+            return [
+                'id' => $r->id,
+                'student_name' => $r->displayName(),
+                'target_type' => $r->target_type,
+                'target_id' => $r->target_id,
+                'target_title' => $target?->title ?? $target?->name,
+                'rating' => $r->rating,
+                'comment' => $r->comment,
+                'created_at' => $r->created_at?->toIso8601String(),
+            ];
+        })->all();
     }
 
-    private function activeEnrollmentCounts(int $tenantId, array $ids): array
+    /** Lesson ids the viewer currently holds an access grant for (VD §7 — per-lesson access). */
+    private function viewerEnrolledIds(int $tenantId, int $userId, array $lessonIds): array
     {
         return Enrollment::withoutGlobalScopes()
-            ->where('tenant_id', $tenantId)->whereIn('course_id', $ids)
+            ->where('tenant_id', $tenantId)->where('user_id', $userId)->whereIn('lesson_id', $lessonIds)
             ->where('status', EnrollmentStatus::Active->value)
-            ->selectRaw('course_id, count(*) as c')->groupBy('course_id')
-            ->pluck('c', 'course_id')->all();
-    }
-
-    private function lessonAggregates(int $tenantId, array $ids): array
-    {
-        return Lesson::withoutGlobalScopes()
-            ->where('tenant_id', $tenantId)->whereIn('course_id', $ids)
-            ->selectRaw('course_id, count(*) as c, coalesce(sum(duration_sec),0) as d')
-            ->groupBy('course_id')->get()->keyBy('course_id')->all();
-    }
-
-    private function ratingAverages(int $tenantId, array $ids): array
-    {
-        return Review::withoutGlobalScopes()
-            ->where('tenant_id', $tenantId)->whereIn('course_id', $ids)
-            ->where('is_visible', true)       // hidden reviews don't skew the shown rating
-            ->selectRaw('course_id, avg(rating) as r')->groupBy('course_id')
-            ->pluck('r', 'course_id')->all();
-    }
-
-    private function viewerEnrolledIds(int $tenantId, int $userId, array $ids): array
-    {
-        return Enrollment::withoutGlobalScopes()
-            ->where('tenant_id', $tenantId)->where('user_id', $userId)->whereIn('course_id', $ids)
-            ->where('status', EnrollmentStatus::Active->value)
-            ->pluck('course_id')->map(fn ($v) => (int) $v)->all();
+            ->pluck('lesson_id')->map(fn ($v) => (int) $v)->all();
     }
 
     private function durationLabel(int $seconds): ?string

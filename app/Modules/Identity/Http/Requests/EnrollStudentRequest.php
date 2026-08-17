@@ -6,9 +6,9 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 /**
- * A teacher/assistant granting a student access (doc 11 R7). Either the legacy
- * `course` (a course uuid) OR the generic `target_type` + `target` pair:
- *   course|exam → a uuid; unit|lesson → the numeric id.
+ * A teacher/assistant granting a student access (doc 11 R7) via the
+ * `target_type` + `target` pair: lesson → numeric id; package|exam → a uuid.
+ * (`courses`/units retired — VD §7.)
  */
 class EnrollStudentRequest extends FormRequest
 {
@@ -20,9 +20,8 @@ class EnrollStudentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'course' => ['required_without:target_type', 'string'], // back-compat: course uuid
-            'target_type' => ['required_with:target', Rule::in(['course', 'unit', 'lesson', 'exam'])],
-            'target' => ['required_with:target_type', 'string'],
+            'target_type' => ['required', Rule::in(['lesson', 'package', 'exam'])],
+            'target' => ['required', 'string'],
         ];
     }
 }

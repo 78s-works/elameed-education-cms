@@ -2,18 +2,15 @@
 
 namespace App\Modules\Reporting\Http\Controllers;
 
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Commerce\Models\Enrollment;
-use App\Modules\Engagement\Models\LessonProgress;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
- * GET /me/courses (M10) — the student's purchased/available courses with a
- * progress summary. Scoped to the current tenant via BelongsToTenant. Includes
- * courses reached through a package's unit or lesson grant, not only whole-course
- * buys.
+ * GET /me/courses (M10) — the student's owned lessons. Scoped to the current
+ * tenant via BelongsToTenant. Lists every lesson the student has access to via an
+ * access-granting enrollment (direct lesson buy or a package's lesson fan-out).
  */
 class StudentCoursesController
 {
@@ -21,49 +18,21 @@ class StudentCoursesController
     {
         $userId = $request->user()->getKey();
 
-        $grants = Enrollment::query()
+        $lessonIds = Enrollment::query()
             ->where('user_id', $userId)
             ->grantsAccess()
-            ->get(['course_id', 'lesson_id']);
-
-        // Whole-course grants + the parent course of any single-lesson grant.
-        $lessonCourseIds = Lesson::query()
-            ->whereIn('id', $grants->pluck('lesson_id')->filter()->unique())
-            ->pluck('course_id');
-
-        $courseIds = $grants->pluck('course_id')->filter()
-            ->merge($lessonCourseIds)
+            ->whereNotNull('lesson_id')
+            ->pluck('lesson_id')
             ->unique();
 
-        $courses = Course::query()->whereIn('id', $courseIds)->withCount('lessons')->get();
-
-        $data = $courses->map(function (Course $course) use ($userId) {
-            $completed = LessonProgress::query()
-                ->where('user_id', $userId)
-                ->where('tenant_id', $course->tenant_id)
-                ->whereNotNull('completed_at')
-                ->whereIn('lesson_id', $course->lessons()->pluck('id'))
-                ->count();
-
-            $total = (int) $course->lessons_count;
-
-            $precent = LessonProgress::query()
-                ->where('user_id', $userId)
-                ->where('tenant_id', $course->tenant_id)
-                ->whereIn('lesson_id', $course->lessons()->pluck('id'))
-                ->first('watch_percent');
-
-            return [
-                'uuid' => $course->uuid,
-                'title' => $course->title,
-                'slug' => $course->slug,
-                'cover_url' => $course->cover_url,
-                'lessons_total' => $total,
-                'lessons_completed' => $completed,
-                'watch_precent' => $precent ? $precent->watch_percent : 0,
-                'progress_percent' => $total > 0 ? (int) round($completed / $total * 100) : 0,
-            ];
-        });
+        $data = Lesson::query()
+            ->whereIn('id', $lessonIds)
+            ->get()
+            ->map(fn (Lesson $lesson): array => [
+                'id' => $lesson->id,
+                'title' => $lesson->title,
+                'access_mode' => $lesson->access_mode?->value,
+            ]);
 
         return response()->json(['data' => $data]);
     }

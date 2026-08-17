@@ -18,7 +18,6 @@ return new class extends Migration
             $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->foreignId('center_id')->constrained('centers')->cascadeOnDelete();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
-            $table->foreignId('course_id')->nullable()->constrained('courses')->nullOnDelete();
             $table->date('attended_on');
             $table->string('status')->default('present');
             $table->foreignId('marked_by')->nullable()->constrained('users')->nullOnDelete();

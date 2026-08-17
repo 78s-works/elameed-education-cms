@@ -16,8 +16,6 @@ class ExamResource extends JsonResource
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
-            'course_id' => $this->course_id,
-            'unit_id' => $this->unit_id,
             'lesson_id' => $this->lesson_id,
             'title' => $this->title,
             'type' => $this->type->value,

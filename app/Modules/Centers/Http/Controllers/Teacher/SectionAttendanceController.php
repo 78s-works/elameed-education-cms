@@ -41,7 +41,7 @@ class SectionAttendanceController
     {
         $sections = LessonSection::query()
             ->whereIn('access_mode', self::CENTER_MODES)
-            ->with(['lesson:id,title,course_id', 'lesson.course:id,title'])
+            ->with(['lesson:id,title'])
             ->ordered()
             ->get()
             ->map(fn (LessonSection $s): array => [
@@ -49,7 +49,6 @@ class SectionAttendanceController
                 'title' => $s->title,
                 'access_mode' => $s->access_mode?->value,
                 'lesson' => ['id' => $s->lesson?->id, 'title' => $s->lesson?->title],
-                'course' => ['title' => $s->lesson?->course?->title],
             ]);
 
         return response()->json(['data' => $sections]);

@@ -3,10 +3,10 @@
 namespace App\Modules\Centers\Models;
 
 use App\Models\User;
-use App\Modules\Catalog\Models\Course;
 use App\Modules\Centers\Enums\CodeStatus;
 use App\Modules\Centers\Enums\CodeType;
 use App\Support\Traits\BelongsToTenant;
+use App\Support\Traits\HasContentTarget;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -19,13 +19,15 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class ActivationCode extends Model
 {
     use BelongsToTenant;
+    use HasContentTarget;
     use HasUuids;
 
     protected $fillable = [
         'code',
         'type',
         'amount_minor',
-        'course_id',
+        'target_type',
+        'target_id',
         'center_id',
         'generated_by',
         'batch',
@@ -39,6 +41,7 @@ class ActivationCode extends Model
         'type' => CodeType::class,
         'status' => CodeStatus::class,
         'amount_minor' => 'integer',
+        'target_id' => 'integer',
         'redeemed_at' => 'datetime',
         'expires_at' => 'datetime',
     ];
@@ -65,11 +68,6 @@ class ActivationCode extends Model
         return $this->status === CodeStatus::Active
             && $this->expires_at !== null
             && $this->expires_at->isPast();
-    }
-
-    public function course(): BelongsTo
-    {
-        return $this->belongsTo(Course::class);
     }
 
     public function generatedBy(): BelongsTo

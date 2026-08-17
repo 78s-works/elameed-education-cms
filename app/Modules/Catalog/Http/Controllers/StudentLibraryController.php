@@ -22,10 +22,9 @@ use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 class StudentLibraryController
 {
     /**
-     * GET /me/lessons — the student's purchased standalone lessons. Each row
-     * carries the parent course slug so the SPA can open the existing course
-     * player (standalone lessons have no player of their own), plus a watched
-     * flag from lesson_progress.
+     * GET /me/lessons — the student's purchased standalone lessons (the lesson is
+     * its own player entry now — `courses` retired, VD §7), plus a watched flag
+     * from lesson_progress.
      */
     public function lessons(Request $request): JsonResponse
     {
@@ -41,7 +40,6 @@ class StudentLibraryController
 
         $lessons = Lesson::query()
             ->whereIn('id', $lessonIds)
-            ->with('course:id,slug,title')
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();
@@ -61,9 +59,6 @@ class StudentLibraryController
             'access_mode' => $l->access_mode?->value,
             'price_minor' => $l->price_minor,
             'currency' => $l->currency,
-            'course_id' => $l->course_id,
-            'course_slug' => $l->course?->slug,
-            'course_title' => $l->course?->title,
             'completed' => isset($completedSet[$l->id]),
         ])->all();
 
@@ -76,7 +71,7 @@ class StudentLibraryController
      * lessons (walking package_items, any depth) and intersects them with the
      * student's access-granting enrollments, so the SPA can open a bought package
      * to its lessons (there is no other student-facing package-contents surface).
-     * Each lesson carries its parent course slug (the player's entry point) and a
+     * Each lesson is its own player entry (`courses` retired, VD §7) and carries a
      * completed flag. Lessons the student has not been granted are omitted.
      */
     public function packageLessons(Request $request, Package $package): JsonResponse
@@ -95,7 +90,6 @@ class StudentLibraryController
 
         $lessons = Lesson::query()
             ->whereIn('id', $ownedIds)
-            ->with('course:id,slug,title')
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();
@@ -122,9 +116,6 @@ class StudentLibraryController
                     'name' => $l->title,
                     'title' => $l->title,
                     'access_mode' => $l->access_mode?->value,
-                    'course_id' => $l->course_id,
-                    'course_slug' => $l->course?->slug,
-                    'course_title' => $l->course?->title,
                     'completed' => isset($completedSet[$l->id]),
                 ])->all(),
             ],

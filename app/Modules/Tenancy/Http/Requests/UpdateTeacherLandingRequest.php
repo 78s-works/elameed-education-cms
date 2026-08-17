@@ -2,8 +2,6 @@
 
 namespace App\Modules\Tenancy\Http\Requests;
 
-use App\Modules\Catalog\Models\Course;
-use App\Modules\Catalog\Models\CourseCategory;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Modules\Tenancy\Support\LandingSchema;
 use Illuminate\Contracts\Validation\Validator;
@@ -85,26 +83,9 @@ class UpdateTeacherLandingRequest extends FormRequest
                 $v->errors()->add('primary_locale', __('The primary language must be one of the enabled languages.'));
             }
 
-            foreach ((array) $this->input('sections', []) as $i => $section) {
-                if (($section['type'] ?? null) !== 'courses') {
-                    continue;
-                }
-                $config = $section['config'] ?? [];
-
-                if (($config['source'] ?? null) === 'category' && ! empty($config['category_id'])) {
-                    // Category models are tenant-scoped → exists() implies ownership.
-                    if (! CourseCategory::query()->whereKey($config['category_id'])->exists()) {
-                        $v->errors()->add("sections.{$i}.config.category_id", __('Category not found in this academy.'));
-                    }
-                }
-
-                if (($config['source'] ?? null) === 'selected') {
-                    $ids = array_values(array_unique(array_map('intval', (array) ($config['course_ids'] ?? []))));
-                    if ($ids !== [] && Course::query()->whereIn('id', $ids)->count() !== count($ids)) {
-                        $v->errors()->add("sections.{$i}.config.course_ids", __('One or more selected courses are not yours.'));
-                    }
-                }
-            }
+            // The "courses" section lists purchasable lessons directly now (VD §7 —
+            // `courses`/categories retired); its config carries no course/category
+            // references to validate.
         });
     }
 

@@ -4,7 +4,7 @@ namespace Tests\Feature\Centers;
 
 use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
-use App\Modules\Catalog\Models\Course;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Centers\Models\ActivationCode;
 use App\Modules\Centers\Models\Center;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -44,14 +44,13 @@ class CentersTest extends TestCase
         return $u;
     }
 
-    private function course(): Course
+    private function lesson(): Lesson
     {
-        $c = new Course(['title' => 'C', 'visibility' => ContentVisibility::Visible->value]);
-        $c->tenant_id = $this->tenant->id;
-        $c->slug = 'c-'.uniqid();
-        $c->save();
+        $l = new Lesson(['title' => 'L', 'visibility' => ContentVisibility::Visible->value]);
+        $l->tenant_id = $this->tenant->id;
+        $l->save(); // academic_year_id auto-filled by Lesson::booted()
 
-        return $c;
+        return $l;
     }
 
     private function code(array $attrs): ActivationCode
@@ -77,21 +76,21 @@ class CentersTest extends TestCase
         $this->assertSame('wallet', $wallet[0]['type']);
         $this->assertSame('active', $wallet[0]['status']);
 
-        $course = $this->course();
+        $lesson = $this->lesson();
         $this->withHeaders($this->h)->postJson('/api/v1/teacher/codes/batch', [
-            'type' => 'course', 'count' => 2, 'course_id' => $course->id,
+            'type' => 'content', 'count' => 2, 'target_type' => 'lesson', 'target_id' => $lesson->id,
         ])->assertStatus(201);
 
         $this->withHeaders($this->h)->getJson('/api/v1/teacher/codes')
             ->assertOk()->assertJsonPath('meta.total', 5);
     }
 
-    public function test_course_code_batch_requires_owned_course(): void
+    public function test_content_code_batch_requires_owned_target(): void
     {
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
 
         $this->withHeaders($this->h)->postJson('/api/v1/teacher/codes/batch', [
-            'type' => 'course', 'count' => 1, 'course_id' => 99999,
+            'type' => 'content', 'count' => 1, 'target_type' => 'lesson', 'target_id' => 99999,
         ])->assertStatus(422);
     }
 
@@ -112,18 +111,18 @@ class CentersTest extends TestCase
         $this->withHeaders($this->h)->postJson('/api/v1/codes/redeem', ['code' => 'WALLET123'])->assertStatus(422);
     }
 
-    public function test_student_redeems_course_code_and_gets_enrolled(): void
+    public function test_student_redeems_content_code_and_gets_enrolled(): void
     {
-        $course = $this->course();
-        $this->code(['code' => 'COURSE9', 'type' => 'course', 'course_id' => $course->id]);
+        $lesson = $this->lesson();
+        $this->code(['code' => 'LESSON9', 'type' => 'content', 'target_type' => 'lesson', 'target_id' => $lesson->id]);
         $student = $this->member(TenantUserRole::Student);
         Sanctum::actingAs($student);
 
-        $this->withHeaders($this->h)->postJson('/api/v1/codes/redeem', ['code' => 'COURSE9'])
-            ->assertOk()->assertJsonPath('data.type', 'course');
+        $this->withHeaders($this->h)->postJson('/api/v1/codes/redeem', ['code' => 'LESSON9'])
+            ->assertOk()->assertJsonPath('data.type', 'content')->assertJsonPath('data.target_type', 'lesson');
 
         $this->assertDatabaseHas('enrollments', [
-            'tenant_id' => $this->tenant->id, 'user_id' => $student->id, 'course_id' => $course->id, 'status' => 'active',
+            'tenant_id' => $this->tenant->id, 'user_id' => $student->id, 'lesson_id' => $lesson->id, 'status' => 'active',
         ]);
     }
 

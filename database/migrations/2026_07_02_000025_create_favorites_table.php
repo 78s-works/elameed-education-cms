@@ -6,8 +6,9 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * `favorites` — a student's wishlisted courses. Squashed create (folds the later
- * academic_year_id scoping column).
+ * `favorites` — a student's wishlisted content, EITHER a standalone lesson OR a
+ * recursive package (`target_type`/`target_id`, VD §7 — `courses` retired).
+ * Squashed create (folds the later academic_year_id scoping column).
  */
 return new class extends Migration
 {
@@ -18,11 +19,13 @@ return new class extends Migration
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
-            $table->foreignId('course_id')->constrained('courses')->cascadeOnDelete();
+            $table->string('target_type');           // 'lesson' | 'package'
+            $table->unsignedBigInteger('target_id');
             $table->timestamps();
 
-            $table->unique(['tenant_id', 'user_id', 'course_id']);
+            $table->unique(['tenant_id', 'user_id', 'target_type', 'target_id']);
             $table->index(['tenant_id', 'academic_year_id']);
+            $table->index(['tenant_id', 'target_type', 'target_id']);
         });
 
         TenantRls::enableFor('favorites');
