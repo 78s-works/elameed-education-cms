@@ -33,6 +33,7 @@ use App\Modules\Centers\Http\Controllers\Teacher\CenterController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterExamGradeController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterIdCodeController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterSyncController;
+use App\Modules\Centers\Http\Controllers\Teacher\SectionAttendanceController;
 use App\Modules\Commerce\Http\Controllers\CheckoutController;
 use App\Modules\Commerce\Http\Controllers\InvoiceController;
 use App\Modules\Commerce\Http\Controllers\PaymentWebhookController;
@@ -617,6 +618,16 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
                 Route::middleware('academic-year')->group(function (): void {
                     Route::get('/teacher/center-id-codes', [CenterIdCodeController::class, 'index']);
                     Route::post('/teacher/center-id-codes/batch', [CenterIdCodeController::class, 'batch']);
+                });
+
+                // Section-level attendance (center check-in → time-boxed online
+                // access). Year-scoped: parts/lessons/enrollments live under a year.
+                Route::middleware('academic-year')->group(function (): void {
+                    Route::get('/teacher/attendance/sections', [SectionAttendanceController::class, 'sections']);
+                    Route::get('/teacher/attendance/active', [SectionAttendanceController::class, 'active']);
+                    Route::get('/teacher/attendance/lessons', [SectionAttendanceController::class, 'lessons']);
+                    Route::post('/teacher/attendance/checkin', [SectionAttendanceController::class, 'checkin']);
+                    Route::delete('/teacher/attendance/active/{record}', [SectionAttendanceController::class, 'revoke']);
                 });
 
                 // Center paper-exam grade entry (VD R12, doc 13 Phase 15). A grade

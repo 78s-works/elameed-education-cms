@@ -55,7 +55,9 @@ class AttendanceController
             }
 
             AttendanceRecord::updateOrCreate(
-                ['center_id' => $center->id, 'user_id' => $user->id, 'attended_on' => $date],
+                // Pin `lesson_section_id = null` so day-attendance never matches or
+                // overwrites a section check-in row (which shares the day+center+user).
+                ['center_id' => $center->id, 'user_id' => $user->id, 'attended_on' => $date, 'lesson_section_id' => null],
                 ['course_id' => $data['course_id'] ?? null, 'status' => $status, 'marked_by' => $markedBy, 'source' => 'online'],
             );
             $marked++;
