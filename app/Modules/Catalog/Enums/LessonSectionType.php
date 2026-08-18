@@ -31,10 +31,10 @@ enum LessonSectionType: string
     case QuizSolution = 'quiz_solution';
     case HwSolution = 'hw_solution';
 
-    /** The three part types the new teacher authoring surface accepts. */
+    /** The part types the new teacher authoring surface accepts. */
     public static function authoringValues(): array
     {
-        return [self::Video->value, self::Homework->value, self::Quiz->value];
+        return [self::Video->value, self::Homework->value, self::Quiz->value, self::Pdf->value];
     }
 
     /** A quiz/homework part is backed by an Exam row (holds the degree + grading). */

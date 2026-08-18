@@ -192,20 +192,42 @@ class LandingResolver
      * have no public detail page). The `id` is a synthetic `lesson-<id>` string so
      * it never collides with course-enrollment ids in applyEnrollment().
      *
+     * Honors the stored `config`:
+     *   - source=selected → only the hand-picked `course_ids` (LESSON ids), kept
+     *     in the teacher's chosen order.
+     *   - source=featured|all|category → all published, purchasable lessons in
+     *     sort order. `category` behaves like `all`: lessons carry no category
+     *     (categories were a course concept, retired VD §7), so there is nothing
+     *     to filter by — the source stays in the contract only for back-compat.
+     *   - limit clamps the result to 1..24.
+     *
      * @return array<int, array<string, mixed>>
      */
     private function resolveCourses(int $tenantId, array $config): array
     {
+        $source = $config['source'] ?? 'featured';
         $limit = max(1, min(24, (int) ($config['limit'] ?? 6)));
+        $ids = array_values(array_filter(array_map('intval', (array) ($config['course_ids'] ?? []))));
 
-        $lessons = Lesson::withoutGlobalScopes()
+        $query = Lesson::withoutGlobalScopes()
             ->published()
             ->where('tenant_id', $tenantId)
-            ->where('is_purchasable', true)
-            ->orderBy('sort_order')
-            ->orderBy('id')
-            ->limit($limit)
-            ->get();
+            ->where('is_purchasable', true);
+
+        if ($source === 'selected') {
+            if ($ids === []) {
+                return [];
+            }
+            // Fetch the picked lessons, then re-order to match the teacher's
+            // selection order before clamping to the limit.
+            $position = array_flip($ids);
+            $lessons = $query->whereIn('id', $ids)->get()
+                ->sortBy(fn (Lesson $l) => $position[$l->id] ?? PHP_INT_MAX)
+                ->take($limit)
+                ->values();
+        } else {
+            $lessons = $query->orderBy('sort_order')->orderBy('id')->limit($limit)->get();
+        }
 
         if ($lessons->isEmpty()) {
             return [];

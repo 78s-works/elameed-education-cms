@@ -7,8 +7,10 @@ use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Assessment\Models\Question;
 use App\Modules\Catalog\Enums\ContentVisibility;
+use App\Modules\Catalog\Enums\LessonSectionType;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\LessonSection;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -193,6 +195,56 @@ class ExamsTest extends TestCase
             ->assertJsonPath('data.status', 'graded')
             ->assertJsonPath('data.score', 13)          // 5 + 8
             ->assertJsonPath('data.needs_manual_grade', false);
+    }
+
+    // ---- Lesson-linked homework ⇄ lesson part sync -----------------------------
+
+    public function test_lesson_linked_homework_mints_a_lesson_part(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $examUuid = $this->withHeaders($this->h)
+            ->postJson('/api/v1/teacher/exams', [
+                'title' => 'Chapter 1 homework', 'type' => 'homework', 'lesson_id' => $this->lesson->id, 'pass_percent' => 50,
+            ])
+            ->assertStatus(201)->json('data.uuid');
+
+        $exam = Exam::where('uuid', $examUuid)->firstOrFail();
+
+        // A homework part now backs this exam inside the lesson (point 4 of the spec).
+        $section = LessonSection::where('exam_id', $exam->id)->first();
+        $this->assertNotNull($section, 'a lesson part should back the lesson-linked homework');
+        $this->assertSame(LessonSectionType::Homework, $section->type);
+        $this->assertSame($this->lesson->id, $section->lesson_id);
+    }
+
+    public function test_standalone_free_exam_does_not_mint_a_lesson_part(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $this->withHeaders($this->h)
+            ->postJson('/api/v1/teacher/exams', ['title' => 'Standalone', 'type' => 'free_exam', 'pass_percent' => 50])
+            ->assertStatus(201);
+
+        // A standalone (free_exam) links no lesson, so no part is created.
+        $this->assertSame(0, LessonSection::count());
+    }
+
+    public function test_deleting_lesson_linked_exam_drops_its_lesson_part(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $examUuid = $this->withHeaders($this->h)
+            ->postJson('/api/v1/teacher/exams', [
+                'title' => 'Quiz 1', 'type' => 'lesson_quiz', 'lesson_id' => $this->lesson->id, 'pass_percent' => 50,
+            ])
+            ->assertStatus(201)->json('data.uuid');
+
+        $this->assertSame(1, LessonSection::count());
+
+        $this->withHeaders($this->h)->deleteJson("/api/v1/teacher/exams/{$examUuid}")->assertNoContent();
+
+        $this->assertSame(0, LessonSection::count());
     }
 
     public function test_cross_tenant_exam_is_404(): void

@@ -244,6 +244,55 @@ class LandingV2Test extends TestCase
         $this->assertNull($items->firstWhere('lesson_id', $hidden->id));
     }
 
+    public function test_courses_section_selected_source_lists_only_picked_lessons_in_order(): void
+    {
+        // Three published, purchasable lessons.
+        $a = $this->publishedLesson();
+        $b = $this->publishedLesson();
+        $c = $this->publishedLesson();
+
+        // The teacher hand-picks B then A (order matters), leaving C out.
+        $p = new TeacherProfile([
+            'locales' => ['ar'],
+            'primary_locale' => 'ar',
+            'landing_sections' => [
+                ['key' => 'courses', 'type' => 'courses', 'visible' => true, 'order' => 1,
+                    'content' => ['ar' => ['title' => 'الكورسات']],
+                    'config' => ['source' => 'selected', 'course_ids' => [$b->id, $a->id], 'limit' => 6]],
+            ],
+        ]);
+        $p->tenant_id = $this->tenant->id;
+        $p->save();
+
+        $data = $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/tenant/landing')->assertOk()->json('data');
+        $items = collect($this->sectionOfType($data['sections'], 'courses')['items']);
+
+        // Only the picked lessons, in the picked order (B before A); C excluded.
+        $this->assertSame([$b->id, $a->id], $items->pluck('lesson_id')->all());
+        $this->assertNull($items->firstWhere('lesson_id', $c->id));
+    }
+
+    public function test_courses_section_selected_source_with_no_ids_is_empty(): void
+    {
+        $this->publishedLesson();
+
+        $p = new TeacherProfile([
+            'locales' => ['ar'],
+            'primary_locale' => 'ar',
+            'landing_sections' => [
+                ['key' => 'courses', 'type' => 'courses', 'visible' => true, 'order' => 1,
+                    'content' => ['ar' => ['title' => 'الكورسات']],
+                    'config' => ['source' => 'selected', 'course_ids' => [], 'limit' => 6]],
+            ],
+        ]);
+        $p->tenant_id = $this->tenant->id;
+        $p->save();
+
+        $data = $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/tenant/landing')->assertOk()->json('data');
+
+        $this->assertSame([], $this->sectionOfType($data['sections'], 'courses')['items']);
+    }
+
     public function test_only_enrolled_student_can_review_and_review_is_upserted(): void
     {
         $lesson = $this->publishedLesson();

@@ -7,6 +7,7 @@ use App\Modules\Assessment\Enums\ExamPassMode;
 use App\Modules\Catalog\Enums\AccessMode;
 use App\Modules\Catalog\Enums\GateRule;
 use App\Modules\Catalog\Enums\LessonSectionType;
+use App\Modules\Catalog\Enums\PdfKind;
 use App\Modules\Catalog\Enums\SectionDelivery;
 use App\Modules\Catalog\Models\Lesson;
 use Illuminate\Contracts\Validation\Validator;
@@ -44,7 +45,9 @@ class LessonSectionRequest extends FormRequest
 
             // video — an uploaded asset OR a YouTube link (one is required, see
             // assertVideoSource()). youtube_url is validated as a real YouTube URL.
-            'media_asset_id' => ['nullable', 'integer', 'min:1'],
+            // pdf — a required uploaded file (a MediaAsset of type pdf).
+            'media_asset_id' => ['nullable', 'integer', 'min:1', 'required_if:type,pdf'],
+            'pdf_kind' => ['nullable', Rule::enum(PdfKind::class), 'required_if:type,pdf'],
             'youtube_url' => ['nullable', 'string', 'max:2048', function ($attr, $value, $fail): void {
                 if ($value !== null && $value !== '' && ! \App\Support\Youtube::isValid($value)) {
                     $fail('The :attribute must be a valid YouTube link.');
@@ -154,7 +157,7 @@ class LessonSectionRequest extends FormRequest
     public function sectionAttributes(): array
     {
         $data = $this->validated();
-        $keys = ['type', 'access_mode', 'delivery', 'gate_rule', 'max_tries', 'sort_order', 'media_asset_id', 'youtube_url', 'is_required'];
+        $keys = ['type', 'access_mode', 'delivery', 'gate_rule', 'max_tries', 'sort_order', 'media_asset_id', 'youtube_url', 'pdf_kind', 'is_required'];
 
         $attrs = array_intersect_key($data, array_flip($keys));
 

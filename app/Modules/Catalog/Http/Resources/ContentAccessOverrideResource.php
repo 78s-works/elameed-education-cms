@@ -37,9 +37,6 @@ class ContentAccessOverrideResource extends JsonResource
         if ($this->section_id !== null) {
             return [ContentAccessTarget::Section->value, (int) $this->section_id];
         }
-        if ($this->unit_id !== null) {
-            return [ContentAccessTarget::Unit->value, (int) $this->unit_id];
-        }
 
         return [null, null];
     }

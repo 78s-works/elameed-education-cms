@@ -9,7 +9,6 @@ namespace App\Modules\Notifications\Enums;
 enum NotificationModule: string
 {
     case Courses = 'courses';
-    case Units = 'units';
     case Lessons = 'lessons';
     case Exams = 'exams';
     case Billing = 'billing';

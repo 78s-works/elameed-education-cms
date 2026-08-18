@@ -10,7 +10,6 @@ enum ContentAccessTarget: string
 {
     case Lesson = 'lesson';
     case Section = 'section';
-    case Unit = 'unit';
 
     /** The override column that stores this target's id. */
     public function column(): string
@@ -18,7 +17,6 @@ enum ContentAccessTarget: string
         return match ($this) {
             self::Lesson => 'lesson_id',
             self::Section => 'section_id',
-            self::Unit => 'unit_id',
         };
     }
 

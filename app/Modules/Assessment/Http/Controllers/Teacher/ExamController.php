@@ -2,11 +2,16 @@
 
 namespace App\Modules\Assessment\Http\Controllers\Teacher;
 
+use App\Modules\Assessment\Enums\ExamMode;
 use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Http\Requests\ExamRequest;
 use App\Modules\Assessment\Http\Resources\ExamResource;
 use App\Modules\Assessment\Models\Exam;
+use App\Modules\Catalog\Enums\GateRule;
+use App\Modules\Catalog\Enums\LessonSectionType;
+use App\Modules\Catalog\Enums\SectionDelivery;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\LessonSection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -53,6 +58,13 @@ class ExamController
         $exam->lesson_id = $lessonId;
         $exam->save(); // BelongsToTenant fills tenant_id
 
+        // A lesson-linked exam (homework/lesson_quiz) also appears as a part in the
+        // lesson: mint the backing lesson_section so both surfaces stay in sync
+        // (the reverse — a part minting an exam — lives in LessonSectionController).
+        if ($type->linksLesson() && $lessonId !== null) {
+            $this->syncLessonSection($exam, Lesson::findOrFail($lessonId));
+        }
+
         return (new ExamResource($exam->loadCount('questions')))->response()->setStatusCode(201);
     }
 
@@ -86,6 +98,10 @@ class ExamController
 
     public function destroy(Exam $exam): Response
     {
+        // Drop the backing lesson part (if any) so the exam disappears from the
+        // lesson too — the part is meaningless without its exam.
+        LessonSection::query()->where('exam_id', $exam->id)->delete();
+
         $exam->delete(); // soft delete (keeps attempt history)
 
         return response()->noContent();
@@ -131,5 +147,33 @@ class ExamController
             };
             throw new ConflictHttpException($label);
         }
+    }
+
+    /**
+     * Mint the lesson_section that backs a lesson-linked exam so it surfaces as a
+     * part in the lesson builder. Idempotent — if a part already points at this
+     * exam (e.g. it was authored from the lesson side), leave it alone. The degree
+     * config lives on the exam; the part carries only delivery/gate/order.
+     */
+    private function syncLessonSection(Exam $exam, Lesson $lesson): void
+    {
+        if (LessonSection::query()->where('exam_id', $exam->id)->exists()) {
+            return;
+        }
+
+        $sectionType = $exam->type === ExamType::LessonQuiz
+            ? LessonSectionType::Quiz
+            : LessonSectionType::Homework;
+
+        $lesson->sections()->create([
+            'type' => $sectionType->value,
+            'title' => $exam->title,
+            'access_mode' => $lesson->access_mode->value, // ⊆ the lesson ceiling (equal is a subset)
+            'delivery' => ($exam->mode === ExamMode::BubbleSheet ? SectionDelivery::BubbleSheet : SectionDelivery::ImageUpload)->value,
+            'gate_rule' => GateRule::MustSubmit->value,
+            'sort_order' => (int) $lesson->sections()->max('sort_order') + 1,
+            'exam_id' => $exam->id,
+            'is_required' => true,
+        ]);
     }
 }

@@ -296,8 +296,8 @@ class ContentPackageTest extends TestCase
         $this->assertTrue(Schema::hasTable('packages'));
         $this->assertTrue(Schema::hasTable('package_items'));
 
-        // The dormant scalar columns survive (progression/reporting still read them).
-        $this->assertTrue(Schema::hasColumn('lessons', 'unit_id'));
-        $this->assertTrue(Schema::hasColumn('enrollments', 'unit_id'));
+        // unit_id columns retired too (VD §7) — no code reads them any more.
+        $this->assertFalse(Schema::hasColumn('lessons', 'unit_id'));
+        $this->assertFalse(Schema::hasColumn('enrollments', 'unit_id'));
     }
 }

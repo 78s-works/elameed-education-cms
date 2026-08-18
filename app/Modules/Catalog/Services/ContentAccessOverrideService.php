@@ -120,8 +120,8 @@ class ContentAccessOverrideService
     }
 
     /** Single-shot convenience: is this section override-unlocked for the user? */
-    public function hasActiveForSection(int $tenantId, int $userId, LessonSection $section, ?int $unitId): bool
+    public function hasActiveForSection(int $tenantId, int $userId, LessonSection $section): bool
     {
-        return $this->sectionCovered($this->activeTargetSets($tenantId, $userId), $section, $unitId);
+        return $this->sectionCovered($this->activeTargetSets($tenantId, $userId), $section);
     }
 }

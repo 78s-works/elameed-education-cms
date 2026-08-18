@@ -164,6 +164,39 @@ class LessonAuthoringTest extends TestCase
         $this->assertDatabaseHas('lesson_sections', ['lesson_id' => $lesson, 'type' => 'video', 'access_mode' => 'online', 'media_asset_id' => $asset->id]);
     }
 
+    public function test_create_pdf_part(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+        $lesson = $this->makeLesson('both');
+
+        $asset = new MediaAsset(['type' => MediaType::Pdf->value, 'status' => MediaStatus::Ready->value, 'title' => 'notes.pdf']);
+        $asset->tenant_id = $this->tenant->id;
+        $asset->save();
+
+        $this->withHeaders($this->headers())->postJson("/api/v1/teacher/lessons/{$lesson}/sections", [
+            'name' => 'Lecture notes', 'type' => 'pdf', 'access_mode' => 'both', 'is_required' => true,
+            'media_asset_id' => $asset->id, 'pdf_kind' => 'lecture_notes',
+        ])->assertStatus(201)
+            ->assertJsonPath('data.type', 'pdf')
+            ->assertJsonPath('data.pdf_kind', 'lecture_notes')
+            ->assertJsonPath('data.media_asset_id', $asset->id);
+
+        $this->assertDatabaseHas('lesson_sections', [
+            'lesson_id' => $lesson, 'type' => 'pdf', 'pdf_kind' => 'lecture_notes', 'media_asset_id' => $asset->id, 'exam_id' => null,
+        ]);
+    }
+
+    public function test_pdf_part_requires_a_file_and_kind(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+        $lesson = $this->makeLesson('both');
+
+        $this->withHeaders($this->headers())->postJson("/api/v1/teacher/lessons/{$lesson}/sections", [
+            'name' => 'Empty pdf', 'type' => 'pdf', 'access_mode' => 'both',
+        ])->assertStatus(422)
+            ->assertJsonStructure(['error' => ['details' => ['media_asset_id', 'pdf_kind']]]);
+    }
+
     public function test_create_homework_part_backs_an_exam(): void
     {
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));

@@ -101,7 +101,7 @@ class StudentContentOverrideController
         return response()->noContent();
     }
 
-    /** The target must be a lesson/section/unit owned by this tenant. */
+    /** The target must be a lesson/section owned by this tenant. */
     private function assertTargetExists(int $tenantId, ContentAccessTarget $target, int $targetId): void
     {
         $exists = match ($target) {
@@ -109,8 +109,6 @@ class StudentContentOverrideController
                 ->where('tenant_id', $tenantId)->whereKey($targetId)->exists(),
             ContentAccessTarget::Section => LessonSection::withoutGlobalScopes()
                 ->where('tenant_id', $tenantId)->whereKey($targetId)->exists(),
-            // Unit target retired (Unit removed, VD §7): no such target exists.
-            ContentAccessTarget::Unit => false,
         };
 
         if (! $exists) {
