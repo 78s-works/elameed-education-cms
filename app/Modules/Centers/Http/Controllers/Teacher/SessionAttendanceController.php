@@ -3,7 +3,6 @@
 namespace App\Modules\Centers\Http\Controllers\Teacher;
 
 use App\Models\User;
-use App\Modules\Catalog\Enums\AccessMode;
 use App\Modules\Centers\Http\Requests\CheckinAttendanceRequest;
 use App\Modules\Centers\Http\Resources\SessionAttendanceResource;
 use App\Modules\Centers\Models\AttendanceRecord;
@@ -11,7 +10,6 @@ use App\Modules\Centers\Models\Center;
 use App\Modules\Centers\Models\CenterSession;
 use App\Modules\Centers\Services\CenterSessionAttendanceService;
 use App\Modules\Identity\Enums\TenantUserRole;
-use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
@@ -20,16 +18,13 @@ use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
 
 /**
- * Session-based center attendance (separate teacher page). Check center students
- * in for a center session, which opens all the session's lessons online for the
- * lesson availability window; list the active grants; and show, per session, who
- * attended. Year-scoped (X-Academic-Year).
+ * Session-based center attendance (separate teacher page). Check students (center
+ * OR online) in for a center session, which opens all the session's lessons online
+ * for the lesson availability window; list the active grants; and show, per
+ * session, who attended. Year-scoped (X-Academic-Year).
  */
 class SessionAttendanceController
 {
-    /** study_modes that may be checked in for center content. */
-    private const CENTER_MODES = [AccessMode::Center->value, AccessMode::Both->value];
-
     public function __construct(
         private readonly TenantContext $context,
         private readonly CenterSessionAttendanceService $service,
@@ -101,7 +96,7 @@ class SessionAttendanceController
         DB::transaction(function () use ($data, $tenantId, $center, $session, $markedBy, &$marked, &$skipped): void {
             foreach ($data['students'] as $uuid) {
                 $user = User::query()->where('uuid', $uuid)->first();
-                if ($user === null || ! $this->isCenterStudent($tenantId, $user)) {
+                if ($user === null || ! $this->isStudentMember($tenantId, $user)) {
                     $skipped[] = $uuid;
 
                     continue;
@@ -124,21 +119,18 @@ class SessionAttendanceController
         return response()->json(['data' => ['revoked' => true]]);
     }
 
-    /** A tenant member with the student role whose study_mode allows center content. */
-    private function isCenterStudent(int $tenantId, User $user): bool
+    /**
+     * A tenant member with the student role. Study mode is NOT gated: both center
+     * and online students may be checked in for a session — check-in opens the
+     * session's lessons online for either (an online student gets the same
+     * time-boxed lesson access a center student does).
+     */
+    private function isStudentMember(int $tenantId, User $user): bool
     {
-        $isMember = TenantUser::query()
+        return TenantUser::query()
             ->where('tenant_id', $tenantId)
             ->where('user_id', $user->id)
             ->where('role', TenantUserRole::Student->value)
             ->exists();
-
-        if (! $isMember) {
-            return false;
-        }
-
-        $studyMode = StudentProfile::query()->where('user_id', $user->id)->value('study_mode');
-
-        return in_array($studyMode, self::CENTER_MODES, true);
     }
 }

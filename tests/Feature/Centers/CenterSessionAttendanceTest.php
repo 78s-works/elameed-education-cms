@@ -22,7 +22,7 @@ use Tests\TestCase;
 /**
  * Center sessions CRUD + session-based attendance: a check-in opens every lesson
  * the session bundles online for the student; a session with attendance can't be
- * deleted; online students are skipped; revoke locks the windows.
+ * deleted; center and online students alike are checked in; revoke locks the windows.
  */
 class CenterSessionAttendanceTest extends TestCase
 {
@@ -70,7 +70,7 @@ class CenterSessionAttendanceTest extends TestCase
         $this->assertDatabaseMissing('center_sessions', ['id' => $id]);
     }
 
-    public function test_checkin_opens_session_lessons_and_skips_online_students(): void
+    public function test_checkin_opens_session_lessons_for_center_and_online_students(): void
     {
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
         $center = $this->makeCenter();
@@ -80,24 +80,28 @@ class CenterSessionAttendanceTest extends TestCase
         $centerStudent = $this->student('center');
         $onlineStudent = $this->student('online');
 
+        // Both center AND online students are checked in — an online student gets
+        // the same time-boxed lesson access a center student does.
         $this->withHeaders($this->h)->postJson('/api/v1/teacher/attendance/checkin', [
             'center_uuid' => $center->uuid,
             'center_session_id' => $session->id,
             'students' => [$centerStudent->uuid, $onlineStudent->uuid],
         ])
             ->assertOk()
-            ->assertJsonPath('data.marked', 1)
-            ->assertJsonPath('data.skipped.0', $onlineStudent->uuid);
+            ->assertJsonPath('data.marked', 2)
+            ->assertJsonCount(0, 'data.skipped');
 
-        $this->assertDatabaseHas('enrollments', [
-            'user_id' => $centerStudent->id, 'lesson_id' => $lesson->id, 'source' => 'center', 'status' => 'active',
-        ]);
-        $this->assertDatabaseHas('lesson_access_windows', [
-            'user_id' => $centerStudent->id, 'lesson_id' => $lesson->id,
-        ]);
-        $this->assertDatabaseHas('attendance_records', [
-            'user_id' => $centerStudent->id, 'center_session_id' => $session->id, 'source' => 'center',
-        ]);
+        foreach ([$centerStudent, $onlineStudent] as $student) {
+            $this->assertDatabaseHas('enrollments', [
+                'user_id' => $student->id, 'lesson_id' => $lesson->id, 'source' => 'center', 'status' => 'active',
+            ]);
+            $this->assertDatabaseHas('lesson_access_windows', [
+                'user_id' => $student->id, 'lesson_id' => $lesson->id,
+            ]);
+            $this->assertDatabaseHas('attendance_records', [
+                'user_id' => $student->id, 'center_session_id' => $session->id, 'source' => 'center',
+            ]);
+        }
 
         // Now the session has attendance → delete is refused.
         $this->withHeaders($this->h)->deleteJson("/api/v1/teacher/center-sessions/{$session->id}")

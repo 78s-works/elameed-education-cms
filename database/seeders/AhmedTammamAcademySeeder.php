@@ -249,6 +249,12 @@ class AhmedTammamAcademySeeder extends Seeder
     /** @var Center[] */
     private array $centers = [];
 
+    /** Running per-(center,grade) ID-code sequence, so minted codes never collide. */
+    private array $idCodeSeq = [];
+
+    /** Shared batch for student-bound (redeemed) ID codes. */
+    private ?string $studentCodeBatch = null;
+
     public function run(): void
     {
         if (Tenant::query()->where('slug', self::SLUG)->exists()) {
@@ -1049,6 +1055,12 @@ class AhmedTammamAcademySeeder extends Seeder
         $profile->tenant_id = $this->tenant->id;
         $profile->save();
 
+        // Every center-going student (center OR both) carries a redeemed center
+        // ID-code — the code they were issued at the center binds their identity.
+        if ($center !== null) {
+            $this->mintIdCode($year, $center, (int) $year->sort_order + 1, $user);
+        }
+
         return $user;
     }
 
@@ -1577,23 +1589,42 @@ class AhmedTammamAcademySeeder extends Seeder
         $g->save();
     }
 
+    /** A spare batch of unused (unbound) ID codes for the ID-codes tab to list. */
     private function centerIdCodes(AcademicYear $year, Center $center, int $grade, int $count): void
     {
-        $batch = (string) Str::uuid();
-        for ($i = 1; $i <= $count; $i++) {
-            $code = new CenterIdCode([
-                'center_id' => $center->id,
-                'grade' => $grade,
-                'sequence' => $i,
-                'code' => sprintf('C%d-%03d-%s', $grade, $i, strtoupper(Str::random(4))),
-                'status' => $i === 1 ? CodeStatus::Redeemed->value : CodeStatus::Active->value,
-                'batch_id' => $batch,
-                'generated_by' => $this->teacher->id,
-            ]);
-            $code->tenant_id = $this->tenant->id;
-            $code->academic_year_id = $year->id;
-            $code->save();
+        for ($i = 0; $i < $count; $i++) {
+            $this->mintIdCode($year, $center, $grade);
         }
+    }
+
+    /**
+     * Mint one center ID-code, sequential per (center, grade). Bound + flipped to
+     * redeemed when $student is given (their issued identity code); otherwise a
+     * fresh unused code. Sequence + code stay unique (matches the live encoder).
+     */
+    private function mintIdCode(AcademicYear $year, Center $center, int $grade, ?User $student = null): CenterIdCode
+    {
+        $key = $center->id.'-'.$grade;
+        $sequence = $this->idCodeSeq[$key] = ($this->idCodeSeq[$key] ?? 0) + 1;
+
+        $code = new CenterIdCode([
+            'center_id' => $center->id,
+            'grade' => $grade,
+            'sequence' => $sequence,
+            'code' => sprintf('%d-%d-%06d', $grade, $center->id, $sequence),
+            'status' => $student !== null ? CodeStatus::Redeemed->value : CodeStatus::Active->value,
+            'batch_id' => $student !== null
+                ? ($this->studentCodeBatch ??= (string) Str::uuid())
+                : (string) Str::uuid(),
+            'generated_by' => $this->teacher->id,
+            'used_by' => $student?->id,
+            'used_at' => $student !== null ? now() : null,
+        ]);
+        $code->tenant_id = $this->tenant->id;
+        $code->academic_year_id = $year->id;
+        $code->save();
+
+        return $code;
     }
 
     private function activationCodes(): void
