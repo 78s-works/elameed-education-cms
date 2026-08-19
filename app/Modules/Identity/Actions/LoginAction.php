@@ -8,7 +8,6 @@ use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\LoginAttempt;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Identity\Services\OtpService;
-use App\Modules\Identity\Support\DeviceBinding;
 use App\Modules\Identity\Support\UserLookup;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
@@ -33,7 +32,7 @@ class LoginAction
     /**
      * @return array{otp_required: bool, token: ?string, user: ?User}
      */
-    public function handle(string $identifier, string $password, ?Tenant $tenant, ?string $ip, ?string $userAgent, ?string $deviceId = null): array
+    public function handle(string $identifier, string $password, ?Tenant $tenant, ?string $ip, ?string $userAgent): array
     {
         $user = UserLookup::find($identifier);
         $passwordOk = $user !== null && Hash::check($password, $user->password);
@@ -56,7 +55,7 @@ class LoginAction
 
         return [
             'otp_required' => false,
-            'token' => DeviceBinding::bind($user->createToken('api'), $deviceId),
+            'token' => $user->createToken('api')->plainTextToken,
             'user' => $user,
         ];
     }

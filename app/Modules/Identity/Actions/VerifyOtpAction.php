@@ -6,7 +6,6 @@ use App\Models\User;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\OtpPurpose;
 use App\Modules\Identity\Services\OtpService;
-use App\Modules\Identity\Support\DeviceBinding;
 use App\Modules\Identity\Support\UserLookup;
 use App\Modules\Notifications\Services\NotificationService;
 use App\Modules\Tenancy\Models\Tenant;
@@ -26,7 +25,7 @@ class VerifyOtpAction
         private readonly NotificationService $notifications,
     ) {}
 
-    public function handle(string $identifier, OtpPurpose $purpose, string $code, ?Tenant $tenant, ?string $deviceId = null): array
+    public function handle(string $identifier, OtpPurpose $purpose, string $code, ?Tenant $tenant): array
     {
         if (! $this->otp->verify($identifier, $purpose, $code)) {
             throw ValidationException::withMessages([
@@ -47,7 +46,7 @@ class VerifyOtpAction
         }
 
         return [
-            'token' => DeviceBinding::bind($user->createToken('api'), $deviceId),
+            'token' => $user->createToken('api')->plainTextToken,
             'user' => $user->fresh(),
         ];
     }

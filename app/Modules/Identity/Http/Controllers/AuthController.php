@@ -94,7 +94,6 @@ class AuthController
             OtpPurpose::from($request->validated('purpose')),
             $request->validated('code'),
             $this->context->tenant(),
-            $request->header('X-Device-Id'),
         );
 
         return response()->json([
@@ -114,7 +113,6 @@ class AuthController
             $this->context->tenant(),
             $request->ip(),
             $request->userAgent(),
-            $request->header('X-Device-Id'),
         );
 
         if ($result['otp_required']) {
