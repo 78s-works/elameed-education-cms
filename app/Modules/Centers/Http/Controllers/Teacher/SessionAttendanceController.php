@@ -9,6 +9,7 @@ use App\Modules\Centers\Models\AttendanceRecord;
 use App\Modules\Centers\Models\Center;
 use App\Modules\Centers\Models\CenterSession;
 use App\Modules\Centers\Services\CenterSessionAttendanceService;
+use App\Modules\Catalog\Models\LessonAccessWindow;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Services\TenantContext;
@@ -38,7 +39,11 @@ class SessionAttendanceController
             // Strictly-future (matches the resource's isFuture()); a grant whose
             // window ends exactly now — e.g. one just revoked — is not active.
             ->where(fn ($q) => $q->whereNull('access_expires_at')->orWhere('access_expires_at', '>', now()))
-            ->with(['student:id,uuid,name,phone', 'centerSession:id,name,session_at'])
+            ->with([
+                'student:id,uuid,name,phone',
+                'centerSession:id,name,session_at',
+                'centerSession.lessons:id,title,availability_days',
+            ])
             ->latest('id')
             ->paginate(50);
 
@@ -48,13 +53,31 @@ class SessionAttendanceController
     /** Roster: each session with the students who checked in for it. */
     public function roster(): JsonResponse
     {
+        $tenantId = $this->context->tenantOrFail()->getKey();
+
         $records = AttendanceRecord::query()
             ->whereNotNull('center_session_id')
-            ->with(['student:id,uuid,name,phone', 'centerSession:id,name,session_at'])
+            ->with([
+                'student:id,uuid,name,phone',
+                'centerSession:id,name,session_at',
+                'centerSession.lessons:id,title,availability_days',
+            ])
             ->latest('attended_on')
             ->get();
 
-        $groups = $records->groupBy('center_session_id')->map(function ($rows) {
+        // Batch-load every (student, lesson) access window so each lesson can show
+        // its OWN remaining time rather than the session's furthest-expiry snapshot.
+        $userIds = $records->pluck('user_id')->unique()->values();
+        $lessonIds = $records->flatMap(fn (AttendanceRecord $r) => $r->centerSession?->lessons->pluck('id') ?? collect())
+            ->unique()->values();
+        $windows = LessonAccessWindow::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->whereIn('user_id', $userIds)
+            ->whereIn('lesson_id', $lessonIds)
+            ->get()
+            ->keyBy(fn (LessonAccessWindow $w): string => $w->user_id.'-'.$w->lesson_id);
+
+        $groups = $records->groupBy('center_session_id')->map(function ($rows) use ($windows) {
             $session = $rows->first()->centerSession;
 
             return [
@@ -68,6 +91,7 @@ class SessionAttendanceController
                     'student' => ['uuid' => $r->student?->uuid, 'name' => $r->student?->name, 'phone' => $r->student?->phone],
                     'attended_on' => $r->attended_on?->toDateString(),
                     'attended_at' => $r->created_at?->toIso8601String(),
+                    'lessons' => $this->lessonGates($r, $windows),
                     'access_expires_at' => $r->access_expires_at?->toIso8601String(),
                     'active' => $r->access_expires_at === null || $r->access_expires_at->isFuture(),
                 ])->values(),
@@ -75,6 +99,29 @@ class SessionAttendanceController
         })->values();
 
         return response()->json(['data' => $groups]);
+    }
+
+    /**
+     * Per-lesson gate rows for one attendance record: each of the session's
+     * lessons with its OWN window expiry (each lesson opens for its own
+     * availability_days). Unlimited lessons carry no window and never expire.
+     *
+     * @param  \Illuminate\Support\Collection<string, LessonAccessWindow>  $windows
+     * @return array<int, array<string, mixed>>
+     */
+    private function lessonGates(AttendanceRecord $r, $windows): array
+    {
+        return ($r->centerSession?->lessons ?? collect())->map(function ($lesson) use ($r, $windows): array {
+            $windowed = (int) $lesson->availability_days > 0;
+            $window = $windows->get($r->user_id.'-'.$lesson->id);
+
+            return [
+                'lesson_title' => $lesson->title,
+                'availability_days' => (int) $lesson->availability_days,
+                'expires_at' => $windowed ? $window?->expires_at?->toIso8601String() : null,
+                'active' => $windowed ? ($window !== null && ! $window->isLocked()) : true,
+            ];
+        })->values()->all();
     }
 
     /** Bulk check-in: mark center students present for a session + open its lessons. */
