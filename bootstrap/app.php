@@ -4,6 +4,7 @@ use App\Http\Middleware\ResolveAcademicYear;
 use App\Modules\Identity\Http\Middleware\EnsureActiveMembership;
 use App\Modules\Identity\Http\Middleware\EnsurePermission;
 use App\Modules\Identity\Http\Middleware\EnsureTenantRole;
+use App\Modules\Identity\Http\Middleware\EnsureTokenDevice;
 use App\Modules\PlatformAdmin\Http\Middleware\EnsureCentralHost;
 use App\Modules\PlatformAdmin\Http\Middleware\EnsurePlatformAdmin;
 use App\Modules\Tenancy\Http\Middleware\DynamicTenantCors;
@@ -32,6 +33,10 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => EnsureTenantRole::class,
             'admin' => EnsurePlatformAdmin::class,
             'active' => EnsureActiveMembership::class,
+            // Rejects an access token replayed from a different device than the
+            // one it was minted on (device-binding). Mount right after
+            // `auth:sanctum` on authenticated route groups.
+            'device' => EnsureTokenDevice::class,
             // Granular assistant permission gate (M18) — used inside
             // role:teacher,assistant groups; teachers pass implicitly.
             'permission' => EnsurePermission::class,

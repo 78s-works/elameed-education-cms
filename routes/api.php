@@ -137,7 +137,7 @@ Route::prefix('v1')->group(function (): void {
 | the console can never be opened from a teacher's domain even with a valid
 | platform-admin token. The host check runs before auth. See docs/api/platform-admin.md.
 */
-Route::prefix('v1')->middleware(['central', 'auth:sanctum', 'admin'])->group(function (): void {
+Route::prefix('v1')->middleware(['central', 'auth:sanctum', 'device', 'admin'])->group(function (): void {
     Route::get('/admin/tenants', [AdminTenantController::class, 'index']);
     Route::post('/admin/tenants', [AdminTenantController::class, 'store']);
     Route::get('/admin/tenants/{tenant:uuid}', [AdminTenantController::class, 'show']);
@@ -235,7 +235,7 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
     // year keep their own nested strict `academic-year` group, which still 422s on
     // a missing header. Mounted here, not on the outer `tenant` group, so the
     // public /auth/* routes never see it.
-    Route::middleware(['auth:sanctum', 'active', 'academic-year:optional'])->group(function (): void {
+    Route::middleware(['auth:sanctum', 'device', 'active', 'academic-year:optional'])->group(function (): void {
         Route::post('/auth/logout', [AuthController::class, 'logout']);
         Route::get('/me', MeController::class);
 

@@ -12,6 +12,7 @@ use App\Modules\Identity\Http\Resources\UserResource;
 use App\Modules\Identity\Models\ParentLink;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Identity\Services\ParentMagicLinkService;
+use App\Modules\Identity\Support\DeviceBinding;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
@@ -65,7 +66,10 @@ class ParentController
         $activeChildId = $children->first()['id'] ?? null; // default the switcher to the first child
 
         $session = $parent->createToken('parent-magic');
-        $session->accessToken->forceFill(['active_child_id' => $activeChildId])->save();
+        $session->accessToken->forceFill([
+            'active_child_id' => $activeChildId,
+            'device_id' => DeviceBinding::hash($request->header('X-Device-Id')),
+        ])->save();
 
         return response()->json([
             'data' => [

@@ -10,6 +10,7 @@ use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Identity\Support\DeviceBinding;
 use App\Modules\Notifications\Contracts\SmsSender;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\TeacherProfile;
@@ -17,6 +18,7 @@ use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
+use Laravel\Sanctum\PersonalAccessToken;
 use Tests\Support\RecordingSmsSender;
 use Tests\TestCase;
 
@@ -641,6 +643,56 @@ class AuthTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.phone', '01000000008')
             ->assertJsonPath('data.current.role', 'student');
+    }
+
+    public function test_login_binds_the_token_to_the_device_and_rejects_it_elsewhere(): void
+    {
+        // The security fix: a token minted on one device must not authenticate
+        // when replayed from another (e.g. copied into a second browser).
+        $this->member('01000000050', TenantUserRole::Student);
+
+        $token = $this->withHeaders($this->tenantHeader() + ['X-Device-Id' => 'device-A'])
+            ->postJson('/api/v1/auth/login', [
+                'identifier' => '01000000050',
+                'password' => 'secret123',
+            ])->assertOk()->json('data.token');
+
+        $auth = ['Authorization' => "Bearer {$token}"];
+
+        // Same device → allowed.
+        $this->withHeaders($this->tenantHeader() + $auth + ['X-Device-Id' => 'device-A'])
+            ->getJson('/api/v1/me')->assertOk();
+
+        // A different device id → rejected as unauthenticated.
+        $this->withHeaders($this->tenantHeader() + $auth + ['X-Device-Id' => 'device-B'])
+            ->getJson('/api/v1/me')->assertStatus(401)->assertJsonPath('error.code', 'unauthenticated');
+
+        // The mismatch also revoked the token, so a copied token cannot keep probing.
+        $this->assertSame(0, PersonalAccessToken::count());
+    }
+
+    public function test_bound_token_is_rejected_when_the_device_header_is_missing(): void
+    {
+        // Bind the token directly (not via the login HTTP call) so no X-Device-Id
+        // default header lingers on the test client for the request below.
+        $user = $this->member('01000000051', TenantUserRole::Student);
+        $token = DeviceBinding::bind($user->createToken('api'), 'device-A');
+
+        // No X-Device-Id at all on a bound token → rejected (a raw copied token
+        // presented without the device id must not pass).
+        $this->withHeaders($this->tenantHeader() + ['Authorization' => "Bearer {$token}"])
+            ->getJson('/api/v1/me')->assertStatus(401)->assertJsonPath('error.code', 'unauthenticated');
+    }
+
+    public function test_legacy_unbound_token_still_authenticates(): void
+    {
+        // Tokens minted before device-binding shipped carry no device_id; they
+        // keep working (grace) regardless of the header until re-issued.
+        $user = $this->member('01000000052', TenantUserRole::Student);
+        $token = $user->createToken('api')->plainTextToken; // no device binding
+
+        $this->withHeaders($this->tenantHeader() + ['Authorization' => "Bearer {$token}", 'X-Device-Id' => 'whatever'])
+            ->getJson('/api/v1/me')->assertOk();
     }
 
     public function test_me_exposes_student_study_mode(): void
