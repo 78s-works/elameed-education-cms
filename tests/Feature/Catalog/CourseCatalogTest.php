@@ -200,8 +200,9 @@ class CourseCatalogTest extends TestCase
         // A single-channel student's study_mode is authoritative: online content is
         // hidden from a center student even if the request forges ?access_mode=online.
         $tenant = $this->makeTenant('demo');
+        $year = $this->makeYear($tenant);
         foreach (['center', 'online', 'both'] as $mode) {
-            $this->makeLesson($tenant, ['title' => ucfirst($mode), 'is_purchasable' => true, 'access_mode' => $mode]);
+            $this->makeLesson($tenant, ['title' => ucfirst($mode), 'is_purchasable' => true, 'access_mode' => $mode, 'academic_year_id' => $year->id]);
         }
 
         $student = User::factory()->create();
@@ -212,7 +213,8 @@ class CourseCatalogTest extends TestCase
             'status' => MembershipStatus::Active->value,
             'joined_at' => now(),
         ]);
-        $profile = new StudentProfile(['study_mode' => 'center']);
+        // A student now needs a pinned year to reach the panel (ResolveAcademicYear).
+        $profile = new StudentProfile(['study_mode' => 'center', 'academic_year_id' => $year->id]);
         $profile->tenant_id = $tenant->id;
         $profile->user_id = $student->id;
         $profile->save();

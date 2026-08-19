@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Modules\Identity\Enums\OtpPurpose;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\LoginAttempt;
+use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Identity\Services\OtpService;
 use App\Modules\Identity\Support\UserLookup;
@@ -46,6 +47,7 @@ class LoginAction
 
         $membership = $this->assertContextAllows($user, $tenant);
         $this->assertLoginEnabled($tenant, $membership);
+        $this->assertStudentHasYear($tenant, $membership);
 
         if ((bool) config('otp.login_required', false)) {
             $this->otp->issue($identifier, OtpPurpose::Login);
@@ -97,6 +99,33 @@ class LoginAction
 
         if ($profile !== null && ! $profile->login_enabled) {
             throw new AccessDeniedHttpException(__('You are not allowed to login now.'));
+        }
+    }
+
+    /**
+     * A student must be pinned to an academic year (grade) to use the panel — every
+     * student-facing surface is year-scoped, and an unpinned student would either be
+     * blocked mid-session (ResolveAcademicYear) or leak other years. Deny the login
+     * up front with a clear message. Teachers/assistants/parents are exempt (they
+     * scope by the X-Academic-Year header, not a fixed profile year). No-op on the
+     * platform host.
+     */
+    private function assertStudentHasYear(?Tenant $tenant, ?TenantUser $membership): void
+    {
+        if ($tenant === null || $membership === null || $membership->role !== TenantUserRole::Student) {
+            return;
+        }
+
+        $hasYear = StudentProfile::query()
+            ->where('tenant_id', $tenant->getKey())
+            ->where('user_id', $membership->user_id)
+            ->whereNotNull('academic_year_id')
+            ->exists();
+
+        if (! $hasYear) {
+            throw new AccessDeniedHttpException(
+                __('Your account has no academic year set. Please contact your academy.')
+            );
         }
     }
 

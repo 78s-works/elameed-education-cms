@@ -80,8 +80,10 @@ class PartVisibilityByStudyModeTest extends TestCase
      */
     private function accessModesFor(?string $studyMode): array
     {
-        $student = $this->student($studyMode);
         $lesson = $this->lesson();
+        // Pin the student to the lesson's year — a student now needs a matching
+        // academic year to reach the panel (ResolveAcademicYear).
+        $student = $this->student($studyMode, $lesson->academic_year_id);
 
         foreach (['center', 'online', 'both', null] as $mode) {
             $this->part($lesson, $mode);
@@ -99,7 +101,7 @@ class PartVisibilityByStudyModeTest extends TestCase
         return array_column($response->json('data'), 'access_mode');
     }
 
-    private function student(?string $studyMode): User
+    private function student(?string $studyMode, ?int $yearId = null): User
     {
         $user = User::factory()->create();
         TenantUser::create([
@@ -108,7 +110,11 @@ class PartVisibilityByStudyModeTest extends TestCase
         ]);
 
         if ($studyMode !== null) {
-            $profile = new StudentProfile(['user_id' => $user->id, 'study_mode' => $studyMode]);
+            $profile = new StudentProfile([
+                'user_id' => $user->id,
+                'study_mode' => $studyMode,
+                'academic_year_id' => $yearId,
+            ]);
             $profile->tenant_id = $this->tenant->id;
             $profile->save();
         }
@@ -139,6 +145,7 @@ class PartVisibilityByStudyModeTest extends TestCase
             'access_mode' => $accessMode,
         ]);
         $part->tenant_id = $this->tenant->id;
+        $part->academic_year_id = $lesson->academic_year_id; // sections share the lesson's year
         $part->save();
 
         return $part;
