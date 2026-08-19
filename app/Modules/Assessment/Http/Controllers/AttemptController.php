@@ -42,8 +42,9 @@ class AttemptController
     ) {}
 
     /**
-     * Published, in-window exams the student can reach: every free_exam, plus any
-     * exam covered by a grant (lesson / direct exam). Optional ?lesson_id= narrows
+     * Published, in-window exams the student can reach: every free_exam and every
+     * standalone free homework (homework with no lesson), plus any exam covered by a
+     * grant (lesson / direct exam). Optional ?lesson_id= narrows
      * to one lesson (the player's quiz + homework). Discovery only — start-time
      * re-checks access via hasExamAccess. (`courses`/units retired — VD §7.)
      */
@@ -66,6 +67,7 @@ class AttemptController
             ->when($request->filled('lesson_id'), fn ($q) => $q->where('lesson_id', $request->integer('lesson_id')))
             ->where(function ($q) use ($lessonIds, $examIds): void {
                 $q->where('type', ExamType::FreeExam->value)
+                    ->orWhere(fn ($q) => $q->where('type', ExamType::Homework->value)->whereNull('lesson_id'))
                     ->orWhereIn('lesson_id', $lessonIds)
                     ->orWhereIn('id', $examIds);
             })

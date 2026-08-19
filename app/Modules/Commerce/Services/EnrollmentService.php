@@ -152,8 +152,13 @@ class EnrollmentService
      */
     public function hasExamAccess(int $tenantId, int $userId, Exam $exam): bool
     {
-        // Free exams bypass enrollment entirely (convention model).
+        // Free exams — and standalone "free homework" (homework with no lesson) —
+        // bypass enrollment entirely (open to any logged-in student).
         if ($exam->type === ExamType::FreeExam) {
+            return true;
+        }
+
+        if ($exam->type === ExamType::Homework && $exam->lesson_id === null) {
             return true;
         }
 

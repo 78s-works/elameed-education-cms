@@ -169,6 +169,39 @@ class ExamsTest extends TestCase
         $this->withHeaders($this->h)->postJson("/api/v1/exams/{$exam->uuid}/attempts")->assertStatus(403);
     }
 
+    private function makeFreeHomework(array $attrs = []): Exam
+    {
+        // A standalone "free homework": type=homework with no lesson link.
+        $exam = new Exam(array_merge(['title' => 'Free HW', 'type' => 'homework', 'is_published' => true, 'pass_percent' => 50, 'attempts_allowed' => 1], $attrs));
+        $exam->tenant_id = $this->tenant->id;
+        $exam->lesson_id = null;
+        $exam->save();
+
+        return $exam;
+    }
+
+    public function test_free_homework_appears_in_list_for_unenrolled_student(): void
+    {
+        $free = $this->makeFreeHomework();
+        $linked = $this->makeExam(['type' => 'homework']); // lesson-linked homework
+        Sanctum::actingAs($this->member(TenantUserRole::Student)); // not enrolled
+
+        $ids = $this->withHeaders($this->h)->getJson('/api/v1/exams')
+            ->assertOk()->json('data.*.uuid');
+
+        $this->assertContains($free->uuid, $ids, 'free homework should be listed');
+        $this->assertNotContains($linked->uuid, $ids, 'lesson-linked homework needs enrollment');
+    }
+
+    public function test_unenrolled_student_can_start_free_homework(): void
+    {
+        $exam = $this->makeFreeHomework();
+        $this->makeQuestion($exam, ['type' => 'mcq', 'options' => ['a', 'b'], 'correct' => [0], 'points' => 1]);
+        Sanctum::actingAs($this->member(TenantUserRole::Student)); // not enrolled
+
+        $this->withHeaders($this->h)->postJson("/api/v1/exams/{$exam->uuid}/attempts")->assertOk();
+    }
+
     public function test_manual_grading_flow(): void
     {
         $exam = $this->makeExam(['show_answers' => false]);
