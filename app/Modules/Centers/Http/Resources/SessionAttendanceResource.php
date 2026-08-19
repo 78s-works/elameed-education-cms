@@ -27,6 +27,7 @@ class SessionAttendanceResource extends JsonResource
                 'session_at' => $session?->session_at?->toIso8601String(),
             ],
             'attended_on' => $this->attended_on?->toDateString(),
+            'attended_at' => $this->created_at?->toIso8601String(),
             'access_expires_at' => $expiresAt?->toIso8601String(),
             'remaining_seconds' => $expiresAt === null ? null : max(0, $expiresAt->getTimestamp() - now()->getTimestamp()),
             'active' => $expiresAt === null || $expiresAt->isFuture(),

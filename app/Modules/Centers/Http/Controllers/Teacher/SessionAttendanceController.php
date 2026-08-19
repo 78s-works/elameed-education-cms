@@ -67,6 +67,7 @@ class SessionAttendanceController
                     'id' => $r->id,
                     'student' => ['uuid' => $r->student?->uuid, 'name' => $r->student?->name, 'phone' => $r->student?->phone],
                     'attended_on' => $r->attended_on?->toDateString(),
+                    'attended_at' => $r->created_at?->toIso8601String(),
                     'access_expires_at' => $r->access_expires_at?->toIso8601String(),
                     'active' => $r->access_expires_at === null || $r->access_expires_at->isFuture(),
                 ])->values(),
