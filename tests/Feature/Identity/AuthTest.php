@@ -523,7 +523,7 @@ class AuthTest extends TestCase
         $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/login', [
             'identifier' => '01000000021',
             'password' => 'secret123',
-        ])->assertStatus(403)->assertJsonPath('error.code', 'forbidden');
+        ])->assertStatus(403)->assertJsonPath('error.code', 'academic_year_required');
     }
 
     public function test_authed_student_with_no_academic_year_is_denied_the_panel(): void
@@ -545,7 +545,8 @@ class AuthTest extends TestCase
 
         $this->withHeaders($this->tenantHeader() + ['Authorization' => "Bearer {$token}"])
             ->getJson('/api/v1/me')
-            ->assertStatus(403);
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'academic_year_required');
     }
 
     public function test_login_with_wrong_password_is_generic_unauthenticated(): void

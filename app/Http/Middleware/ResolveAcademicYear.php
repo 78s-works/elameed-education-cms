@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Services\AcademicYearContext;
+use App\Support\Exceptions\DomainException;
 use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
@@ -46,8 +47,10 @@ class ResolveAcademicYear
             // panel outright instead of falling through to header scoping (which
             // would leak every year's content). The academy must assign a year.
             if ($studentProfile->academic_year_id === null) {
-                throw new AuthorizationException(
-                    __('Your account has no academic year set. Please contact your academy.')
+                throw new DomainException(
+                    'academic_year_required',
+                    __('Your account has no academic year set. Please contact your academy.'),
+                    403,
                 );
             }
 

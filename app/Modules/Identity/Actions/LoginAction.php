@@ -12,6 +12,7 @@ use App\Modules\Identity\Services\OtpService;
 use App\Modules\Identity\Support\UserLookup;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
+use App\Support\Exceptions\DomainException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Support\Facades\Hash;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
@@ -123,8 +124,12 @@ class LoginAction
             ->exists();
 
         if (! $hasYear) {
-            throw new AccessDeniedHttpException(
-                __('Your account has no academic year set. Please contact your academy.')
+            // Distinct code so the SPA surfaces this message directly instead of
+            // mistaking it for the disabled-academy / platform-admin 403 paths.
+            throw new DomainException(
+                'academic_year_required',
+                __('Your account has no academic year set. Please contact your academy.'),
+                403,
             );
         }
     }
