@@ -23,10 +23,20 @@ enum ExamType: string
     case Homework = 'homework';
     case FreeExam = 'free_exam';
 
-    /** Must this type link to a Lesson (via lesson_id)? */
+    /** May this type link to a Lesson (via lesson_id)? */
     public function linksLesson(): bool
     {
         return in_array($this, [self::LessonQuiz, self::Homework], true);
+    }
+
+    /**
+     * Must a lesson link be present? Only a lesson_quiz is meaningless without a
+     * lesson. Homework MAY link a lesson (auto-appears as a part) but can also be a
+     * standalone "free homework" — still a homework, NOT a free_exam.
+     */
+    public function requiresLesson(): bool
+    {
+        return $this === self::LessonQuiz;
     }
 
     /** Standalone exam, reachable by any logged-in student without enrollment. */

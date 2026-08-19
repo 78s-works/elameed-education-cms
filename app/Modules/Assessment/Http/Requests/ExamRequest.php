@@ -29,11 +29,13 @@ class ExamRequest extends FormRequest
             'title' => [$creating ? 'required' : 'sometimes', 'string', 'max:255'],
             'type' => [$creating ? 'required' : 'sometimes', Rule::in(array_column(ExamType::cases(), 'value'))],
 
-            // Link required by type. required_if only fires when `type` is present in
+            // Link required only for a lesson_quiz. Homework may link a lesson or be
+            // a standalone "free homework" (still homework, not free_exam), so its
+            // lesson_id is optional. required_if only fires when `type` is present in
             // the body, so a partial update that omits type keeps the existing link.
             'lesson_id' => [
                 'nullable',
-                'required_if:type,'.ExamType::LessonQuiz->value.','.ExamType::Homework->value,
+                'required_if:type,'.ExamType::LessonQuiz->value,
                 Rule::exists('lessons', 'id')->where('tenant_id', $tenantId),
             ],
 

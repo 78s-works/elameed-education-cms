@@ -3,6 +3,7 @@
 namespace Tests\Feature\Assessment;
 
 use App\Models\User;
+use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Assessment\Models\Question;
@@ -228,6 +229,44 @@ class ExamsTest extends TestCase
 
         // A standalone (free_exam) links no lesson, so no part is created.
         $this->assertSame(0, LessonSection::count());
+    }
+
+    public function test_standalone_free_homework_stays_homework_and_mints_no_part(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        // Homework with no lesson_id → a "free homework": still type=homework (NOT
+        // coerced to free_exam), links no lesson, mints no lesson part.
+        $uuid = $this->withHeaders($this->h)
+            ->postJson('/api/v1/teacher/exams', ['title' => 'Free homework', 'type' => 'homework', 'pass_percent' => 50])
+            ->assertStatus(201)->json('data.uuid');
+
+        $exam = Exam::where('uuid', $uuid)->firstOrFail();
+        $this->assertSame(ExamType::Homework, $exam->type);
+        $this->assertNull($exam->lesson_id);
+        $this->assertSame(0, LessonSection::count());
+    }
+
+    public function test_multiple_free_homeworks_are_allowed(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        // No lesson link → the one-per-lesson uniqueness rule must not fire.
+        $this->withHeaders($this->h)
+            ->postJson('/api/v1/teacher/exams', ['title' => 'HW A', 'type' => 'homework', 'pass_percent' => 50])
+            ->assertStatus(201);
+        $this->withHeaders($this->h)
+            ->postJson('/api/v1/teacher/exams', ['title' => 'HW B', 'type' => 'homework', 'pass_percent' => 50])
+            ->assertStatus(201);
+    }
+
+    public function test_lesson_quiz_still_requires_a_lesson(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $this->withHeaders($this->h)
+            ->postJson('/api/v1/teacher/exams', ['title' => 'Orphan quiz', 'type' => 'lesson_quiz', 'pass_percent' => 50])
+            ->assertStatus(422);
     }
 
     public function test_deleting_lesson_linked_exam_drops_its_lesson_part(): void

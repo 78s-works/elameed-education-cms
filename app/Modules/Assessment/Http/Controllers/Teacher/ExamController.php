@@ -116,11 +116,18 @@ class ExamController
      */
     private function resolveLessonLink(ExamType $type, array $data): ?int
     {
-        if ($type->linksLesson()) {
-            return Lesson::query()->findOrFail($data['lesson_id'])->id;
+        if (! $type->linksLesson()) {
+            return null; // free_exam — no link
         }
 
-        return null; // free_exam — no link
+        // lesson_quiz requires a lesson (guarded by ExamRequest); homework may omit
+        // it (standalone "free homework"). Resolve only when a lesson_id is given.
+        $lessonId = $data['lesson_id'] ?? null;
+        if ($lessonId === null) {
+            return null;
+        }
+
+        return Lesson::query()->findOrFail($lessonId)->id;
     }
 
     /**
@@ -129,8 +136,8 @@ class ExamController
      */
     private function assertUniquePerLink(ExamType $type, ?int $lessonId, ?int $ignoreExamId): void
     {
-        if (! $type->linksLesson()) {
-            return; // free_exam — no uniqueness
+        if (! $type->linksLesson() || $lessonId === null) {
+            return; // free_exam, or a standalone free homework — no uniqueness
         }
 
         $query = Exam::query()->where('type', $type->value)->where('lesson_id', $lessonId);
