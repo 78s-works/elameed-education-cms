@@ -117,6 +117,18 @@ class AuthTest extends TestCase
         return $year;
     }
 
+    /** Attach a student profile pinned to an academic year. A student now needs a
+     *  pinned year to sign in / reach the panel (ResolveAcademicYear + LoginAction). */
+    private function pinStudentYear(User $user, ?AcademicYear $year = null): StudentProfile
+    {
+        $year ??= $this->academicYear();
+        $profile = new StudentProfile(['user_id' => $user->id, 'academic_year_id' => $year->id]);
+        $profile->tenant_id = $this->tenant->id; // no request context in tests
+        $profile->save();
+
+        return $profile;
+    }
+
     private function setAccess(bool $login, bool $registration, string $verificationMode = 'auto'): void
     {
         $profile = new TeacherProfile([
@@ -484,11 +496,57 @@ class AuthTest extends TestCase
             'status' => MembershipStatus::Active->value,
             'joined_at' => now(),
         ]);
+        $this->pinStudentYear($user);
 
         $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/login', [
             'identifier' => '01000000003',
             'password' => 'secret123',
         ])->assertOk()->assertJsonStructure(['data' => ['token', 'user']]);
+    }
+
+    public function test_login_is_blocked_for_a_student_with_no_academic_year(): void
+    {
+        // Every student-facing surface is year-scoped; a student with no pinned year
+        // is an incomplete account and must not reach the panel — deny at login.
+        $user = User::factory()->create(['phone' => '01000000021', 'password' => 'secret123']);
+        TenantUser::create([
+            'tenant_id' => $this->tenant->id,
+            'user_id' => $user->id,
+            'role' => TenantUserRole::Student->value,
+            'status' => MembershipStatus::Active->value,
+            'joined_at' => now(),
+        ]);
+        $profile = new StudentProfile(['user_id' => $user->id]); // academic_year_id left null
+        $profile->tenant_id = $this->tenant->id;
+        $profile->save();
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/login', [
+            'identifier' => '01000000021',
+            'password' => 'secret123',
+        ])->assertStatus(403)->assertJsonPath('error.code', 'academic_year_required');
+    }
+
+    public function test_authed_student_with_no_academic_year_is_denied_the_panel(): void
+    {
+        // Backstop for an already-issued token: ResolveAcademicYear blocks a pinned
+        // student surface (here /me) when the profile carries no year.
+        $user = User::factory()->create(['phone' => '01000000022']);
+        TenantUser::create([
+            'tenant_id' => $this->tenant->id,
+            'user_id' => $user->id,
+            'role' => TenantUserRole::Student->value,
+            'status' => MembershipStatus::Active->value,
+        ]);
+        $profile = new StudentProfile(['user_id' => $user->id]); // no academic_year_id
+        $profile->tenant_id = $this->tenant->id;
+        $profile->save();
+
+        $token = $user->createToken('test')->plainTextToken;
+
+        $this->withHeaders($this->tenantHeader() + ['Authorization' => "Bearer {$token}"])
+            ->getJson('/api/v1/me')
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'academic_year_required');
     }
 
     public function test_login_with_wrong_password_is_generic_unauthenticated(): void
@@ -603,6 +661,7 @@ class AuthTest extends TestCase
             'role' => TenantUserRole::Student->value,
             'status' => MembershipStatus::Active->value,
         ]);
+        $this->pinStudentYear($user);
 
         $this->withHeaders($this->tenantHeader())
             ->postJson('/api/v1/auth/password/forgot', ['identifier' => '01000000007'])
@@ -652,7 +711,12 @@ class AuthTest extends TestCase
             'role' => TenantUserRole::Student->value,
             'status' => MembershipStatus::Active->value,
         ]);
-        $profile = new StudentProfile(['user_id' => $user->id, 'study_mode' => 'online']);
+        $year = $this->academicYear();
+        $profile = new StudentProfile([
+            'user_id' => $user->id,
+            'study_mode' => 'online',
+            'academic_year_id' => $year->id, // a student now needs a pinned year
+        ]);
         $profile->tenant_id = $this->tenant->id;
         $profile->save();
 
@@ -662,6 +726,7 @@ class AuthTest extends TestCase
             ->getJson('/api/v1/me')
             ->assertOk()
             ->assertJsonPath('data.study_mode', 'online')
-            ->assertJsonPath('data.center', null);
+            ->assertJsonPath('data.center', null)
+            ->assertJsonPath('data.academic_year.name', $year->name);
     }
 }

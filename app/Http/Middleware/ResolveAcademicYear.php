@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Services\AcademicYearContext;
+use App\Support\Exceptions\DomainException;
 use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
@@ -40,9 +41,20 @@ class ResolveAcademicYear
         // year (grade) on their profile, set at registration. This OVERRIDES the
         // client header so a student can only ever see their own year's content —
         // teachers/assistants (no student profile) still drive scoping by header.
-        $studentYearId = $request->user()?->studentProfile?->academic_year_id;
-        if ($studentYearId !== null) {
-            $this->context->set((int) $studentYearId);
+        $studentProfile = $request->user()?->studentProfile;
+        if ($studentProfile !== null) {
+            // A student with NO academic year is an incomplete account: deny the
+            // panel outright instead of falling through to header scoping (which
+            // would leak every year's content). The academy must assign a year.
+            if ($studentProfile->academic_year_id === null) {
+                throw new DomainException(
+                    'academic_year_required',
+                    __('Your account has no academic year set. Please contact your academy.'),
+                    403,
+                );
+            }
+
+            $this->context->set((int) $studentProfile->academic_year_id);
 
             return $next($request);
         }
