@@ -16,9 +16,9 @@ use Symfony\Component\HttpFoundation\Response;
  * global stack), reflecting the validated origin into cors.allowed_origins so the
  * real CORS middleware emits the header.
  *
- * Safe to reflect even with credentials on (cookie auth): the origin is validated
- * against the same tenant_domains source of truth as routing, so an exact origin
- * is echoed only for hosts that actually resolve to a tenant — never a wildcard.
+ * Safe to reflect because auth is Bearer (supports_credentials = false), and the
+ * origin is validated against the same tenant_domains source of truth as routing
+ * — so CORS can never trust a host that wouldn't resolve to a tenant.
  */
 class DynamicTenantCors
 {

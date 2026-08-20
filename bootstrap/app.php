@@ -1,11 +1,9 @@
 <?php
 
 use App\Http\Middleware\ResolveAcademicYear;
-use App\Modules\Identity\Http\Middleware\AuthenticateWithTokenCookie;
 use App\Modules\Identity\Http\Middleware\EnsureActiveMembership;
 use App\Modules\Identity\Http\Middleware\EnsurePermission;
 use App\Modules\Identity\Http\Middleware\EnsureTenantRole;
-use App\Modules\Identity\Http\Middleware\VerifyCookieCsrf;
 use App\Modules\PlatformAdmin\Http\Middleware\EnsureCentralHost;
 use App\Modules\PlatformAdmin\Http\Middleware\EnsurePlatformAdmin;
 use App\Modules\Tenancy\Http\Middleware\DynamicTenantCors;
@@ -29,24 +27,6 @@ return Application::configure(basePath: dirname(__DIR__))
         // Runs before Laravel's HandleCors so a registered tenant origin (custom
         // domain or subdomain) is trusted for CORS, not just the static list.
         $middleware->prepend(DynamicTenantCors::class);
-
-        // Bridge the httpOnly auth cookie into a Bearer header, then enforce the
-        // double-submit CSRF token for cookie-authenticated mutations. Appended to
-        // the `api` group so both run before any route-level `auth:sanctum`.
-        // Bearer-header clients and Sanctum::actingAs() tests are unaffected.
-        $middleware->appendToGroup('api', [
-            AuthenticateWithTokenCookie::class,
-            VerifyCookieCsrf::class,
-        ]);
-
-        // The middleware priority list hoists `Authenticate` (AuthenticatesRequests)
-        // ahead of SubstituteBindings — and thus ahead of the api-group bridge above
-        // — so `auth:sanctum` would 401 a cookie request before the cookie is read.
-        // Pin the bridge to run BEFORE Authenticate so the Bearer header is in place.
-        $middleware->prependToPriorityList(
-            \Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
-            AuthenticateWithTokenCookie::class,
-        );
 
         $middleware->alias([
             'role' => EnsureTenantRole::class,

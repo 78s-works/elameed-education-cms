@@ -7,12 +7,11 @@ return [
     | Cross-Origin Resource Sharing (CORS)
     |--------------------------------------------------------------------------
     |
-    | In production the SPA and API are same-origin (each host proxies /api to the
-    | backend), so CORS is mostly moot there. It still matters for local dev and
-    | during transition. Auth now rides an httpOnly cookie, so credentials support
-    | is ON — which means `allowed_origins` must be an explicit, reflected list
-    | (never `*`). DynamicTenantCors reflects each validated tenant origin.
-    | `X-Tenant` / `X-CSRF-Token` are covered by the `*` allowed headers.
+    | The Vue SPA runs on a different origin (its own host:port), so the browser
+    | enforces CORS on every API call. We allow the SPA origin(s) explicitly.
+    | Auth is via Sanctum BEARER tokens (not cookies), so credentials support is
+    | off and a specific origin list is fine. `X-Tenant` is covered by the `*`
+    | allowed headers.
     |
     */
 
@@ -33,9 +32,9 @@ return [
 
     'max_age' => 0,
 
-    // Auth cookie is sent cross-origin in dev/transition → credentials ON. Safe
-    // because origins are an explicit reflected list (DynamicTenantCors), never
-    // '*'. In production the SPA is same-origin so no credentialed CORS occurs.
-    'supports_credentials' => true,
+    // Bearer tokens, not cookies → no credentials. (If you switch to Sanctum
+    // SPA cookie mode, set this true, drop any '*' origin, and configure
+    // SANCTUM_STATEFUL_DOMAINS.)
+    'supports_credentials' => false,
 
 ];

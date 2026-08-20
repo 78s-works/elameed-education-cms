@@ -14,7 +14,6 @@ use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Identity\Services\ParentMagicLinkService;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Services\TenantContext;
-use App\Support\Http\AuthCookie;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Laravel\Sanctum\PersonalAccessToken;
@@ -68,15 +67,14 @@ class ParentController
         $session = $parent->createToken('parent-magic');
         $session->accessToken->forceFill(['active_child_id' => $activeChildId])->save();
 
-        // Set the httpOnly auth cookie (browser); keep the body token for Bearer.
-        return AuthCookie::issue(response()->json([
+        return response()->json([
             'data' => [
                 'token' => $session->plainTextToken,
                 'user' => (new UserResource($parent))->resolve($request),
                 'children' => $children->map($this->present())->values(),
                 'active_child' => $children->firstWhere('id', $activeChildId)['uuid'] ?? null,
             ],
-        ]), (string) $session->plainTextToken);
+        ]);
     }
 
     public function children(Request $request): JsonResponse
