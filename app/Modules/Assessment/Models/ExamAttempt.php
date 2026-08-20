@@ -5,6 +5,7 @@ namespace App\Modules\Assessment\Models;
 use App\Models\User;
 use App\Modules\Assessment\Enums\AttemptStatus;
 use App\Support\Traits\BelongsToAcademicYear;
+use App\Support\Files\Concerns\HasDocuments;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -17,6 +18,7 @@ class ExamAttempt extends Model
 {
     use BelongsToAcademicYear;
     use BelongsToTenant;
+    use HasDocuments;
 
     protected $attributes = [
         'status' => 'in_progress',

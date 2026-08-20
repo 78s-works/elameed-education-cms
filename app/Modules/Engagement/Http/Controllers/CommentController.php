@@ -8,10 +8,12 @@ use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Engagement\Enums\CommentStatus;
 use App\Modules\Engagement\Http\Requests\StoreCommentRequest;
 use App\Modules\Engagement\Http\Resources\CommentResource;
-use App\Modules\Engagement\Models\Attachment;
 use App\Modules\Engagement\Models\Comment;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Tenancy\Services\TenantContext;
+use App\Support\Files\DocumentService;
+use App\Support\Files\Enums\DocumentPurpose;
+use App\Support\Files\Models\Document;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -27,6 +29,7 @@ class CommentController
     public function __construct(
         private readonly TenantContext $context,
         private readonly EnrollmentService $enrollments,
+        private readonly DocumentService $documents,
     ) {}
 
     public function index(Request $request, Lesson $lesson): AnonymousResourceCollection
@@ -36,7 +39,7 @@ class CommentController
         $query = Comment::query()
             ->where('lesson_id', $lesson->getKey())
             ->topLevel()
-            ->with(['user', 'attachments', 'replies' => fn ($q) => $q->with('user', 'attachments')->orderBy('id')])
+            ->with(['user', 'documents', 'replies' => fn ($q) => $q->with('user', 'documents')->orderBy('id')])
             ->latest('id');
 
         // Students only see published comments; staff see held ones too.
@@ -62,7 +65,7 @@ class CommentController
 
         $this->linkAttachments($comment, $request, $user);
 
-        return (new CommentResource($comment->load('user', 'attachments')))->response()->setStatusCode(201);
+        return (new CommentResource($comment->load('user', 'documents')))->response()->setStatusCode(201);
     }
 
     /** Reply within a thread. A staff reply resolves the parent question. */
@@ -90,7 +93,7 @@ class CommentController
             $parent->update(['status' => CommentStatus::Answered->value]);
         }
 
-        return (new CommentResource($reply->load('user', 'attachments')))->response()->setStatusCode(201);
+        return (new CommentResource($reply->load('user', 'documents')))->response()->setStatusCode(201);
     }
 
     /** Staff (teacher/assistant) bypass enrollment; students need lesson access. */
@@ -115,22 +118,28 @@ class CommentController
         return in_array($role, [TenantUserRole::Teacher, TenantUserRole::Assistant], true);
     }
 
-    /** Link the caller's own, still-unattached uploads to the comment. */
+    /**
+     * Link the caller's own, still-unattached uploads to the comment. Restricted
+     * to the uploader's own unattached documents so a uuid guessed from another
+     * thread cannot be re-parented onto this one.
+     */
     private function linkAttachments(Comment $comment, StoreCommentRequest $request, User $user): void
     {
-        $uuids = (array) ($request->validated('attachment_ids') ?? []);
+        $uuids = (array) ($request->validated('document_ids') ?? []);
 
         if ($uuids === []) {
             return;
         }
 
-        Attachment::query()
+        $documents = Document::query()
             ->whereIn('uuid', $uuids)
-            ->where('uploaded_by', $user->getKey())
-            ->whereNull('attachable_id')
-            ->update([
-                'attachable_type' => $comment->getMorphClass(),
-                'attachable_id' => $comment->getKey(),
-            ]);
+            ->ownedBy($user->getKey())
+            ->ofPurpose(DocumentPurpose::CommentAttachment)
+            ->unattached()
+            ->get();
+
+        foreach ($documents as $document) {
+            $this->documents->attachTo($document, $comment);
+        }
     }
 }

@@ -3,7 +3,7 @@
 namespace App\Modules\Wallet\Models;
 
 use App\Models\User;
-use App\Modules\Engagement\Models\Attachment;
+use App\Support\Files\Models\Document;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -36,7 +36,7 @@ class PaymentReceipt extends Model
         'amount_minor',
         'corrected_amount_minor',
         'currency',
-        'attachment_id',
+        'document_id',
         'status',
         'reviewed_by',
         'reviewed_at',
@@ -74,9 +74,9 @@ class PaymentReceipt extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function attachment(): BelongsTo
+    public function document(): BelongsTo
     {
-        return $this->belongsTo(Attachment::class);
+        return $this->belongsTo(Document::class);
     }
 
     /** The teacher/assistant who approved or rejected it. */

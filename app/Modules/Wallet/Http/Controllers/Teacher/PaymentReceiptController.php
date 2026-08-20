@@ -24,7 +24,7 @@ class PaymentReceiptController
     {
         $status = (string) $request->query('status', PaymentReceipt::STATUS_PENDING);
 
-        $query = PaymentReceipt::query()->with(['user', 'attachment'])->latest('id');
+        $query = PaymentReceipt::query()->with(['user', 'document'])->latest('id');
 
         if (in_array($status, [
             PaymentReceipt::STATUS_PENDING,
@@ -39,7 +39,7 @@ class PaymentReceiptController
 
     public function show(PaymentReceipt $receipt): PaymentReceiptResource
     {
-        return new PaymentReceiptResource($receipt->load(['user', 'attachment', 'reviewer']));
+        return new PaymentReceiptResource($receipt->load(['user', 'document', 'reviewer']));
     }
 
     public function approve(ApproveReceiptRequest $request, PaymentReceipt $receipt): PaymentReceiptResource
@@ -48,13 +48,13 @@ class PaymentReceiptController
 
         $updated = $this->service->approve($receipt, $request->user(), $corrected !== null ? (int) $corrected : null);
 
-        return new PaymentReceiptResource($updated->load(['user', 'attachment', 'reviewer']));
+        return new PaymentReceiptResource($updated->load(['user', 'document', 'reviewer']));
     }
 
     public function reject(RejectReceiptRequest $request, PaymentReceipt $receipt): PaymentReceiptResource
     {
         $updated = $this->service->reject($receipt, $request->user(), $request->validated('reason'));
 
-        return new PaymentReceiptResource($updated->load(['user', 'attachment', 'reviewer']));
+        return new PaymentReceiptResource($updated->load(['user', 'document', 'reviewer']));
     }
 }

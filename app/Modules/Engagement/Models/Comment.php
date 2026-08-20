@@ -6,13 +6,13 @@ use App\Models\User;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Engagement\Enums\CommentStatus;
 use App\Support\Traits\BelongsToAcademicYear;
+use App\Support\Files\Concerns\HasDocuments;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
@@ -24,6 +24,7 @@ class Comment extends Model
 {
     use BelongsToAcademicYear;
     use BelongsToTenant;
+    use HasDocuments;
     use HasUuids;
     use SoftDeletes;
 
@@ -77,11 +78,6 @@ class Comment extends Model
         return $this->hasMany(self::class, 'parent_id');
     }
 
-    /** M09 polymorphic attachments (distinct from Lesson::attachments = media). */
-    public function attachments(): MorphMany
-    {
-        return $this->morphMany(Attachment::class, 'attachable');
-    }
 
     public function scopeTopLevel(Builder $query): Builder
     {

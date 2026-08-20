@@ -8,62 +8,98 @@ use App\Modules\Media\Enums\MediaStatus;
 use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Http\Resources\MediaAssetResource;
 use App\Modules\Media\Models\MediaAsset;
+use App\Support\Files\DocumentService;
+use App\Support\Files\Enums\DocumentPurpose;
+use App\Support\Files\Http\Resources\DocumentResource;
+use App\Support\Files\Models\Document;
+use App\Support\Files\StoreOptions;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Storage;
 
 /**
- * /teacher/lessons/{lesson}/attachments (FR-M04-01) — PDF/file/link materials.
+ * /teacher/lessons/{lesson}/attachments (FR-M04-01) — the lesson's materials.
  *
- * P1 stores uploaded files on the default disk (`public`). The self-hosted video
- * pipeline + object storage arrive in the Media step; this endpoint handles the
- * non-video materials.
+ * Two different things share this endpoint, and they are stored differently:
+ *
+ *   • an uploaded PDF or file → a `documents` row attached to the lesson. These
+ *     used to be forced into `media_assets`, a table built for the HLS pipeline,
+ *     where every column about encryption, renditions and duration sat null.
+ *   • an external link → still a `media_assets` row of type `link`. A URL is not
+ *     a stored file, so it has no business in the documents ledger, exactly as
+ *     with `youtube_url`.
+ *
+ * Uploads are private: a lesson PDF is now only readable by someone the lesson's
+ * own enrollment check lets in, which was not true when these went to the public
+ * disk under a guessable name.
  */
 class LessonAttachmentController
 {
-    public function index(Lesson $lesson): AnonymousResourceCollection
+    public function __construct(private readonly DocumentService $documents) {}
+
+    public function index(Lesson $lesson): JsonResponse
     {
-        return MediaAssetResource::collection(
-            $lesson->attachments()->orderBy('sort_order')->get()
-        );
+        return response()->json([
+            'data' => [
+                'files' => DocumentResource::collection(
+                    $lesson->documentsFor(DocumentPurpose::LessonAttachment)
+                )->resolve(),
+                'links' => MediaAssetResource::collection(
+                    $lesson->links()->orderBy('sort_order')->get()
+                )->resolve(),
+            ],
+        ]);
     }
 
     public function store(AttachmentRequest $request, Lesson $lesson): JsonResponse
     {
         $data = $request->validated();
 
-        $attrs = [
-            'lesson_id' => $lesson->id,
-            'type' => $data['type'],
-            'status' => MediaStatus::Ready->value,
-            'title' => $data['title'] ?? null,
-            'downloadable' => $data['downloadable'] ?? false,
-        ];
-
         if ($data['type'] === 'link') {
-            $attrs['url'] = $data['url'];
-        } else {
-            $path = $request->file('file')->store('attachments', 'public');
-            $attrs['source_key'] = $path;
-            $attrs['url'] = Storage::disk('public')->url($path);
+            $asset = MediaAsset::create([
+                'lesson_id' => $lesson->getKey(),
+                'type' => MediaType::Link->value,
+                'status' => MediaStatus::Ready->value,
+                'title' => $data['title'] ?? null,
+                'url' => $data['url'],
+                'downloadable' => $data['downloadable'] ?? false,
+            ]);
+
+            return (new MediaAssetResource($asset))->response()->setStatusCode(201);
         }
 
-        $asset = MediaAsset::create($attrs);
+        $document = $this->documents->store(
+            $request->file('file'),
+            DocumentPurpose::LessonAttachment,
+            new StoreOptions(
+                owner: $lesson,
+                meta: array_filter(['title' => $data['title'] ?? null]),
+            ),
+        );
 
-        return (new MediaAssetResource($asset))->response()->setStatusCode(201);
+        return (new DocumentResource($document))->response()->setStatusCode(201);
     }
 
-    public function destroy(Lesson $lesson, MediaAsset $attachment): Response
+    /** Remove an uploaded material. The blob goes with the row — permanently. */
+    public function destroy(Lesson $lesson, Document $document): Response
     {
-        abort_unless($attachment->lesson_id === $lesson->id, 404);
-        abort_if($attachment->type === MediaType::HlsVideo, 404); // the video isn't an attachment
+        abort_unless(
+            $document->documentable_type === $lesson->getMorphClass()
+                && (int) $document->documentable_id === (int) $lesson->getKey(),
+            404,
+        );
 
-        if ($attachment->source_key !== null) {
-            Storage::disk('public')->delete($attachment->source_key);
-        }
+        $this->documents->delete($document);
 
-        $attachment->delete();
+        return response()->noContent();
+    }
+
+    /** Remove an external link (no file involved). */
+    public function destroyLink(Lesson $lesson, MediaAsset $link): Response
+    {
+        abort_unless($link->lesson_id === $lesson->getKey(), 404);
+        abort_if($link->type !== MediaType::Link, 404);
+
+        $link->delete();
 
         return response()->noContent();
     }

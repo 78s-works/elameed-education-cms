@@ -4,6 +4,7 @@ namespace App\Modules\Catalog\Http\Resources;
 
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Media\Http\Resources\MediaAssetResource;
+use App\Support\Files\Http\Resources\DocumentResource;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -46,7 +47,8 @@ class LessonResource extends JsonResource
             'self_reopen_limit' => (int) $this->self_reopen_limit,
             // One (uploaded) video when loaded + the many attachments (pdf/file/link).
             'video' => $this->whenLoaded('videoAsset', fn () => $this->videoAsset ? new MediaAssetResource($this->videoAsset) : null),
-            'attachments' => MediaAssetResource::collection($this->whenLoaded('attachments')),
+            'links' => MediaAssetResource::collection($this->whenLoaded('links')),
+            'documents' => DocumentResource::collection($this->whenLoaded('documents')),
             'sections' => LessonSectionResource::collection($this->whenLoaded('sections')),
         ];
     }

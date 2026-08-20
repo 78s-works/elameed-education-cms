@@ -3,11 +3,11 @@
 namespace App\Modules\Engagement\Models;
 
 use App\Models\User;
+use App\Support\Files\Concerns\HasDocuments;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 /**
  * A reply within a support ticket thread (M09, B24 / VD Item 11) — authored by
@@ -16,6 +16,7 @@ use Illuminate\Database\Eloquent\Relations\MorphMany;
 class TicketReply extends Model
 {
     use BelongsToTenant;
+    use HasDocuments;
     use HasUuids;
 
     protected $fillable = [
@@ -44,8 +45,4 @@ class TicketReply extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function attachments(): MorphMany
-    {
-        return $this->morphMany(Attachment::class, 'attachable');
-    }
 }

@@ -3,6 +3,7 @@
 namespace App\Modules\Engagement\Http\Resources;
 
 use App\Modules\Engagement\Models\SupportTicket;
+use App\Support\Files\Http\Resources\DocumentResource;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -19,7 +20,7 @@ class SupportTicketResource extends JsonResource
             'body' => $this->body,
             'priority' => $this->priority->value,
             'status' => $this->status->value,
-            'attachments' => AttachmentResource::collection($this->whenLoaded('attachments')),
+            'documents' => DocumentResource::collection($this->whenLoaded('documents')),
             'replies' => TicketReplyResource::collection($this->whenLoaded('replies')),
             'replies_count' => $this->whenCounted('replies'),
             'created_at' => $this->created_at?->toIso8601String(),

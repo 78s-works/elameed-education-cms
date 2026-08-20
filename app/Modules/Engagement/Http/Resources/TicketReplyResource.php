@@ -3,6 +3,7 @@
 namespace App\Modules\Engagement\Http\Resources;
 
 use App\Modules\Engagement\Models\TicketReply;
+use App\Support\Files\Http\Resources\DocumentResource;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -20,7 +21,7 @@ class TicketReplyResource extends JsonResource
                 'uuid' => $this->user?->uuid,
                 'name' => $this->user?->name,
             ],
-            'attachments' => AttachmentResource::collection($this->whenLoaded('attachments')),
+            'documents' => DocumentResource::collection($this->whenLoaded('documents')),
             'created_at' => $this->created_at?->toIso8601String(),
         ];
     }

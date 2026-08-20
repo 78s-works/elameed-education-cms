@@ -2,7 +2,7 @@
 
 namespace App\Modules\Wallet\Http\Resources;
 
-use App\Modules\Engagement\Http\Resources\AttachmentResource;
+use App\Support\Files\Http\Resources\DocumentResource;
 use App\Modules\Wallet\Models\PaymentReceipt;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -32,8 +32,8 @@ class PaymentReceiptResource extends JsonResource
                 'uuid' => $this->reviewer->uuid,
                 'name' => $this->reviewer->name,
             ] : null),
-            'attachment' => $this->whenLoaded('attachment', fn () => $this->attachment
-                ? (new AttachmentResource($this->attachment))->resolve($request)
+            'document' => $this->whenLoaded('document', fn () => $this->document
+                ? (new DocumentResource($this->document))->resolve($request)
                 : null),
         ];
     }

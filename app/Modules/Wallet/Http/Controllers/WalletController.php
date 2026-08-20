@@ -2,7 +2,7 @@
 
 namespace App\Modules\Wallet\Http\Controllers;
 
-use App\Modules\Engagement\Models\Attachment;
+use App\Support\Files\Models\Document;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Modules\Wallet\Http\Requests\SubmitManualTopupRequest;
 use App\Modules\Wallet\Http\Resources\LedgerEntryResource;
@@ -60,7 +60,7 @@ class WalletController
         return PaymentReceiptResource::collection(
             PaymentReceipt::query()
                 ->where('user_id', $request->user()->getKey())
-                ->with('attachment')
+                ->with('document')
                 ->latest('id')
                 ->paginate(30)
         );
@@ -73,15 +73,15 @@ class WalletController
     public function topupManual(SubmitManualTopupRequest $request): JsonResponse
     {
         $tenantId = $this->context->tenantOrFail()->getKey();
-        // Ownership + tenant already enforced by the request's exists rule.
-        $attachment = Attachment::where('uuid', $request->validated('attachment_id'))->firstOrFail();
+        // Ownership, tenant and purpose are all enforced by the request's exists rule.
+        $document = Document::where('uuid', $request->validated('document_id'))->firstOrFail();
 
         $receipt = $this->receipts->submit(
             $tenantId,
             $request->user()->getKey(),
             $request->validated('method'),
             (int) $request->validated('amount_minor'),
-            $attachment->getKey(),
+            $document->getKey(),
         );
 
         return (new PaymentReceiptResource($receipt))->response()->setStatusCode(201);

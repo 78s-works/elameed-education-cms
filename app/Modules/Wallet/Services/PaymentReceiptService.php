@@ -20,14 +20,14 @@ class PaymentReceiptService
     public function __construct(private readonly LedgerService $ledger) {}
 
     /** Student submits a receipt → a `pending` row. */
-    public function submit(int $tenantId, int $userId, string $method, int $amountMinor, int $attachmentId, string $currency = 'EGP'): PaymentReceipt
+    public function submit(int $tenantId, int $userId, string $method, int $amountMinor, int $documentId, string $currency = 'EGP'): PaymentReceipt
     {
         $receipt = new PaymentReceipt([
             'user_id' => $userId,
             'method' => $method,
             'amount_minor' => $amountMinor,
             'currency' => $currency,
-            'attachment_id' => $attachmentId,
+            'document_id' => $documentId,
             'status' => PaymentReceipt::STATUS_PENDING,
         ]);
         $receipt->tenant_id = $tenantId;

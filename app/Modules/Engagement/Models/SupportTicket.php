@@ -5,13 +5,13 @@ namespace App\Modules\Engagement\Models;
 use App\Models\User;
 use App\Modules\Engagement\Enums\TicketPriority;
 use App\Modules\Engagement\Enums\TicketStatus;
+use App\Support\Files\Concerns\HasDocuments;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 /**
  * A student's support ticket to teacher/assistant (M09, B24 / VD Item 11):
@@ -25,6 +25,7 @@ use Illuminate\Database\Eloquent\Relations\MorphMany;
 class SupportTicket extends Model
 {
     use BelongsToTenant;
+    use HasDocuments;
     use HasUuids;
 
     protected $fillable = [
@@ -73,11 +74,6 @@ class SupportTicket extends Model
         return $this->hasMany(TicketReply::class, 'ticket_id');
     }
 
-    /** Polymorphic attachments on the opening message (reuses M09 Attachment). */
-    public function attachments(): MorphMany
-    {
-        return $this->morphMany(Attachment::class, 'attachable');
-    }
 
     public function scopeOwnedBy(Builder $query, int $userId): Builder
     {

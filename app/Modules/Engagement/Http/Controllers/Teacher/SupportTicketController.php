@@ -9,11 +9,13 @@ use App\Modules\Engagement\Http\Requests\Teacher\ChangeTicketStatusRequest;
 use App\Modules\Engagement\Http\Requests\Teacher\StoreTicketReplyRequest;
 use App\Modules\Engagement\Http\Resources\SupportTicketResource;
 use App\Modules\Engagement\Http\Resources\TicketReplyResource;
-use App\Modules\Engagement\Models\Attachment;
 use App\Modules\Engagement\Models\SupportTicket;
 use App\Modules\Engagement\Models\TicketReply;
 use App\Modules\Notifications\Services\Engine\NotificationEngineService;
 use App\Modules\Tenancy\Services\TenantContext;
+use App\Support\Files\DocumentService;
+use App\Support\Files\Enums\DocumentPurpose;
+use App\Support\Files\Models\Document;
 use App\Support\Audit\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -31,7 +33,10 @@ use Illuminate\Validation\Rule;
  */
 class SupportTicketController
 {
-    public function __construct(private readonly TenantContext $context) {}
+    public function __construct(
+        private readonly TenantContext $context,
+        private readonly DocumentService $documents,
+    ) {}
 
     /** Every ticket in the tenant, newest first; filter by ?status= and ?priority=. */
     public function index(Request $request): AnonymousResourceCollection
@@ -42,7 +47,7 @@ class SupportTicketController
         ]);
 
         $tickets = SupportTicket::query()
-            ->with(['user:id,uuid,name', 'attachments'])
+            ->with(['user:id,uuid,name', 'documents'])
             ->withCount('replies')
             ->when($request->query('status'), fn ($q, $s) => $q->where('status', $s))
             ->when($request->query('priority'), fn ($q, $p) => $q->where('priority', $p))
@@ -56,8 +61,8 @@ class SupportTicketController
     public function show(SupportTicket $ticket): SupportTicketResource
     {
         $ticket->load([
-            'attachments',
-            'replies' => fn ($q) => $q->with('user', 'attachments')->orderBy('id'),
+            'documents',
+            'replies' => fn ($q) => $q->with('user', 'documents')->orderBy('id'),
         ]);
 
         return new SupportTicketResource($ticket);
@@ -75,10 +80,10 @@ class SupportTicketController
         ]);
         $reply->save();
 
-        $this->linkAttachments($reply, $request->validated('attachment_ids') ?? [], $staff);
+        $this->linkAttachments($reply, $request->validated('document_ids') ?? [], $staff);
         $this->notifyStudent($ticket, $staff);
 
-        return (new TicketReplyResource($reply->load('user', 'attachments')))->response()->setStatusCode(201);
+        return (new TicketReplyResource($reply->load('user', 'documents')))->response()->setStatusCode(201);
     }
 
     /** Move the ticket's lifecycle status (open | in_progress | closed). */
@@ -124,13 +129,15 @@ class SupportTicketController
             return;
         }
 
-        Attachment::query()
+        $documents = Document::query()
             ->whereIn('uuid', $uuids)
-            ->where('uploaded_by', $staff->getKey())
-            ->whereNull('attachable_id')
-            ->update([
-                'attachable_type' => $reply->getMorphClass(),
-                'attachable_id' => $reply->getKey(),
-            ]);
+            ->ownedBy($staff->getKey())
+            ->ofPurpose(DocumentPurpose::TicketAttachment)
+            ->unattached()
+            ->get();
+
+        foreach ($documents as $document) {
+            $this->documents->attachTo($document, $reply);
+        }
     }
 }

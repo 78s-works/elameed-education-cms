@@ -3,11 +3,12 @@
 namespace App\Modules\Engagement\Http\Requests;
 
 use App\Modules\Engagement\Enums\TicketPriority;
+use App\Support\Files\DocumentRules;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 /**
- * Open a support ticket (M09, B24). May carry `attachment_ids` (uuids of
+ * Open a support ticket (M09, B24). May carry `document_ids` (uuids of
  * previously-uploaded attachments); ownership is enforced when linking.
  */
 class StoreSupportTicketRequest extends FormRequest
@@ -23,8 +24,7 @@ class StoreSupportTicketRequest extends FormRequest
             'subject' => ['required', 'string', 'max:200'],
             'body' => ['required', 'string', 'max:5000'],
             'priority' => ['sometimes', Rule::enum(TicketPriority::class)],
-            'attachment_ids' => ['sometimes', 'array', 'max:10'],
-            'attachment_ids.*' => ['string'],
+            ...DocumentRules::documentIds(),
         ];
     }
 }

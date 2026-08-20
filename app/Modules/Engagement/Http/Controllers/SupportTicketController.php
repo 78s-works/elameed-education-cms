@@ -7,8 +7,10 @@ use App\Modules\Engagement\Enums\TicketPriority;
 use App\Modules\Engagement\Enums\TicketStatus;
 use App\Modules\Engagement\Http\Requests\StoreSupportTicketRequest;
 use App\Modules\Engagement\Http\Resources\SupportTicketResource;
-use App\Modules\Engagement\Models\Attachment;
 use App\Modules\Engagement\Models\SupportTicket;
+use App\Support\Files\DocumentService;
+use App\Support\Files\Enums\DocumentPurpose;
+use App\Support\Files\Models\Document;
 use App\Modules\Engagement\Support\TicketRecipients;
 use App\Modules\Notifications\Services\Engine\NotificationEngineService;
 use Illuminate\Http\JsonResponse;
@@ -24,12 +26,14 @@ use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
  */
 class SupportTicketController
 {
+    public function __construct(private readonly DocumentService $documents) {}
+
     /** The caller's own tickets, newest first, with attachments + reply count. */
     public function index(Request $request): AnonymousResourceCollection
     {
         $tickets = SupportTicket::query()
             ->ownedBy($request->user()->getKey())
-            ->with('attachments')
+            ->with('documents')
             ->withCount('replies')
             ->latest('id')
             ->paginate(20);
@@ -53,7 +57,7 @@ class SupportTicketController
         $this->linkAttachments($ticket, $request, $user);
         $this->notifyStaff($ticket, $user);
 
-        return (new SupportTicketResource($ticket->load('attachments')))->response()->setStatusCode(201);
+        return (new SupportTicketResource($ticket->load('documents')))->response()->setStatusCode(201);
     }
 
     /** A single ticket thread — the opening message plus its replies. */
@@ -62,8 +66,8 @@ class SupportTicketController
         abort_unless($ticket->user_id === $request->user()->getKey(), 404);
 
         $ticket->load([
-            'attachments',
-            'replies' => fn ($q) => $q->with('user', 'attachments')->orderBy('id'),
+            'documents',
+            'replies' => fn ($q) => $q->with('user', 'documents')->orderBy('id'),
         ]);
 
         return new SupportTicketResource($ticket);
@@ -96,22 +100,28 @@ class SupportTicketController
         );
     }
 
-    /** Link the caller's own, still-unattached uploads to the ticket. */
+    /**
+     * Link the caller's own, still-unattached uploads to the ticket. Scoped to
+     * the uploader's unattached ticket documents, so a uuid from someone else's
+     * thread cannot be re-parented here.
+     */
     private function linkAttachments(SupportTicket $ticket, StoreSupportTicketRequest $request, User $user): void
     {
-        $uuids = (array) ($request->validated('attachment_ids') ?? []);
+        $uuids = (array) ($request->validated('document_ids') ?? []);
 
         if ($uuids === []) {
             return;
         }
 
-        Attachment::query()
+        $documents = Document::query()
             ->whereIn('uuid', $uuids)
-            ->where('uploaded_by', $user->getKey())
-            ->whereNull('attachable_id')
-            ->update([
-                'attachable_type' => $ticket->getMorphClass(),
-                'attachable_id' => $ticket->getKey(),
-            ]);
+            ->ownedBy($user->getKey())
+            ->ofPurpose(DocumentPurpose::TicketAttachment)
+            ->unattached()
+            ->get();
+
+        foreach ($documents as $document) {
+            $this->documents->attachTo($document, $ticket);
+        }
     }
 }

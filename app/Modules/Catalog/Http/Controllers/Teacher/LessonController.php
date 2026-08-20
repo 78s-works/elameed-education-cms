@@ -53,7 +53,7 @@ class LessonController
     {
         return new LessonResource($lesson->load([
             'sections' => fn ($q) => $q->ordered()->with(['mediaAsset', 'exam']),
-            'academicYear', 'videoAsset', 'attachments',
+            'academicYear', 'videoAsset', 'links', 'documents',
         ]));
     }
 

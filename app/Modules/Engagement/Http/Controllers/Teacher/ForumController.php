@@ -29,7 +29,7 @@ class ForumController
 
         $query = Comment::query()
             ->topLevel()
-            ->with(['user', 'lesson:id,title', 'attachments', 'replies' => fn ($q) => $q->with('user', 'attachments')->orderBy('id')])
+            ->with(['user', 'lesson:id,title', 'documents', 'replies' => fn ($q) => $q->with('user', 'documents')->orderBy('id')])
             ->when($status, fn ($q) => $q->where('status', $status))
             ->latest('id');
 
@@ -56,7 +56,7 @@ class ForumController
             'is_hidden' => $comment->is_hidden,
         ], $this->context->tenantOrFail()->getKey(), 'comment', $comment->getKey());
 
-        return new CommentResource($comment->load('user', 'attachments', 'replies'));
+        return new CommentResource($comment->load('user', 'documents', 'replies'));
     }
 
     public function destroy(Comment $comment): Response

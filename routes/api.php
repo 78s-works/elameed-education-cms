@@ -505,7 +505,10 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
 
             Route::get('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'index']);
             Route::post('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'store']);
-            Route::delete('/teacher/lessons/{lesson}/attachments/{attachment:uuid}', [LessonAttachmentController::class, 'destroy']);
+            // Uploaded materials are documents; an external link is not a file and
+            // stays a media asset, so each has its own delete.
+            Route::delete('/teacher/lessons/{lesson}/attachments/{document}', [LessonAttachmentController::class, 'destroy']);
+            Route::delete('/teacher/lessons/{lesson}/links/{link:uuid}', [LessonAttachmentController::class, 'destroyLink']);
 
             // Lesson time-box config (availability window + extension allowance).
             Route::get('/teacher/lessons/{lesson}/availability', [LessonAvailabilityController::class, 'show']);

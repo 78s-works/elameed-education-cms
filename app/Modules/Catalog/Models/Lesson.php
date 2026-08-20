@@ -8,6 +8,7 @@ use App\Modules\Catalog\Enums\VideoSource;
 use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Models\MediaAsset;
 use App\Support\Traits\BelongsToAcademicYear;
+use App\Support\Files\Concerns\HasDocuments;
 use App\Support\Traits\BelongsToTenant;
 use App\Support\Youtube;
 use Illuminate\Database\Eloquent\Builder;
@@ -29,6 +30,7 @@ class Lesson extends Model
 {
     use BelongsToAcademicYear;
     use BelongsToTenant;
+    use HasDocuments;
 
     /** In-memory defaults matching the DB defaults (so a fresh model has them). */
     protected $attributes = [
@@ -133,15 +135,13 @@ class Lesson extends Model
      * The MANY assets of a lesson — its supporting materials (pdf/file/link).
      * Excludes the video, which is the single `videoAsset` below.
      */
-    public function attachments(): HasMany
+    /**
+     * External links pinned to the lesson. Uploaded materials are documents (see
+     * HasDocuments) — only a link, which stores no file, stays a media asset.
+     */
+    public function links(): HasMany
     {
-        return $this->hasMany(MediaAsset::class)->where('type', '!=', MediaType::HlsVideo->value);
-    }
-
-    /** Alias of attachments() — reads as "a lesson HAS MANY assets". */
-    public function assets(): HasMany
-    {
-        return $this->attachments();
+        return $this->hasMany(MediaAsset::class)->where('type', MediaType::Link->value);
     }
 
     /** Typed content sections (FR-M04-01). Order via the section `ordered` scope. */
