@@ -4,11 +4,12 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use App\Modules\Billing\Models\SubscriptionPackage;
-use App\Modules\Catalog\Models\Course;
-use App\Modules\Catalog\Models\CourseCategory;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\Package;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
+use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Models\MediaAsset;
@@ -52,15 +53,17 @@ class EndpointSmokeTest extends TestCase
 
     private User $payStudent;
 
-    private Course $course1;      // seeded, paid, student1 NOT enrolled
+    // VD $7 - `courses` are retired: the unit of sale is a LESSON, and a PACKAGE
+    // is the recursive grouping that replaced courses/units/bundles.
+    private AcademicYear $year1;
 
-    private Course $reviewCourse; // seeded, student1 enrolled
+    private Lesson $lesson1;      // seeded, student1 OWNS it, has a video
 
-    private Course $payCourse;    // fresh, purchasable, payStudent funded
+    private Lesson $otherLesson;  // seeded, student1 does NOT own it
 
-    private Lesson $lesson1;      // free preview + has video
+    private Package $package1;    // seeded, student1 owns it
 
-    private CourseCategory $category1;
+    private Lesson $payLesson;    // fresh, purchasable, payStudent funded
 
     private const TENANT = 'farag-physics';
 
@@ -83,12 +86,19 @@ class EndpointSmokeTest extends TestCase
         $ctx = app(TenantContext::class);
         $ctx->setTenant($this->t1);
 
-        $courses = Course::where('tenant_id', $this->t1->id)->orderBy('id')->get();
-        $this->course1 = $courses[0];
-        $this->reviewCourse = $courses[1]; // student1 (s=1) is enrolled in courses[1] & [2]
-        $this->category1 = CourseCategory::where('tenant_id', $this->t1->id)->firstOrFail();
-        // Units retired (VD §7): the seeder's lessons are standalone under a course.
-        $this->lesson1 = Lesson::where('course_id', $this->course1->id)->orderBy('id')->firstOrFail();
+        // The seeder partitions everything by academic year; take year 1, whose
+        // online student (0101000101 = $student1) was granted lessons[0] + the
+        // package. No AcademicYearContext is set here, so the BelongsToAcademicYear
+        // global scope no-ops and these plain queries see the year's rows.
+        $this->year1 = AcademicYear::where('tenant_id', $this->t1->id)
+            ->orderBy('sort_order')->orderBy('id')->firstOrFail();
+
+        $lessons = Lesson::where('tenant_id', $this->t1->id)
+            ->where('academic_year_id', $this->year1->id)->orderBy('id')->get();
+        $this->lesson1 = $lessons[0];     // granted to student1
+        $this->otherLesson = $lessons[1]; // NOT granted - exercises the 403 branches
+        $this->package1 = Package::where('tenant_id', $this->t1->id)
+            ->where('academic_year_id', $this->year1->id)->orderBy('id')->firstOrFail();
 
         // Give the free-preview lesson a ready video so playback authorize resolves.
         $video = new MediaAsset(['lesson_id' => $this->lesson1->id, 'type' => MediaType::HlsVideo->value, 'status' => 'ready', 'title' => 'v']);
@@ -96,15 +106,28 @@ class EndpointSmokeTest extends TestCase
         $video->save();
         $this->lesson1->update(['video_asset_id' => $video->id]);
 
-        // A funded student + a purchasable course, so checkout can complete.
+        // A funded student + a purchasable LESSON, so checkout can complete. The
+        // student is pinned to year 1 like every other student (student_profiles
+        // .academic_year_id is NOT NULL) or they'd be refused the panel outright.
         $this->payStudent = User::factory()->create(['phone' => '01090000001', 'name' => 'Pay Student']);
         TenantUser::create(['tenant_id' => $this->t1->id, 'user_id' => $this->payStudent->id, 'role' => TenantUserRole::Student->value, 'status' => MembershipStatus::Active->value, 'joined_at' => now()]);
+        $payProfile = new StudentProfile([
+            'academic_year_id' => $this->year1->id,
+            'academic_year' => $this->year1->name,
+            'study_mode' => 'online',
+        ]);
+        $payProfile->tenant_id = $this->t1->id;
+        $payProfile->user_id = $this->payStudent->id;
+        $payProfile->save();
 
-        $pc = new Course(['title' => 'Pay Course', 'visibility' => 'visible', 'price_minor' => 50000, 'currency' => 'EGP', 'is_free' => false, 'purchase_enabled' => true]);
-        $pc->tenant_id = $this->t1->id;
-        $pc->slug = 'pay-course-smoke';
-        $pc->save();
-        $this->payCourse = $pc;
+        $pl = new Lesson([
+            'title' => 'Pay Lesson', 'visibility' => 'visible', 'access_mode' => 'online',
+            'price_minor' => 50000, 'currency' => 'EGP', 'is_purchasable' => true,
+        ]);
+        $pl->tenant_id = $this->t1->id;
+        $pl->academic_year_id = $this->year1->id;
+        $pl->save();
+        $this->payLesson = $pl;
 
         $ledger = app(LedgerService::class);
         $wallet = $ledger->walletFor($this->t1->id, $this->payStudent->id);
@@ -203,10 +226,15 @@ class EndpointSmokeTest extends TestCase
         // ---------------------------------------------------------------
         // CATALOG — public + teacher CRUD (create → mutate → delete throwaways)
         // ---------------------------------------------------------------
-        $this->hit('GET', '/api/v1/courses', null, [], $T, group: 'Catalog');
-        $this->hit('GET', "/api/v1/courses/{$this->course1->slug}", null, [], $T, group: 'Catalog');
-        $this->hit('GET', "/api/v1/courses/{$this->course1->slug}/reviews", null, [], $T, group: 'Catalog');
-        $this->hit('POST', "/api/v1/courses/{$this->reviewCourse->slug}/reviews", $s, ['rating' => 5, 'comment' => 'Great'], $T, ok: [200, 201, 403], group: 'Catalog');
+        // Public catalogue (VD $7): default lists packages, ?view=lessons lists the
+        // standalone purchasable lessons. `GET /courses/{slug}` is retired.
+        $this->hit('GET', '/api/v1/catalogue', null, [], $T, group: 'Catalog');
+        $this->hit('GET', '/api/v1/catalogue?view=lessons', null, [], $T, group: 'Catalog');
+        $this->hit('GET', '/api/v1/package-types', null, [], $T, group: 'Catalog');
+        $this->hit('GET', "/api/v1/packages/{$this->package1->uuid}", null, [], $T, group: 'Catalog');
+        // Reviews are addressed by content target now, not by course slug.
+        $this->hit('GET', "/api/v1/reviews?target_type=package&target_id={$this->package1->id}", null, [], $T, group: 'Catalog');
+        $this->hit('POST', '/api/v1/reviews', $s, ['target_type' => 'package', 'target_id' => $this->package1->id, 'rating' => 5, 'comment' => 'Great'], $T, ok: [200, 201, 403], group: 'Catalog');
 
         $this->hit('GET', '/api/v1/teacher/categories', $t, [], $T, group: 'Catalog');
         $catRes = $this->hit('POST', '/api/v1/teacher/categories', $t, ['name' => 'Smoke Cat'], $T, group: 'Catalog');
@@ -250,8 +278,8 @@ class EndpointSmokeTest extends TestCase
             $this->hit('DELETE', "/api/v1/teacher/content-packages/{$pId}", $t, [], $T, ok: [200, 204], group: 'Catalog', extraHeaders: $yHdr);
         }
 
-        // Public catalogue (kept): browse the resolved tenant's published courses.
-        $this->hit('GET', '/api/v1/courses', null, [], $T, group: 'Catalog');
+        // Public catalogue again, after the teacher CRUD above mutated content.
+        $this->hit('GET', '/api/v1/catalogue', null, [], $T, group: 'Catalog');
 
         // delete throwaway lesson
         $this->hit('DELETE', "/api/v1/teacher/lessons/{$lId}", $t, [], $T, ok: [200, 204], group: 'Catalog', extraHeaders: $yHdr);
@@ -308,7 +336,7 @@ class EndpointSmokeTest extends TestCase
         // ---------------------------------------------------------------
         $this->hit('GET', '/api/v1/wallet', $this->payStudent, [], $T, group: 'Commerce');
         $this->hit('GET', '/api/v1/wallet/ledger', $this->payStudent, [], $T, group: 'Commerce');
-        $cart = ['items' => [['type' => 'course', 'course' => $this->payCourse->uuid]]];
+        $cart = ['items' => [['type' => 'lesson', 'lesson' => $this->payLesson->id]]];
         $this->hit('POST', '/api/v1/checkout/quote', $this->payStudent, $cart, $T, group: 'Commerce');
         $orderRes = $this->hit('POST', '/api/v1/checkout/order', $this->payStudent, $cart, $T, ok: [200, 201], group: 'Commerce');
         $orderUuid = $this->pick($orderRes, 'data.uuid', 'data.order.uuid', 'data.order_uuid');
@@ -330,8 +358,8 @@ class EndpointSmokeTest extends TestCase
         $this->hit('GET', '/api/v1/me/activity', $s, [], $T, group: 'Engagement');
         $this->hit('GET', '/api/v1/me/resume', $s, [], $T, group: 'Engagement');
         $this->hit('GET', '/api/v1/me/favorites', $s, [], $T, group: 'Engagement');
-        $this->hit('POST', '/api/v1/me/favorites', $s, ['course' => $this->course1->uuid], $T, ok: [200, 201], group: 'Engagement');
-        $this->hit('DELETE', "/api/v1/me/favorites/{$this->course1->uuid}", $s, [], $T, ok: [200, 204], group: 'Engagement');
+        $this->hit('POST', '/api/v1/me/favorites', $s, ['target_type' => 'lesson', 'target_id' => $this->lesson1->id], $T, ok: [200, 201], group: 'Engagement');
+        $this->hit('DELETE', "/api/v1/me/favorites/lesson/{$this->lesson1->id}", $s, [], $T, ok: [200, 204], group: 'Engagement');
         $this->hit('GET', '/api/v1/me/points', $s, [], $T, group: 'Engagement');
         $this->hit('GET', '/api/v1/me/badges', $s, [], $T, group: 'Engagement');
         $this->hit('GET', '/api/v1/leaderboard', $s, [], $T, group: 'Engagement');
@@ -361,7 +389,7 @@ class EndpointSmokeTest extends TestCase
         $qId = $this->pick($qRes, 'data.id');
         $this->hit('PUT', "/api/v1/teacher/exams/{$exUuid}/questions/{$qId}", $t, ['type' => 'mcq', 'body' => 'Q2?', 'options' => ['A', 'B', 'C'], 'correct' => ['B'], 'points' => 1], $T, group: 'Assessment');
 
-        // student attempt lifecycle (student1 enrolled in reviewCourse; exam is on course1 → may be 403 if not enrolled)
+        // student attempt lifecycle - the exam hangs off a lesson the actor may not own, so 403 is accepted.
         $this->hit('GET', '/api/v1/exams', $s, [], $T, group: 'Assessment');
         $attRes = $this->hit('POST', "/api/v1/exams/{$exUuid}/attempts", $this->payStudent, [], $T, ok: [200, 201, 403, 409], group: 'Assessment');
         $attId = $this->pick($attRes, 'data.id', 'data.attempt.id');
@@ -407,7 +435,7 @@ class EndpointSmokeTest extends TestCase
         $this->hit('POST', "/api/v1/teacher/students/{$s->uuid}/reset-password", $t, [], $T, ok: [200, 201], group: 'Students');
         $this->hit('GET', "/api/v1/teacher/students/{$s->uuid}/export", $t, [], $T, group: 'Students');
         $this->hit('GET', "/api/v1/teacher/students/{$s->uuid}/enrollments", $t, [], $T, group: 'Students');
-        $enrRes = $this->hit('POST', "/api/v1/teacher/students/{$s->uuid}/enrollments", $t, ['course' => $this->course1->uuid], $T, ok: [200, 201, 409, 422], group: 'Students');
+        $enrRes = $this->hit('POST', "/api/v1/teacher/students/{$s->uuid}/enrollments", $t, ['target_type' => 'lesson', 'target' => (string) $this->otherLesson->id], $T, ok: [200, 201, 409, 422], group: 'Students');
         $enrId = $this->pick($enrRes, 'data.id', 'data.enrollment.id');
         if ($enrId) {
             $this->hit('DELETE', "/api/v1/teacher/students/{$s->uuid}/enrollments/{$enrId}", $t, [], $T, ok: [200, 204], group: 'Students');

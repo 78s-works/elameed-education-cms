@@ -65,6 +65,6 @@ class AdminTenantTest extends TestCase
         $this->getJson('/api/v1/admin/reports/overview')
             ->assertOk()
             ->assertJsonPath('data.teachers', 2)
-            ->assertJsonStructure(['data' => ['teachers', 'students', 'courses', 'gross_earnings_minor', 'tenants_by_status']]);
+            ->assertJsonStructure(['data' => ['teachers', 'students', 'lessons', 'packages', 'gross_earnings_minor', 'tenants_by_status']]);
     }
 }

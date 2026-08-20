@@ -14,6 +14,7 @@ use App\Modules\Media\Models\MediaAsset;
 use App\Modules\Media\Models\MediaCallbackEvent;
 use App\Modules\Media\Models\MediaUploadSession;
 use App\Modules\Media\Models\MediaVersion;
+use App\Modules\Media\Services\HlsTranscoder;
 use App\Modules\Media\Support\PlaybackTokenIssuer;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
@@ -246,6 +247,14 @@ class RemoteMediaHostTest extends TestCase
 
     public function test_student_playback_authorization_issues_a_bound_token(): void
     {
+        // Issuing a bound token resolves a rendition through HlsTranscoder, so this
+        // needs a real ffmpeg on the machine. Without one the transcoder answers
+        // 503 (media_processing_unavailable) before any token is minted — skip
+        // rather than assert a result that depends on the host's toolchain.
+        if (! app(HlsTranscoder::class)->available()) {
+            $this->markTestSkipped('ffmpeg is not installed on this machine.');
+        }
+
         [$lesson, $uuid, $ver] = $this->makeReadyVideo();
         $student = $this->member(TenantUserRole::Student);
         app(EnrollmentService::class)->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);

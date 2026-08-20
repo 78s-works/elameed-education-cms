@@ -11,6 +11,7 @@ use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Media\Enums\MediaStatus;
 use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Models\MediaAsset;
+use App\Modules\Media\Services\HlsTranscoder;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -70,6 +71,15 @@ class MediaNotReadyTest extends TestCase
 
     public function test_student_playback_of_unready_source_returns_409_not_500(): void
     {
+        // These two assert the SOURCE-MISSING branch (409), which is only reachable
+        // once the transcoder itself is available — HlsTranscoder checks
+        // availability first and answers 503 when ffmpeg is absent (covered by
+        // test_playback_without_a_transcoder_returns_503). Skip rather than assert a
+        // status that depends on whether this machine has ffmpeg installed.
+        if (! app(HlsTranscoder::class)->available()) {
+            $this->markTestSkipped('ffmpeg is not installed on this machine.');
+        }
+
         $student = User::factory()->create();
         $this->membership($student, TenantUserRole::Student);
         $lesson = $this->lessonWithMissingSource(freePreview: true);
@@ -103,6 +113,15 @@ class MediaNotReadyTest extends TestCase
 
     public function test_teacher_preview_of_unready_source_returns_409_not_500(): void
     {
+        // These two assert the SOURCE-MISSING branch (409), which is only reachable
+        // once the transcoder itself is available — HlsTranscoder checks
+        // availability first and answers 503 when ffmpeg is absent (covered by
+        // test_playback_without_a_transcoder_returns_503). Skip rather than assert a
+        // status that depends on whether this machine has ffmpeg installed.
+        if (! app(HlsTranscoder::class)->available()) {
+            $this->markTestSkipped('ffmpeg is not installed on this machine.');
+        }
+
         $teacher = User::factory()->create();
         $this->membership($teacher, TenantUserRole::Teacher);
         $lesson = $this->lessonWithMissingSource(freePreview: false);
