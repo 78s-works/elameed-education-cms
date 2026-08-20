@@ -18,6 +18,7 @@ use App\Modules\Identity\Services\OtpService;
 use App\Modules\Identity\Support\UserLookup;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Services\TenantContext;
+use App\Support\Http\AuthCookie;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -96,12 +97,14 @@ class AuthController
             $this->context->tenant(),
         );
 
-        return response()->json([
+        // Set the httpOnly auth cookie (browser transport) AND keep the token in
+        // the body (non-browser Bearer clients). The SPA ignores the body token.
+        return AuthCookie::issue(response()->json([
             'data' => [
                 'token' => $result['token'],
                 'user' => (new UserResource($result['user']))->resolve($request),
             ],
-        ]);
+        ]), (string) $result['token']);
     }
 
     /** POST /auth/login — password login (+ optional login-OTP). */
@@ -124,20 +127,22 @@ class AuthController
             ]);
         }
 
-        return response()->json([
+        // Same as verifyOtp: set the httpOnly cookie for the browser, keep the
+        // body token for Bearer clients.
+        return AuthCookie::issue(response()->json([
             'data' => [
                 'token' => $result['token'],
                 'user' => (new UserResource($result['user']))->resolve($request),
             ],
-        ]);
+        ]), (string) $result['token']);
     }
 
-    /** POST /auth/logout — revoke the current access token. */
+    /** POST /auth/logout — revoke the current access token + clear the cookie. */
     public function logout(Request $request): JsonResponse
     {
         $request->user()?->currentAccessToken()?->delete();
 
-        return response()->json(['data' => ['message' => __('Signed out.')]]);
+        return AuthCookie::forget(response()->json(['data' => ['message' => __('Signed out.')]]));
     }
 
     /** POST /auth/password/forgot — issue a reset code. Generic response. */
