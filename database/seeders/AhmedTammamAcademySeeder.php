@@ -61,7 +61,6 @@ use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Engagement\Enums\CommentStatus;
 use App\Modules\Engagement\Enums\TicketPriority;
 use App\Modules\Engagement\Enums\TicketStatus;
-use App\Modules\Engagement\Models\Attachment;
 use App\Modules\Engagement\Models\Badge;
 use App\Modules\Engagement\Models\Comment;
 use App\Modules\Engagement\Models\Favorite;
@@ -103,6 +102,11 @@ use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Models\TenantDomain;
 use App\Modules\Tenancy\Services\TenantContext;
+use App\Support\Files\DocumentService;
+use App\Support\Files\Enums\DocumentPurpose;
+use App\Support\Files\Models\Document;
+use App\Support\Files\StoreOptions;
+use Illuminate\Database\Eloquent\Model;
 use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Services\LedgerService;
 use App\Modules\Wallet\Services\PaymentReceiptService;
@@ -247,6 +251,8 @@ class AhmedTammamAcademySeeder extends Seeder
 
     private PaymentReceiptService $receipts;
 
+    private DocumentService $documents;
+
     private ContentAccessOverrideService $overrides;
 
     private CenterSessionAttendanceService $sessionAttendance;
@@ -282,6 +288,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->ledger = app(LedgerService::class);
         $this->points = app(PointsService::class);
         $this->receipts = app(PaymentReceiptService::class);
+        $this->documents = app(DocumentService::class);
         $this->overrides = app(ContentAccessOverrideService::class);
         $this->sessionAttendance = app(CenterSessionAttendanceService::class);
 
@@ -374,9 +381,15 @@ class AhmedTammamAcademySeeder extends Seeder
         $profile->tenant_id = $this->tenant->id;
         $profile->primary_color = '#0E7C66';
         $profile->secondary_color = '#F2A900';
-        $profile->logo_url = 'https://ahmedtammam.com/assets/logo.png';
-        $profile->favicon_url = 'https://ahmedtammam.com/assets/favicon.png';
-        $profile->cover_url = 'https://ahmedtammam.com/assets/cover.jpg';
+        $profile->logo_document_id = $this->seedDocument(
+            DocumentPurpose::BrandingLogo, 'logo.png', $this->teacher->id
+        )->id;
+        $profile->favicon_document_id = $this->seedDocument(
+            DocumentPurpose::BrandingFavicon, 'favicon.png', $this->teacher->id
+        )->id;
+        $profile->cover_document_id = $this->seedDocument(
+            DocumentPurpose::BrandingCover, 'cover.jpg', $this->teacher->id
+        )->id;
         // A saved landing layout (the schema's own starter), so the CMS section
         // builder loads real persisted sections instead of falling back to defaults.
         $profile->landing_sections = LandingSchema::defaults('ar');
@@ -1272,7 +1285,9 @@ class AhmedTammamAcademySeeder extends Seeder
             'is_purchasable' => true,
             'package_type_id' => $type->id,
             // Package cards fall back to a placeholder without these.
-            'cover_url' => 'https://ahmedtammam.com/assets/packages/cover.jpg',
+            'cover_document_id' => $this->seedDocument(
+                DocumentPurpose::PackageCover, 'package-cover.jpg', $this->teacher->id
+            )->id,
             'promo_video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
         ], $attrs));
         $pkg->tenant_id = $this->tenant->id;
@@ -1470,7 +1485,9 @@ class AhmedTammamAcademySeeder extends Seeder
             'issued_at' => now(),
             // A rendered PDF + the Egyptian e-invoice (ETA) receipt uuid returned
             // when the invoice is reported to the tax authority.
-            'pdf_url' => 'https://ahmedtammam.com/invoices/'.$next.'.pdf',
+            'pdf_document_id' => $this->seedDocument(
+                DocumentPurpose::InvoicePdf, 'invoice-'.$next.'.pdf', $this->teacher->id
+            )->id,
             'eta_receipt_uuid' => (string) Str::uuid(),
         ]);
         $inv->tenant_id = $this->tenant->id;
@@ -1480,17 +1497,9 @@ class AhmedTammamAcademySeeder extends Seeder
     /** Top up wallet through a payment receipt (approved credits the ledger). */
     private function walletTopupViaReceipt(User $user, int $amountMinor, string $method, string $outcome): void
     {
-        $attachment = new Attachment([
-            'kind' => 'image',
-            'storage_key' => 'receipts/'.Str::uuid().'.jpg',
-            'mime' => 'image/jpeg',
-            'size_bytes' => rand(50000, 400000),
-            'uploaded_by' => $user->id,
-        ]);
-        $attachment->tenant_id = $this->tenant->id;
-        $attachment->save();
+        $document = $this->seedDocument(DocumentPurpose::PaymentReceipt, 'receipt.jpg', $user->id);
 
-        $receipt = $this->receipts->submit($this->tenant->id, $user->id, $method, $amountMinor, $attachment->id, self::CURRENCY);
+        $receipt = $this->receipts->submit($this->tenant->id, $user->id, $method, $amountMinor, $document->id, self::CURRENCY);
 
         if ($outcome === 'corrected') {
             // The teacher read a different figure on the slip than the student
@@ -2103,8 +2112,12 @@ class AhmedTammamAcademySeeder extends Seeder
 
         // Fill in what a real transcode writes back onto the asset.
         $asset->forceFill([
-            'thumbnail_url' => 'https://cdn.ahmedtammam.com/thumbs/'.$asset->uuid.'.jpg',
-            'source_key' => 'uploads/'.$asset->uuid.'/master.mp4',
+            'thumbnail_document_id' => $this->seedDocument(
+                DocumentPurpose::VideoThumbnail, $asset->uuid.'.jpg', $this->teacher->id
+            )->id,
+            'source_document_id' => $this->seedDocument(
+                DocumentPurpose::VideoSource, $asset->uuid.'.mp4', $this->teacher->id
+            )->id,
             'hls_path' => 'hls/'.$asset->uuid.'/index.m3u8',
             'encryption_key_ref' => 'kms://elameed/media/'.$asset->uuid,
             'renditions' => [
@@ -2475,13 +2488,16 @@ class AhmedTammamAcademySeeder extends Seeder
         if ($essayAttempt !== null) {
             $essayAttempt->forceFill([
                 'feedback' => 'إجابة جيدة، لكن راجع ترتيب خطوات التنسيق الهرموني وأضف مثالاً عملياً.',
-                'corrected_file' => [
-                    'storage_key' => 'corrections/'.Str::uuid().'.pdf',
-                    'mime' => 'application/pdf',
-                    'size_bytes' => 184320,
-                    'corrected_by' => $this->teacher->id,
-                ],
             ])->save();
+
+            // The annotated return is the teacher's file attached to the attempt,
+            // readable by that student and by anyone holding `homework`.
+            $this->seedDocument(
+                DocumentPurpose::AssignmentCorrected,
+                'corrected-essay.pdf',
+                $this->teacher->id,
+                $essayAttempt,
+            );
         }
 
         // Section-level access overrides: one live grant on a single PART of a
@@ -2531,18 +2547,15 @@ class AhmedTammamAcademySeeder extends Seeder
             ->first();
 
         if ($homework !== null && $s1 !== null) {
-            $file = new Attachment([
-                'attachable_type' => LessonSection::class,
-                'attachable_id' => $homework->id,
-                'kind' => 'audio',
-                'storage_key' => 'homework/'.Str::uuid().'.m4a',
-                'mime' => 'audio/mp4',
-                'size_bytes' => 2411724,
-                'duration_sec' => 187,
-                'uploaded_by' => $s1->id,
-            ]);
-            $file->tenant_id = $this->tenant->id;
-            $file->save();
+            // A voice-note answer: exercises Pattern B (documentable_*) and the
+            // meta payload that carries a media length.
+            $this->seedDocument(
+                DocumentPurpose::AssignmentSubmission,
+                'homework-answer.m4a',
+                $s1->id,
+                $homework,
+                ['duration_sec' => 187],
+            );
         }
     }
 
@@ -2610,5 +2623,49 @@ class AhmedTammamAcademySeeder extends Seeder
                 ->where('code', 'PKG10')
                 ->update(['target_type' => Coupon::TARGET_PACKAGE, 'target_id' => $package->id]);
         }
+    }
+
+    /**
+     * Seed a real (tiny) file, not just a row. The demo data is the only thing
+     * standing in for a backfill now, so every documents row it creates has an
+     * actual blob behind it — otherwise `documents:audit` would report the whole
+     * academy as broken and the files tab would preview nothing.
+     */
+    private function seedDocument(
+        DocumentPurpose $purpose,
+        string $name,
+        int $ownerId,
+        ?Model $owner = null,
+        array $meta = [],
+    ): Document {
+        return $this->documents->storeContents(
+            $this->placeholderBytes($name),
+            $name,
+            $purpose,
+            new StoreOptions(ownerId: $ownerId, owner: $owner, meta: $meta),
+        );
+    }
+
+    /** Smallest valid file of the right shape, so previews and mime sniffing work. */
+    private function placeholderBytes(string $name): string
+    {
+        return match (strtolower(pathinfo($name, PATHINFO_EXTENSION))) {
+            // 1x1 transparent PNG.
+            'png', 'jpg', 'jpeg', 'webp', 'gif' => base64_decode(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+            ),
+            // Single-page PDF that actually opens.
+            'pdf' => "%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+"
+                ."2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+"
+                ."3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]>>endobj
+"
+                ."trailer<</Root 1 0 R>>
+%%EOF
+",
+            default => 'seeded placeholder for '.$name,
+        };
     }
 }
