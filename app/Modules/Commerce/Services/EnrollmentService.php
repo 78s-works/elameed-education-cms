@@ -121,28 +121,45 @@ class EnrollmentService
     }
 
     /**
-     * Does the user have access to this specific lesson? True when the lesson is a
-     * free preview OR the user holds a lesson enrollment that covers it (bought
-     * alone, or fanned out from a package). Channel scope (VD §7) is checked first:
-     * a single-channel student can't reach a lesson on the other channel, even a
-     * free preview.
+     * Does the user hold an access-granting enrollment for this lesson — bought
+     * alone, fanned out from a package, redeemed from a code, or granted by hand
+     * from the teacher panel? Channel-agnostic and preview-agnostic: this is the
+     * raw "was access given to them" question.
      */
-    public function hasLessonAccess(int $tenantId, int $userId, Lesson $lesson): bool
+    public function hasLessonGrant(int $tenantId, int $userId, Lesson $lesson): bool
     {
-        if (! $this->channelAllows($tenantId, $userId, $lesson->access_mode)) {
-            return false;
-        }
-
-        if ($lesson->is_free_preview) {
-            return true;
-        }
-
         return Enrollment::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('user_id', $userId)
             ->grantsAccess()
             ->where('lesson_id', $lesson->getKey())
             ->exists();
+    }
+
+    /**
+     * Does the user have access to this specific lesson?
+     *
+     * An explicit grant WINS over the channel rule. The channel scope (VD §7) is a
+     * discovery/acquisition rule — it is what stops a center student from browsing
+     * and buying online content, and it is enforced where that happens
+     * (PublicCatalogController + CheckoutService). By the time an enrollment row
+     * exists someone has already decided this student may have this lesson: a
+     * teacher granting it by hand, a redeemed code, a center check-in, or a package
+     * fan-out. Re-applying the channel filter here voided that decision — a center
+     * student granted an online lesson saw it in /me/lessons and then got a 403 on
+     * opening it, with nothing to explain why.
+     *
+     * With no grant the channel rule still applies, so a free preview on the other
+     * channel stays out of reach.
+     */
+    public function hasLessonAccess(int $tenantId, int $userId, Lesson $lesson): bool
+    {
+        if ($this->hasLessonGrant($tenantId, $userId, $lesson)) {
+            return true;
+        }
+
+        return $lesson->is_free_preview
+            && $this->channelAllows($tenantId, $userId, $lesson->access_mode);
     }
 
     /**

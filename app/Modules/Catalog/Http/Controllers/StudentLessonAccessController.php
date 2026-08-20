@@ -89,8 +89,7 @@ class StudentLessonAccessController
 
     private function assertLessonAccess(int $tenantId, int|string $userId, Lesson $lesson): void
     {
-        if (! $lesson->is_free_preview
-            && ! $this->enrollments->hasLessonAccess($tenantId, (int) $userId, $lesson)) {
+        if (! $this->enrollments->hasLessonAccess($tenantId, (int) $userId, $lesson)) {
             abort(403, 'You do not have access to this lesson.');
         }
     }

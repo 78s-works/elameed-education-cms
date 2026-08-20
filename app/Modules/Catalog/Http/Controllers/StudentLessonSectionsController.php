@@ -43,7 +43,7 @@ class StudentLessonSectionsController
         $tenantId = (int) $this->context->tenantOrFail()->getKey();
         $userId = (int) $request->user()->getKey();
 
-        if (! $lesson->is_free_preview && ! $this->enrollments->hasLessonAccess($tenantId, $userId, $lesson)) {
+        if (! $this->enrollments->hasLessonAccess($tenantId, $userId, $lesson)) {
             abort(403, 'You do not have access to this lesson.');
         }
 
@@ -72,7 +72,7 @@ class StudentLessonSectionsController
         $tenantId = (int) $this->context->tenantOrFail()->getKey();
         $userId = (int) $request->user()->getKey();
 
-        if (! $lesson->is_free_preview && ! $this->enrollments->hasLessonAccess($tenantId, $userId, $lesson)) {
+        if (! $this->enrollments->hasLessonAccess($tenantId, $userId, $lesson)) {
             abort(403, 'You do not have access to this lesson.');
         }
 
@@ -89,8 +89,14 @@ class StudentLessonSectionsController
 
         // B12 (LP-6): hide parts outside the student's study_mode channel — an
         // online student never sees center-only parts, and vice versa; `both`
-        // parts and `both` students are unrestricted.
-        $studyMode = $this->visibility->studyModeFor($tenantId, $userId);
+        // parts and `both` students are unrestricted. A lesson the student was
+        // explicitly GRANTED on the other channel filters by the lesson's own
+        // channel instead, or they would open it to an empty part list.
+        $studyMode = $this->visibility->studyModeForLesson(
+            $this->visibility->studyModeFor($tenantId, $userId),
+            $lesson,
+            $this->enrollments->hasLessonGrant($tenantId, $userId, $lesson),
+        );
         $sections = $this->visibility->filter($sections, $studyMode);
 
         $lockMap = $this->unlock->lockMap($tenantId, $userId, $lesson);

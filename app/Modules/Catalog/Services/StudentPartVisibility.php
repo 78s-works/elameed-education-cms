@@ -3,6 +3,7 @@
 namespace App\Modules\Catalog\Services;
 
 use App\Modules\Catalog\Enums\AccessMode;
+use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonSection;
 use App\Modules\Identity\Models\StudentProfile;
 use Illuminate\Support\Collection;
@@ -33,6 +34,32 @@ class StudentPartVisibility
             ->value('study_mode');
 
         return $mode !== null ? AccessMode::from($mode) : AccessMode::Both;
+    }
+
+    /**
+     * The channel to filter ONE lesson's parts by.
+     *
+     * Normally the student's own study_mode (B12/LP-6). But a student can legitimately
+     * hold a lesson on the OTHER channel — a teacher granting a center student an
+     * online lesson, a redeemed code, a package fan-out. Their study_mode would then
+     * hide every part of a lesson they own, leaving an empty player behind a lesson
+     * that opens fine. When that happens the LESSON's own channel becomes the filter:
+     * under the ceiling rule (AccessMode::isSubsetOf) a lesson's parts are only ever
+     * that same channel or `both`, so nothing from the student's other channel can
+     * leak in.
+     *
+     * A `both` (hybrid) lesson is unaffected — it is visible to every study_mode, so
+     * the student's own channel still governs which of its parts they see.
+     */
+    public function studyModeForLesson(AccessMode $studyMode, Lesson $lesson, bool $granted): AccessMode
+    {
+        $lessonMode = $lesson->access_mode;
+
+        if (! $granted || $lessonMode === null || $lessonMode->isVisibleTo($studyMode)) {
+            return $studyMode;
+        }
+
+        return $lessonMode;
     }
 
     /**

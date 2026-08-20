@@ -30,8 +30,7 @@ class ProgressController
         $user = $request->user();
         $tenantId = $this->context->tenantOrFail()->getKey();
 
-        if (! $lesson->is_free_preview
-            && ! $this->enrollments->hasLessonAccess($tenantId, $user->getKey(), $lesson)) {
+        if (! $this->enrollments->hasLessonAccess($tenantId, $user->getKey(), $lesson)) {
             throw new AccessDeniedHttpException('You do not have access to this lesson.');
         }
 
