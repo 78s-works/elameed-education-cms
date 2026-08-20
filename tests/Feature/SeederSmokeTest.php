@@ -19,28 +19,46 @@ class SeederSmokeTest extends TestCase
         $this->assertDatabaseHas('users', ['phone' => '0101000101']);   // year 1, online student
         $this->assertDatabaseHas('tenants', ['slug' => 'farag-physics']);
 
-        // Lean, year-partitioned academy: one tenant, 3 academic years, and per
-        // year a package-type + 3 lessons + 1 package + 2 students.
-        $this->assertDatabaseCount('tenants', 1);
-        $this->assertDatabaseCount('academic_years', 3);
-        $this->assertDatabaseCount('package_types', 3);
-        $this->assertDatabaseCount('packages', 3);
-        $this->assertDatabaseCount('lessons', 9);
-        // 1 teacher + (3 years × 2) students, tenant-scoped.
-        $this->assertDatabaseCount('student_profiles', 6);
+        // Counts are asserted PER TENANT: DatabaseSeeder also runs the full
+        // ahmedtammam academy plus one soft-deleted archive tenant, so global
+        // counts say nothing about the lean academy's own contract.
+        $lean = (int) DB::table('tenants')->where('slug', 'farag-physics')->value('id');
 
-        // Every content row is stamped with an academic year (year-dependent seed).
+        // Lean, year-partitioned academy: 3 academic years, and per year a
+        // package-type + 3 lessons + 1 package + 2 students.
+        $this->assertSame(3, $this->countFor('academic_years', $lean));
+        $this->assertSame(3, $this->countFor('package_types', $lean));
+        $this->assertSame(3, $this->countFor('packages', $lean));
+        $this->assertSame(9, $this->countFor('lessons', $lean));
+        // (3 years × 2) students, tenant-scoped.
+        $this->assertSame(6, $this->countFor('student_profiles', $lean));
+
+        // Every content row is stamped with an academic year (year-dependent seed)
+        // — across ALL academies, not just the lean one.
         $this->assertDatabaseMissing('lessons', ['academic_year_id' => null]);
         $this->assertDatabaseMissing('packages', ['academic_year_id' => null]);
         $this->assertDatabaseMissing('student_profiles', ['academic_year_id' => null]);
 
-        // Re-run must not duplicate anything (academy is skipped when present).
+        // The archive tenant exists only as a soft-deleted row (the platform-admin
+        // trashed branch), so it must never show up in a normal tenant query.
+        $this->assertDatabaseHas('tenants', ['slug' => 'closed-academy']);
+        $this->assertNotNull(DB::table('tenants')->where('slug', 'closed-academy')->value('deleted_at'));
+
+        $tenantsBefore = DB::table('tenants')->count();
+
+        // Re-run must not duplicate anything (each academy is skipped when present).
         $this->seed();
 
-        $this->assertDatabaseCount('tenants', 1);
-        $this->assertDatabaseCount('academic_years', 3);
-        $this->assertDatabaseCount('lessons', 9);
-        $this->assertDatabaseCount('packages', 3);
+        $this->assertSame($tenantsBefore, DB::table('tenants')->count());
+        $this->assertSame(3, $this->countFor('academic_years', $lean));
+        $this->assertSame(9, $this->countFor('lessons', $lean));
+        $this->assertSame(3, $this->countFor('packages', $lean));
+    }
+
+    /** Row count in $table belonging to one tenant. */
+    private function countFor(string $table, int $tenantId): int
+    {
+        return (int) DB::table($table)->where('tenant_id', $tenantId)->count();
     }
 
     /**

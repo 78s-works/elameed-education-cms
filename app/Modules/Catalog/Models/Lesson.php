@@ -72,6 +72,10 @@ class Lesson extends Model
         'extension_hours' => 'integer',
         'self_reopen_limit' => 'integer',
         'price_minor' => 'integer',
+        // Dormant column (nothing reads it yet), but it IS json — without the
+        // cast a written array comes back as a raw string. Deliberately NOT in
+        // $fillable: no request validates it, so it is set explicitly or not at all.
+        'gating_rule' => 'array',
     ];
 
     /**

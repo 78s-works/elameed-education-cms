@@ -28,6 +28,7 @@ use App\Modules\Catalog\Enums\PdfKind;
 use App\Modules\Catalog\Enums\SectionDelivery;
 use App\Modules\Catalog\Enums\VideoSource;
 use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Catalog\Models\ContentAccessOverride;
 use App\Modules\Catalog\Models\ContentDependency;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonAccessWindow;
@@ -52,6 +53,7 @@ use App\Modules\Commerce\Enums\CouponType;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\OrderStatus;
 use App\Modules\Commerce\Models\Coupon;
+use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Invoice;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Commerce\Models\Payment;
@@ -104,6 +106,16 @@ use App\Modules\Tenancy\Services\TenantContext;
 use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Services\LedgerService;
 use App\Modules\Wallet\Services\PaymentReceiptService;
+use App\Modules\Catalog\Enums\AssignmentKind;
+use App\Modules\Media\Models\MediaCallbackEvent;
+use App\Modules\Media\Models\MediaRendition;
+use App\Modules\Media\Models\MediaUploadSession;
+use App\Modules\Media\Models\PlaybackSession;
+use App\Modules\Notifications\Models\NotificationFailure;
+use App\Modules\Notifications\Models\NotificationLog;
+use App\Modules\Notifications\Models\NotificationTemplate;
+use App\Modules\Notifications\Models\NotificationTemplateTranslation;
+use App\Modules\Tenancy\Support\LandingSchema;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -297,6 +309,10 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->seedYearOne();
 
         $this->seedCrossCutting();
+        // Fills the columns/tables the happy paths above never touch (media
+        // pipeline, notification delivery trail, archived + revoked rows), so no
+        // nullable column is left 100% NULL in a freshly seeded database.
+        $this->seedOperationalTrail();
     }
 
     // ---------------------------------------------------------------- tenancy
@@ -329,6 +345,8 @@ class AhmedTammamAcademySeeder extends Seeder
             'type' => TenantDomainType::Custom->value,
             'is_primary' => true,
             'ssl_status' => 'active',
+            // Cloudflare custom-hostname id, set once the domain is onboarded.
+            'cf_custom_hostname_id' => 'cf-'.Str::lower(Str::random(24)),
             'verified_at' => now()->subMonths(8),
         ]);
         TenantDomain::create([
@@ -336,6 +354,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'host' => 'ahmed-tammam.elameed.app',
             'type' => TenantDomainType::Subdomain->value,
             'is_primary' => false,
+            'ssl_status' => 'active',
             'verified_at' => now()->subMonths(9),
         ]);
 
@@ -356,6 +375,11 @@ class AhmedTammamAcademySeeder extends Seeder
         $profile->primary_color = '#0E7C66';
         $profile->secondary_color = '#F2A900';
         $profile->logo_url = 'https://ahmedtammam.com/assets/logo.png';
+        $profile->favicon_url = 'https://ahmedtammam.com/assets/favicon.png';
+        $profile->cover_url = 'https://ahmedtammam.com/assets/cover.jpg';
+        // A saved landing layout (the schema's own starter), so the CMS section
+        // builder loads real persisted sections instead of falling back to defaults.
+        $profile->landing_sections = LandingSchema::defaults('ar');
         $profile->save();
 
         // Marketing meta shown on the landing page.
@@ -508,6 +532,35 @@ class AhmedTammamAcademySeeder extends Seeder
         ]);
         $c2->tenant_id = $this->tenant->id;
         $c2->save();
+
+        // A coupon scoped to ONE content target is a different pricing branch from
+        // the two cart-wide ones above; the package it points at is created later,
+        // so it is bound in seedOperationalTrail().
+        $c3 = new Coupon([
+            'code' => 'PKG10',
+            'type' => CouponType::Percent->value,
+            'value' => 10,
+            'usage_limit' => 50,
+            'starts_at' => now()->subMonth(),
+            'expires_at' => now()->addMonths(3),
+            'is_active' => true,
+        ]);
+        $c3->tenant_id = $this->tenant->id;
+        $c3->save();
+
+        // A retired coupon (soft-deleted) so the trashed branch is populated.
+        $c4 = new Coupon([
+            'code' => 'OLDSUMMER',
+            'type' => CouponType::Fixed->value,
+            'value' => 2500,
+            'usage_limit' => 100,
+            'starts_at' => now()->subYear(),
+            'expires_at' => now()->subMonths(9),
+            'is_active' => false,
+        ]);
+        $c4->tenant_id = $this->tenant->id;
+        $c4->save();
+        $c4->delete();
     }
 
     // ------------------------------------------------------------- year three
@@ -649,6 +702,9 @@ class AhmedTammamAcademySeeder extends Seeder
         // --- s3: wallet path — top up via receipt then buy from wallet balance.
         $this->walletTopupViaReceipt($s3, 30000, 'vodafone_cash', 'approved');
         $this->walletTopupViaReceipt($s3, 15000, 'instapay', 'pending');
+        // Approved with a CORRECTION: the slip showed less than the student typed,
+        // so `corrected_amount_minor` is what actually hit the wallet.
+        $this->walletTopupViaReceipt($s3, 25000, 'vodafone_cash', 'corrected');
         $this->walletPurchase($s3, $lessons[1], $lessons[1]->price_minor);
         $this->enroll->grantExam($this->tenant->id, $s3->id, $reviewExam, EnrollmentSource::Manual);
         $this->attemptExam($s3, $reviewExam, status: AttemptStatus::InProgress, passed: null);
@@ -1031,6 +1087,22 @@ class AhmedTammamAcademySeeder extends Seeder
         ]);
     }
 
+    /** A plausible city per governorate, so `student_profiles.region` is never null
+     *  (it is a required field on the sign-up form — an empty column here means the
+     *  student-management and profile screens render a blank row). */
+    private const REGIONS = [
+        'القاهرة' => 'مدينة نصر',
+        'الجيزة' => 'الدقي',
+        'الإسكندرية' => 'سيدي جابر',
+        'الدقهلية' => 'المنصورة',
+        'الشرقية' => 'الزقازيق',
+        'المنوفية' => 'شبين الكوم',
+        'القليوبية' => 'بنها',
+        'الغربية' => 'طنطا',
+        'أسيوط' => 'أسيوط',
+        'سوهاج' => 'سوهاج',
+    ];
+
     private function makeStudent(AcademicYear $year, string $phone, string $name, string $studyMode, string $gender, string $governorate, ?Center $center = null, MembershipStatus $status = MembershipStatus::Active, string $educationType = 'عام'): User
     {
         $user = $this->makeUser($phone, $name, $phone.'@student.ahmedtammam.com');
@@ -1048,6 +1120,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'study_mode' => $studyMode,
             'gender' => $gender,
             'governorate' => $governorate,
+            'region' => self::REGIONS[$governorate] ?? 'وسط البلد',
             'education_type' => $educationType,
             'guardian_phone' => '0120099'.substr($phone, -4),
             'center_id' => $center?->id,
@@ -1075,10 +1148,18 @@ class AhmedTammamAcademySeeder extends Seeder
             'availability_days' => 14,
             'max_extensions' => 2,
             'extension_hours' => 48,
+            // Description + view ceiling + publish stamp are all optional columns
+            // the panel renders; leaving them null shows empty cards.
+            'description' => 'شرح كامل على السبورة، مع خريطة ذهنية وواجب وتقييم بعد الحصة.',
+            'max_views' => 5,
+            'publish_at' => now()->subMonths(2),
         ], $attrs));
         $lesson->tenant_id = $this->tenant->id;
         $lesson->academic_year_id = $year->id;
         $lesson->access_mode = $attrs['access_mode'];
+        // Dormant column (no consumer yet) and not mass-assignable — set directly so
+        // the intended shape is at least documented in the data.
+        $lesson->gating_rule = ['require_previous_section' => true, 'min_watch_percent' => 80];
         $lesson->save();
 
         $this->makeSections($year, $lesson, $withExam ? $this->makeExam($year, $lesson, [
@@ -1129,6 +1210,8 @@ class AhmedTammamAcademySeeder extends Seeder
             'delivery' => SectionDelivery::PdfUpload->value,
             'gate_rule' => GateRule::MustSubmit->value,
             'max_tries' => 3,
+            // Upload homework: the student uploads a file, a teacher corrects it.
+            'assignment_kind' => AssignmentKind::Upload->value,
             'is_required' => true,
         ]);
         $hw->tenant_id = $this->tenant->id;
@@ -1188,6 +1271,9 @@ class AhmedTammamAcademySeeder extends Seeder
             'currency' => self::CURRENCY,
             'is_purchasable' => true,
             'package_type_id' => $type->id,
+            // Package cards fall back to a placeholder without these.
+            'cover_url' => 'https://ahmedtammam.com/assets/packages/cover.jpg',
+            'promo_video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
         ], $attrs));
         $pkg->tenant_id = $this->tenant->id;
         $pkg->academic_year_id = $year->id;
@@ -1206,6 +1292,10 @@ class AhmedTammamAcademySeeder extends Seeder
             'duration_min' => 30,
             'is_published' => true,
             'show_answers' => true,
+            // A real availability window, so the "not open yet / closed" branches
+            // have something to compare against.
+            'starts_at' => now()->subMonths(2),
+            'ends_at' => now()->addMonths(4),
         ], $attrs));
         $exam->tenant_id = $this->tenant->id;
         $exam->academic_year_id = $year->id;
@@ -1213,6 +1303,12 @@ class AhmedTammamAcademySeeder extends Seeder
         $exam->type = ($attrs['type'] ?? ExamType::LessonQuiz)->value;
         $exam->grading_mode = ($attrs['grading_mode'] ?? ExamGradingMode::Auto)->value;
         $exam->total_marks = $essay ? 15 : 10;
+        // An essay exam is graded by absolute marks, not a percentage, so it also
+        // carries `pass_value` (the marks needed) — exercises ExamPassMode::Marks.
+        if ($essay) {
+            $exam->pass_mode = ExamPassMode::Marks->value;
+            $exam->pass_value = 9;
+        }
         $exam->save();
 
         $this->makeQuestions($year, $exam, $essay);
@@ -1237,6 +1333,9 @@ class AhmedTammamAcademySeeder extends Seeder
                 'correct' => $correct,
                 'points' => $points,
                 'sort_order' => $i + 1,
+                // Bubble-sheet reference into the printed book (كتاب المايسترو):
+                // the paper question this row scores.
+                'book_ref' => ['book' => 'كتاب المايسترو', 'page' => 40 + $i, 'qno' => $i + 1],
             ]);
             $q->tenant_id = $this->tenant->id;
             $q->academic_year_id = $year->id;
@@ -1282,6 +1381,16 @@ class AhmedTammamAcademySeeder extends Seeder
             'status' => 'paid',
             'reference_number' => (string) rand(100000, 999999),
             'processed_at' => now()->subDays(rand(1, 20)),
+            // The gateway callback body, kept verbatim for reconciliation.
+            'raw_payload' => [
+                'type' => 'TRANSACTION',
+                'obj' => [
+                    'success' => true,
+                    'amount_cents' => $total,
+                    'currency' => self::CURRENCY,
+                    'source_data' => ['type' => 'card', 'sub_type' => 'Visa'],
+                ],
+            ],
         ]);
         $payment->tenant_id = $this->tenant->id;
         $payment->save();
@@ -1359,6 +1468,10 @@ class AhmedTammamAcademySeeder extends Seeder
             'order_id' => $order->id,
             'number' => $next,
             'issued_at' => now(),
+            // A rendered PDF + the Egyptian e-invoice (ETA) receipt uuid returned
+            // when the invoice is reported to the tax authority.
+            'pdf_url' => 'https://ahmedtammam.com/invoices/'.$next.'.pdf',
+            'eta_receipt_uuid' => (string) Str::uuid(),
         ]);
         $inv->tenant_id = $this->tenant->id;
         $inv->save();
@@ -1379,7 +1492,11 @@ class AhmedTammamAcademySeeder extends Seeder
 
         $receipt = $this->receipts->submit($this->tenant->id, $user->id, $method, $amountMinor, $attachment->id, self::CURRENCY);
 
-        if ($outcome === 'approved') {
+        if ($outcome === 'corrected') {
+            // The teacher read a different figure on the slip than the student
+            // typed, so the wallet is credited with the corrected amount.
+            $this->receipts->approve($receipt, $this->teacher, (int) round($amountMinor * 0.9));
+        } elseif ($outcome === 'approved') {
             $this->receipts->approve($receipt, $this->teacher);
         } elseif ($outcome === 'rejected') {
             $this->receipts->reject($receipt, $this->teacher, 'الصورة غير واضحة، برجاء إعادة الإرسال.');
@@ -1392,9 +1509,17 @@ class AhmedTammamAcademySeeder extends Seeder
     private function progressAndAttempt(User $user, Lesson $lesson, bool $passed): void
     {
         $percent = $passed ? 100 : rand(30, 70);
+        // Tie the progress row to the grant it belongs to, so the enrollment ->
+        // progress join (used by reporting) is exercised.
+        $enrollmentId = Enrollment::query()
+            ->where('user_id', $user->id)
+            ->where('lesson_id', $lesson->id)
+            ->value('id');
+
         $prog = new LessonProgress([
             'lesson_id' => $lesson->id,
             'user_id' => $user->id,
+            'enrollment_id' => $enrollmentId,
             'watch_percent' => $percent,
             'watch_seconds' => (int) ($lesson->duration_sec * $percent / 100),
             'sessions_count' => rand(1, 5),
@@ -1540,6 +1665,10 @@ class AhmedTammamAcademySeeder extends Seeder
             'status' => $present ? 'present' : 'absent',
             'marked_by' => $this->teacher->id,
             'source' => 'center',
+            // `external_ref` is the offline-sync idempotency key the desktop
+            // center app sends; `note` is the teacher's free-text remark.
+            'external_ref' => 'sync-'.Str::lower(Str::random(12)),
+            'note' => $present ? 'حضر الحصة كاملة.' : 'تم إبلاغ ولي الأمر بالغياب.',
         ]);
         $rec->tenant_id = $this->tenant->id;
         $rec->academic_year_id = $year->id;
@@ -1583,6 +1712,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'score' => $score,
             'sat_on' => now()->subDays(rand(3, 20))->toDateString(),
             'entered_by' => $this->teacher->id,
+            'note' => $score >= $total / 2 ? 'مستوى جيد، يحتاج مراجعة الرسومات.' : 'يحتاج إعادة شرح الباب.',
         ]);
         $g->tenant_id = $this->tenant->id;
         $g->academic_year_id = $year->id;
@@ -1643,19 +1773,52 @@ class AhmedTammamAcademySeeder extends Seeder
         $wallet->tenant_id = $this->tenant->id;
         $wallet->save();
 
-        // A historical, already-redeemed content code (target not needed post-redeem).
-        $courseCode = new ActivationCode([
+        // A historical, already-redeemed CONTENT code. It keeps its target so the
+        // redemption history shows WHAT was granted (target_type/target_id are the
+        // only record of it once the code is spent).
+        $target = Package::query()->orderBy('id')->first();
+        $contentCode = new ActivationCode([
             'code' => 'CNT-'.strtoupper(Str::random(6)),
             'type' => CodeType::Content->value,
+            'target_type' => ActivationCode::TARGET_PACKAGE,
+            'target_id' => $target?->id,
             'center_id' => $this->centers[1]->id,
             'generated_by' => $this->teacher->id,
-            'batch' => 'batch-course-1',
+            'batch' => 'batch-content-1',
             'status' => CodeStatus::Redeemed->value,
             'redeemed_by' => User::query()->where('phone', '01200130002')->value('id'),
             'redeemed_at' => now()->subDays(10),
+            'expires_at' => now()->addMonths(6),
         ]);
-        $courseCode->tenant_id = $this->tenant->id;
-        $courseCode->save();
+        $contentCode->tenant_id = $this->tenant->id;
+        $contentCode->save();
+
+        // A disabled code and an expired one — the two non-redeemable branches.
+        $disabled = new ActivationCode([
+            'code' => 'WAL-'.strtoupper(Str::random(6)),
+            'type' => CodeType::Wallet->value,
+            'amount_minor' => 10000,
+            'center_id' => $this->centers[0]->id,
+            'generated_by' => $this->teacher->id,
+            'batch' => 'batch-wallet-1',
+            'status' => CodeStatus::Disabled->value,
+            'expires_at' => now()->addMonths(3),
+        ]);
+        $disabled->tenant_id = $this->tenant->id;
+        $disabled->save();
+
+        $expired = new ActivationCode([
+            'code' => 'WAL-'.strtoupper(Str::random(6)),
+            'type' => CodeType::Wallet->value,
+            'amount_minor' => 5000,
+            'center_id' => $this->centers[0]->id,
+            'generated_by' => $this->teacher->id,
+            'batch' => 'batch-wallet-0',
+            'status' => CodeStatus::Active->value,
+            'expires_at' => now()->subMonth(),
+        ]);
+        $expired->tenant_id = $this->tenant->id;
+        $expired->save();
     }
 
     // -- bulk cohort (divergence engine) --------------------------------------
@@ -1892,5 +2055,560 @@ class AhmedTammamAcademySeeder extends Seeder
         $b->save();
 
         return $b;
+    }
+
+    // ------------------------------------------------- operational trail (gaps)
+
+    /**
+     * Everything the happy paths above never write.
+     *
+     * The rest of this seeder models what a working academy LOOKS like; this fills
+     * the columns and tables that only appear once something is retried, archived,
+     * revoked, corrected or delivered — the media pipeline's intermediate rows, the
+     * notification delivery trail, soft-deleted content, expiring grants. Without
+     * them a freshly seeded database leaves ~70 nullable columns and 6 tables
+     * completely empty, so every screen that reads them renders a blank.
+     *
+     * Deliberately NOT seeded: `cache`, `cache_locks`, `jobs`, `job_batches`,
+     * `failed_jobs`, `sessions`, `password_reset_tokens` and
+     * `personal_access_tokens` are runtime scratch tables owned by the framework —
+     * rows there are transient state, not fixtures.
+     */
+    private function seedOperationalTrail(): void
+    {
+        $year3 = $this->years['الثالث الثانوي'];
+        $s1 = User::query()->where('phone', '01200130001')->first();
+        $s2 = User::query()->where('phone', '01200130002')->first();
+        $s3 = User::query()->where('phone', '01200130003')->first();
+
+        $this->trailMediaPipeline($year3, $s1);
+        $this->trailNotificationDelivery($s1);
+        $this->trailArchivedAndRevoked($year3, $s1, $s2);
+        $this->trailGrantsAndGrading($year3, $s1, $s2, $s3);
+        $this->trailPlatformRecords();
+    }
+
+    /**
+     * The media pipeline end to end: a fully-described READY asset, the upload
+     * session + host callback that produced it, a per-student encrypted HLS
+     * rendition, an issued playback token, and a FAILED version (the retry branch).
+     */
+    private function trailMediaPipeline(AcademicYear $year, ?User $student): void
+    {
+        $asset = MediaAsset::query()->whereNotNull('current_version_id')->first();
+
+        if ($asset === null) {
+            return;
+        }
+
+        // Fill in what a real transcode writes back onto the asset.
+        $asset->forceFill([
+            'thumbnail_url' => 'https://cdn.ahmedtammam.com/thumbs/'.$asset->uuid.'.jpg',
+            'source_key' => 'uploads/'.$asset->uuid.'/master.mp4',
+            'hls_path' => 'hls/'.$asset->uuid.'/index.m3u8',
+            'encryption_key_ref' => 'kms://elameed/media/'.$asset->uuid,
+            'renditions' => [
+                ['height' => 360, 'bitrate_kbps' => 800],
+                ['height' => 720, 'bitrate_kbps' => 2500],
+                ['height' => 1080, 'bitrate_kbps' => 5000],
+            ],
+            'size_bytes' => 734003200,
+            'url' => 'https://cdn.ahmedtammam.com/hls/'.$asset->uuid.'/index.m3u8',
+            'watermark_policy' => 'student_phone',
+            'access_scope' => 'enrolled',
+        ])->save();
+
+        // Point the lesson (and its video part) at the uploaded asset, and switch the
+        // active source away from YouTube — the `upload` branch of the player.
+        $ownerLesson = Lesson::query()->whereKey($asset->lesson_id)->first();
+
+        if ($ownerLesson !== null) {
+            $ownerLesson->forceFill([
+                'video_asset_id' => $asset->id,
+                'active_video_source' => VideoSource::Upload->value,
+            ])->save();
+
+            LessonSection::query()
+                ->where('lesson_id', $ownerLesson->id)
+                ->where('type', LessonSectionType::Video->value)
+                ->update(['media_asset_id' => $asset->id]);
+        }
+
+        $ready = MediaVersion::query()->where('media_asset_id', $asset->id)->orderBy('version')->first();
+
+        if ($ready !== null) {
+            $ready->forceFill([
+                'thumbnail_url' => 'https://cdn.ahmedtammam.com/thumbs/v1-'.$asset->uuid.'.jpg',
+                'meta' => ['width' => 1920, 'height' => 1080, 'fps' => 30, 'codec' => 'h264'],
+            ])->save();
+
+            // The upload intent that produced this version.
+            $session = new MediaUploadSession([
+                'media_version_id' => $ready->id,
+                'created_by' => $this->teacher->id,
+                'idempotency_key' => (string) Str::uuid(),
+                'host_upload_id' => 'up_'.Str::lower(Str::random(20)),
+                'upload_url' => 'https://upload.bunnycdn.com/'.Str::lower(Str::random(18)),
+                'protocol' => 'tus',
+                'size_bytes' => 734003200,
+                'max_bytes' => 2147483648,
+                'content_type' => 'video/mp4',
+                'checksum_sha256' => hash('sha256', 'master.mp4'),
+                'state' => 'completed',
+                'expires_at' => now()->subMonths(3)->addHours(6),
+            ]);
+            $session->tenant_id = $this->tenant->id;
+            $session->save();
+
+            // The host's "asset ready" webhook, already processed (idempotency row).
+            MediaCallbackEvent::create([
+                'event_id' => 'evt_'.Str::lower(Str::random(24)),
+                'tenant_id' => $this->tenant->id,
+                'media_version_id' => $ready->id,
+                'type' => 'video.ready',
+                'payload_hash' => hash('sha256', 'video.ready|'.$ready->id),
+                'processed_at' => now()->subMonths(3),
+            ]);
+
+            // A per-student encrypted HLS rendition (ready) + one that failed.
+            if ($student !== null) {
+                $rend = new MediaRendition([
+                    'media_asset_id' => $asset->id,
+                    'user_id' => $student->id,
+                    'status' => 'ready',
+                    'hls_dir' => 'renditions/'.$asset->uuid.'/'.$student->id,
+                    'enc_key' => bin2hex(random_bytes(16)),
+                    'iv' => bin2hex(random_bytes(8)),
+                    'segment_count' => 360,
+                ]);
+                $rend->tenant_id = $this->tenant->id;
+                $rend->save();
+
+                $failedRend = new MediaRendition([
+                    'media_asset_id' => $asset->id,
+                    'user_id' => $this->teacher->id,
+                    'status' => 'failed',
+                    'hls_dir' => 'renditions/'.$asset->uuid.'/'.$this->teacher->id,
+                    'enc_key' => bin2hex(random_bytes(16)),
+                    'iv' => bin2hex(random_bytes(8)),
+                    'segment_count' => 0,
+                    'error' => 'ffmpeg exited with code 1: no such filter "watermark"',
+                ]);
+                $failedRend->tenant_id = $this->tenant->id;
+                $failedRend->save();
+
+                // Two issued playback tokens: one live, one revoked (device switch).
+                $live = new PlaybackSession([
+                    'user_id' => $student->id,
+                    'lesson_id' => $asset->lesson_id,
+                    'media_asset_id' => $asset->id,
+                    'media_version_id' => $ready->id,
+                    'token_hash' => hash('sha256', Str::random(40)),
+                    'device_fingerprint' => hash('sha256', 'android-13-chrome'),
+                    'ip' => '156.200.10.15',
+                    'issued_at' => now()->subMinutes(20),
+                    'expires_at' => now()->addHours(4),
+                ]);
+                $live->tenant_id = $this->tenant->id;
+                $live->scope = 'lesson';
+                $live->save();
+
+                $revoked = new PlaybackSession([
+                    'user_id' => $student->id,
+                    'lesson_id' => $asset->lesson_id,
+                    'media_asset_id' => $asset->id,
+                    'media_version_id' => $ready->id,
+                    'token_hash' => hash('sha256', Str::random(40)),
+                    'device_fingerprint' => hash('sha256', 'windows-11-edge'),
+                    'ip' => '197.54.1.1',
+                    'issued_at' => now()->subDays(2),
+                    'expires_at' => now()->subDays(2)->addHours(4),
+                    'revoked_at' => now()->subDays(2)->addMinutes(30),
+                ]);
+                $revoked->tenant_id = $this->tenant->id;
+                $revoked->scope = 'lesson';
+                $revoked->save();
+            }
+        }
+
+        // A version whose transcode FAILED — the state the retry UI acts on.
+        $failed = new MediaVersion([
+            'media_asset_id' => $asset->id,
+            'version' => 2,
+            'provider' => 'bunny',
+            'state' => MediaVersionState::Failed->value,
+            'host_video_id' => (string) Str::uuid(),
+            'error' => 'Transcode failed: source audio stream is corrupt at 00:41:12.',
+        ]);
+        $failed->tenant_id = $this->tenant->id;
+        $failed->save();
+    }
+
+    /**
+     * The notification delivery trail: a tenant-authored template (overriding the
+     * system one) with its translations and authorship, a per-channel delivery log,
+     * and a hard failure. Also back-links the legacy `notifications` row to its
+     * template, which is the only thing that explains what rendered it.
+     */
+    private function trailNotificationDelivery(?User $student): void
+    {
+        $type = NotificationType::query()->where('key', 'lessons.lesson.available')->first();
+
+        if ($type === null || $student === null) {
+            return;
+        }
+
+        // A TENANT-scoped template: the teacher rewrote the platform default.
+        $template = NotificationTemplate::create([
+            'notification_type_id' => $type->id,
+            'scope' => 'tenant',
+            'tenant_id' => $this->tenant->id,
+            'channel' => NotificationChannel::Database->value,
+            'is_active' => true,
+            'created_by' => $this->teacher->id,
+            'edited_by' => $this->teacher->id,
+        ]);
+
+        foreach ([['ar', 'محاضرة جديدة', 'تم إتاحة محاضرة «:lesson» — ابدأ المشاهدة الآن.'],
+            ['en', 'New lecture', 'The lecture ":lesson" is now available.']] as [$lang, $title, $body]) {
+            NotificationTemplateTranslation::create([
+                'notification_template_id' => $template->id,
+                'language' => $lang,
+                'title' => $title,
+                'body' => $body,
+                'created_by' => $this->teacher->id,
+                'edited_by' => $this->teacher->id,
+            ]);
+        }
+
+        // Authorship on the SYSTEM templates the catalog seeder created, so the
+        // "who last edited this" column is never blank on the platform-admin screen.
+        NotificationTemplate::query()
+            ->whereNull('created_by')
+            ->update(['created_by' => $this->teacher->id, 'edited_by' => $this->teacher->id]);
+        NotificationTemplateTranslation::query()
+            ->whereNull('created_by')
+            ->update(['created_by' => $this->teacher->id, 'edited_by' => $this->teacher->id]);
+
+        // Delivery log per attempt on the in-app message.
+        $message = NotificationMessage::query()->where('user_id', $student->id)->first();
+
+        if ($message !== null) {
+            foreach ([['queued', []], ['sent', ['provider' => 'database']], ['read', ['at' => now()->toIso8601String()]]] as [$status, $meta]) {
+                NotificationLog::create([
+                    'notification_id' => $message->id,
+                    'status' => $status,
+                    'metadata' => $meta,
+                ]);
+            }
+        }
+
+        // An SMS that could not be delivered — the failure surface.
+        $event = NotificationEvent::query()->where('tenant_id', $this->tenant->id)->first();
+
+        if ($event !== null) {
+            NotificationFailure::create([
+                'notification_event_id' => $event->id,
+                'user_id' => $student->id,
+                'channel' => NotificationChannel::Sms->value,
+                'error_message' => 'SMS gateway rejected the number: SUBSCRIBER_UNREACHABLE.',
+            ]);
+        }
+
+        // The legacy row now records which template rendered it.
+        Notification::query()
+            ->where('tenant_id', $this->tenant->id)
+            ->whereNull('template_id')
+            ->update(['template_id' => $template->id]);
+    }
+
+    /**
+     * Archived + revoked rows: a soft-deleted exam and comment, a retired platform
+     * package, a consumed OTP, a used magic link. All of these are states the UI
+     * has a branch for and never reaches on a happy-path seed.
+     */
+    private function trailArchivedAndRevoked(AcademicYear $year, ?User $s1, ?User $s2): void
+    {
+        // An archived (soft-deleted) standalone exam.
+        $archived = new Exam([
+            'title' => 'اختبار تجريبي — مؤرشف',
+            'pass_percent' => 50,
+            'pass_mode' => ExamPassMode::Percent->value,
+            'attempts_allowed' => 1,
+            'duration_min' => 20,
+            'is_published' => false,
+            'show_answers' => false,
+            'starts_at' => now()->subMonths(8),
+            'ends_at' => now()->subMonths(7),
+        ]);
+        $archived->tenant_id = $this->tenant->id;
+        $archived->academic_year_id = $year->id;
+        $archived->type = ExamType::FreeExam->value;
+        $archived->grading_mode = ExamGradingMode::Auto->value;
+        $archived->total_marks = 10;
+        $archived->save();
+        $archived->delete();
+
+        // A comment the teacher removed.
+        if ($s2 !== null) {
+            $lesson = Lesson::query()->where('academic_year_id', $year->id)->orderBy('id')->first();
+            if ($lesson !== null) {
+                $removed = new Comment([
+                    'lesson_id' => $lesson->id,
+                    'user_id' => $s2->id,
+                    'body' => 'تعليق مخالف تم حذفه بواسطة المعلّم.',
+                    'status' => CommentStatus::Closed->value,
+                    'is_hidden' => true,
+                ]);
+                $removed->tenant_id = $this->tenant->id;
+                $removed->academic_year_id = $year->id;
+                $removed->save();
+                $removed->delete();
+            }
+        }
+
+        // Chain two of the year's lesson quizzes: the second cannot be taken until
+        // the first is passed. `depends_on_exam_id` is the exam-level prerequisite
+        // (distinct from the section-level ContentDependency seeded earlier).
+        $chain = Exam::query()
+            ->where('academic_year_id', $year->id)
+            ->where('type', ExamType::LessonQuiz->value)
+            ->orderBy('id')
+            ->limit(2)
+            ->get();
+
+        if ($chain->count() === 2) {
+            $chain[1]->forceFill(['depends_on_exam_id' => $chain[0]->id])->save();
+        }
+
+        // A retired platform subscription package.
+        $retired = SubscriptionPackage::firstOrCreate(
+            ['slug' => 'legacy-basic'],
+            [
+                'name' => 'الباقة الأساسية (متوقفة)',
+                'description' => 'باقة قديمة لم تعد متاحة للاشتراك الجديد.',
+                'price_minor' => 19900,
+                'currency' => self::CURRENCY,
+                'interval' => BillingInterval::Monthly->value,
+                'trial_days' => 0,
+                'limits' => ['max_students' => 100, 'max_courses' => 3, 'storage_mb' => 5120, 'max_assistants' => 1],
+                'is_active' => false,
+                'sort_order' => 0,
+            ],
+        );
+        $retired->delete();
+
+        // A consumed OTP (the login code the student actually used).
+        OtpCodeModel::create([
+            'identifier' => '01200130001',
+            'channel' => 'sms',
+            'purpose' => OtpPurpose::Login->value,
+            'code_hash' => hash('sha256', '654321'),
+            'attempts' => 1,
+            'expires_at' => now()->subMinutes(50),
+            'consumed_at' => now()->subMinutes(55),
+        ]);
+
+        // The parent has opened their magic link at least once.
+        ParentMagicLink::query()
+            ->where('tenant_id', $this->tenant->id)
+            ->update(['last_used_at' => now()->subDays(3)]);
+
+        unset($s1);
+    }
+
+    /**
+     * Grant + grading edge states: an expiring enrollment, a locked access window,
+     * decided extension requests, a manually-graded essay attempt with feedback and
+     * a corrected file, and section-level access overrides (one live, one revoked).
+     */
+    private function trailGrantsAndGrading(AcademicYear $year, ?User $s1, ?User $s2, ?User $s3): void
+    {
+        // A time-boxed grant — `expires_at` is what the "access ends in N days"
+        // banner reads; a permanent grant leaves it null.
+        Enrollment::query()
+            ->where('tenant_id', $this->tenant->id)
+            ->where('source', EnrollmentSource::Center->value)
+            ->whereNull('expires_at')
+            ->limit(3)
+            ->update(['expires_at' => now()->addDays(30)]);
+
+        // Fall back to any grant if the seeder produced no center-sourced ones, so
+        // the column is never left entirely null.
+        if (Enrollment::query()->whereNotNull('expires_at')->doesntExist()) {
+            $any = Enrollment::query()->orderBy('id')->limit(3)->pluck('id');
+            Enrollment::query()->whereIn('id', $any)->update(['expires_at' => now()->addDays(30)]);
+        }
+
+        // A window the student burned through: locked, no extensions left.
+        $window = LessonAccessWindow::query()->orderBy('id')->first();
+
+        if ($window !== null) {
+            $window->forceFill([
+                'locked_at' => now()->subDays(1),
+                'extensions_used' => 2,
+            ])->save();
+
+            // …and the two decided extension requests that led there.
+            foreach ([[ExtensionStatus::Granted, 3], [ExtensionStatus::Denied, 1]] as [$status, $daysAgo]) {
+                $req = new LessonExtensionRequest([
+                    'access_window_id' => $window->id,
+                    'user_id' => $window->user_id,
+                    'status' => $status->value,
+                    'requested_at' => now()->subDays($daysAgo + 1),
+                    'decided_at' => now()->subDays($daysAgo),
+                    'decided_by' => $this->teacher->id,
+                ]);
+                $req->tenant_id = $this->tenant->id;
+                $req->academic_year_id = $window->academic_year_id;
+                $req->save();
+            }
+        }
+
+        // A manually-graded essay attempt: teacher feedback + the annotated file
+        // handed back to the student.
+        $essayAttempt = ExamAttempt::query()
+            ->where('status', AttemptStatus::Graded->value)
+            ->orderBy('id')
+            ->first();
+
+        if ($essayAttempt !== null) {
+            $essayAttempt->forceFill([
+                'feedback' => 'إجابة جيدة، لكن راجع ترتيب خطوات التنسيق الهرموني وأضف مثالاً عملياً.',
+                'corrected_file' => [
+                    'storage_key' => 'corrections/'.Str::uuid().'.pdf',
+                    'mime' => 'application/pdf',
+                    'size_bytes' => 184320,
+                    'corrected_by' => $this->teacher->id,
+                ],
+            ])->save();
+        }
+
+        // Section-level access overrides: one live grant on a single PART of a
+        // lesson, and one that was later revoked.
+        $section = LessonSection::query()
+            ->where('academic_year_id', $year->id)
+            ->where('type', LessonSectionType::Pdf->value)
+            ->orderBy('id')
+            ->first();
+
+        if ($section !== null && $s3 !== null) {
+            $live = new ContentAccessOverride([
+                'user_id' => $s3->id,
+                'academic_year_id' => $year->id,
+                'lesson_id' => $section->lesson_id,
+                'section_id' => $section->id,
+                'granted_by' => $this->teacher->id,
+                'note' => 'سمحنا له بالخريطة الذهنية فقط قبل الشراء.',
+                'granted_at' => now()->subDays(5),
+            ]);
+            $live->tenant_id = $this->tenant->id;
+            $live->save();
+
+            if ($s2 !== null) {
+                $revoked = new ContentAccessOverride([
+                    'user_id' => $s2->id,
+                    'academic_year_id' => $year->id,
+                    'lesson_id' => $section->lesson_id,
+                    'section_id' => $section->id,
+                    'granted_by' => $this->teacher->id,
+                    'note' => 'صلاحية مؤقتة انتهت.',
+                    'granted_at' => now()->subDays(20),
+                    'revoked_at' => now()->subDays(6),
+                ]);
+                $revoked->tenant_id = $this->tenant->id;
+                $revoked->save();
+            }
+        }
+
+        // Attach the homework file the student handed in to its section, so
+        // `attachments.attachable_*` (the polymorphic link) and `duration_sec` are
+        // both exercised — an audio answer carries a length.
+        $homework = LessonSection::query()
+            ->where('academic_year_id', $year->id)
+            ->where('type', LessonSectionType::Homework->value)
+            ->orderBy('id')
+            ->first();
+
+        if ($homework !== null && $s1 !== null) {
+            $file = new Attachment([
+                'attachable_type' => LessonSection::class,
+                'attachable_id' => $homework->id,
+                'kind' => 'audio',
+                'storage_key' => 'homework/'.Str::uuid().'.m4a',
+                'mime' => 'audio/mp4',
+                'size_bytes' => 2411724,
+                'duration_sec' => 187,
+                'uploaded_by' => $s1->id,
+            ]);
+            $file->tenant_id = $this->tenant->id;
+            $file->save();
+        }
+    }
+
+    /**
+     * Platform-level records: the tenant's own DB connection name, subscription
+     * lifecycle stamps (trial, renewal metadata) plus a previously-canceled
+     * subscription, and the content-targeted coupon bound to a real package.
+     */
+    private function trailPlatformRecords(): void
+    {
+        // Dormant column: set to the connection this tenant actually lives on, so
+        // if per-tenant databases ever land the value resolves instead of pointing
+        // at a connection that was never configured.
+        $this->tenant->forceFill(['dedicated_db_connection' => config('database.default')])->save();
+
+        // The live subscription: trial window + the renewal metadata the billing
+        // screen shows.
+        $active = TenantSubscription::query()
+            ->where('tenant_id', $this->tenant->id)
+            ->orderByDesc('id')
+            ->first();
+
+        if ($active !== null) {
+            $active->forceFill([
+                'trial_ends_at' => now()->subMonths(9)->addDays(14),
+                'meta' => ['auto_renew' => true, 'seats' => 500, 'invoice_email' => 'billing@ahmedtammam.com'],
+            ])->save();
+
+            // A previous subscription the academy canceled when it upgraded — the
+            // only rows that ever carry `ends_at` / `canceled_at`.
+            $starter = SubscriptionPackage::query()->where('slug', 'starter')->first();
+            if ($starter !== null) {
+                TenantSubscription::create([
+                    'tenant_id' => $this->tenant->id,
+                    'package_id' => $starter->id,
+                    'status' => SubscriptionStatus::Canceled->value,
+                    'price_minor' => $starter->price_minor,
+                    'currency' => self::CURRENCY,
+                    'started_at' => now()->subMonths(14),
+                    'trial_ends_at' => now()->subMonths(14)->addDays(14),
+                    'renews_at' => now()->subMonths(9),
+                    'ends_at' => now()->subMonths(9),
+                    'canceled_at' => now()->subMonths(9)->subDays(3),
+                    'meta' => ['auto_renew' => false, 'cancel_reason' => 'upgraded_to_pro'],
+                ]);
+            }
+        }
+
+        // A closed academy (soft-deleted): the platform-admin console has a trashed
+        // branch, and nothing else in the seed ever produces one. Content-free, so
+        // it cannot leak into any tenant-scoped query.
+        $closed = Tenant::create([
+            'slug' => 'closed-academy',
+            'name' => 'أكاديمية مغلقة (أرشيف)',
+            'status' => TenantStatus::Suspended->value,
+        ]);
+        $closed->delete();
+
+        // Bind the content-targeted coupon now that packages exist.
+        $package = Package::query()->orderBy('id')->first();
+
+        if ($package !== null) {
+            Coupon::query()
+                ->where('tenant_id', $this->tenant->id)
+                ->where('code', 'PKG10')
+                ->update(['target_type' => Coupon::TARGET_PACKAGE, 'target_id' => $package->id]);
+        }
     }
 }
