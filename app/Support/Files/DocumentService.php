@@ -195,6 +195,18 @@ class DocumentService
         );
     }
 
+    /** Raw bytes, for callers that need the contents rather than a response. */
+    public function contents(Document $document): string
+    {
+        $disk = Storage::disk($document->disk);
+
+        if (! $disk->exists($document->storage_key)) {
+            throw DocumentException::missingBlob($document->storage_key, $document->disk);
+        }
+
+        return (string) $disk->get($document->storage_key);
+    }
+
     public function download(Document $document): StreamedResponse
     {
         $disk = Storage::disk($document->disk);

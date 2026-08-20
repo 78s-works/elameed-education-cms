@@ -3,8 +3,10 @@
 namespace App\Modules\Tenancy\Models;
 
 use App\Modules\Tenancy\Support\LandingSchema;
+use App\Support\Files\Models\Document;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * Per-tenant branding + landing configuration (one row per tenant).
@@ -29,9 +31,9 @@ class TeacherProfile extends Model
     public const LANDING_SECTION_KEYS = LandingSchema::TYPES;
 
     protected $fillable = [
-        'logo_url',
-        'favicon_url',
-        'cover_url',
+        'logo_document_id',
+        'favicon_document_id',
+        'cover_document_id',
         'primary_color',
         'secondary_color',
         'bio',
@@ -71,4 +73,41 @@ class TeacherProfile extends Model
         'registration_verification_mode' => 'string',
         'custom_landing_enabled' => 'boolean',
     ];
+
+    // — branding assets —
+    //
+    // The three images are documents now, so they appear in the files tab and
+    // count toward storage like everything else. They stay PUBLIC and keep their
+    // `*_url` shape on the wire: a logged-out visitor has to load the academy's
+    // logo, so there is nothing to gate and nothing for clients to change.
+
+    public function logoDocument(): BelongsTo
+    {
+        return $this->belongsTo(Document::class, 'logo_document_id');
+    }
+
+    public function faviconDocument(): BelongsTo
+    {
+        return $this->belongsTo(Document::class, 'favicon_document_id');
+    }
+
+    public function coverDocument(): BelongsTo
+    {
+        return $this->belongsTo(Document::class, 'cover_document_id');
+    }
+
+    public function getLogoUrlAttribute(): ?string
+    {
+        return $this->logoDocument?->publicUrl();
+    }
+
+    public function getFaviconUrlAttribute(): ?string
+    {
+        return $this->faviconDocument?->publicUrl();
+    }
+
+    public function getCoverUrlAttribute(): ?string
+    {
+        return $this->coverDocument?->publicUrl();
+    }
 }

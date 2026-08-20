@@ -37,12 +37,14 @@ class GradingService
                 $needsManual = true;
                 $entry = ['answer' => $given, 'awarded' => null, 'is_correct' => null];
 
-                // Retain a file the student uploaded (via the file endpoint) before submitting.
-                $file = $existing[$q->id]['file'] ?? null;
-                if ($file !== null) {
-                    $entry['file'] = $file;
+                // Retain a file the student uploaded (via the file endpoint) before
+                // submitting — the document itself is attached to the attempt, so
+                // only its uuid travels in the answer.
+                $documentUuid = $existing[$q->id]['document_uuid'] ?? null;
+                if ($documentUuid !== null) {
+                    $entry['document_uuid'] = $documentUuid;
                     if ($given === null || $given === '') {
-                        $entry['answer'] = $existing[$q->id]['answer'] ?? ($file['name'] ?? null);
+                        $entry['answer'] = $existing[$q->id]['answer'] ?? null;
                     }
                 }
 
@@ -56,13 +58,13 @@ class GradingService
     /**
      * Apply teacher-assigned points to the pending (manual) answers, then
      * recompute the total and finalise the attempt if nothing is left pending.
-     * Optional written feedback + a corrected-file pointer (upload homework) are
-     * stored alongside, and surfaced to the student once graded.
+     * Optional written feedback is stored alongside and surfaced to the student
+     * once graded. The corrected/annotated file is a document attached to the
+     * attempt, written by the caller — it is not part of this payload.
      *
      * @param  array<int|string, int>  $grades  question_id => points
-     * @param  array{path: string, name: string, size: int, mime: string}|null  $correctedFile
      */
-    public function applyManualGrades(ExamAttempt $attempt, array $grades, ?string $feedback = null, ?array $correctedFile = null): ExamAttempt
+    public function applyManualGrades(ExamAttempt $attempt, array $grades, ?string $feedback = null): ExamAttempt
     {
         $answers = $attempt->answers ?? [];
         $pointsByQuestion = $attempt->exam->questions->pluck('points', 'id');
@@ -86,13 +88,10 @@ class GradingService
             'status' => $stillPending ? 'submitted' : 'graded',
         ];
 
-        // Only overwrite feedback/corrected-file when the caller supplied one, so a
-        // re-grade without them keeps what was attached before.
+        // Only overwrite feedback when the caller supplied one, so a re-grade
+        // without it keeps what was written before.
         if ($feedback !== null) {
             $payload['feedback'] = $feedback;
-        }
-        if ($correctedFile !== null) {
-            $payload['corrected_file'] = $correctedFile;
         }
 
         $attempt->update($payload);

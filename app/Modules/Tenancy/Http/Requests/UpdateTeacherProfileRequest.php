@@ -2,7 +2,10 @@
 
 namespace App\Modules\Tenancy\Http\Requests;
 
+use App\Support\Files\Enums\DocumentPurpose;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Exists;
 
 class UpdateTeacherProfileRequest extends FormRequest
 {
@@ -11,14 +14,24 @@ class UpdateTeacherProfileRequest extends FormRequest
         return true; // authorized by the role:teacher middleware
     }
 
+    /** The uuid must belong to this tenant and be an image we accepted as branding. */
+    private function documentExists(DocumentPurpose ...$purposes): Exists
+    {
+        return Rule::exists('documents', 'uuid')
+            ->whereIn('purpose', array_map(fn (DocumentPurpose $p) => $p->value, $purposes));
+    }
+
     public function rules(): array
     {
         $hex = 'regex:/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/';
 
         return [
-            'logo_url' => ['nullable', 'url', 'max:2048'],
-            'favicon_url' => ['nullable', 'url', 'max:2048'],
-            'cover_url' => ['nullable', 'url', 'max:2048'],
+            // Branding images are uploaded first (POST /teacher/landing/media),
+            // then referenced by uuid — so the profile can never point at a file
+            // the platform does not know about.
+            'logo_document_uuid' => ['nullable', 'uuid', $this->documentExists(DocumentPurpose::LandingImage, DocumentPurpose::BrandingLogo)],
+            'favicon_document_uuid' => ['nullable', 'uuid', $this->documentExists(DocumentPurpose::LandingImage, DocumentPurpose::BrandingFavicon)],
+            'cover_document_uuid' => ['nullable', 'uuid', $this->documentExists(DocumentPurpose::LandingImage, DocumentPurpose::BrandingCover)],
             'primary_color' => ['nullable', 'string', $hex],
             'secondary_color' => ['nullable', 'string', $hex],
             'bio' => ['nullable', 'string', 'max:2000'],

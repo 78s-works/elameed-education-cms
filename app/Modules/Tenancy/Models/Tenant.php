@@ -4,6 +4,7 @@ namespace App\Modules\Tenancy\Models;
 
 use App\Models\User;
 use App\Modules\Tenancy\Enums\TenantStatus;
+use App\Support\Files\Concerns\HasDocuments;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -23,6 +24,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class Tenant extends Model
 {
+    use HasDocuments;
     use HasUuids;
     use SoftDeletes;
 

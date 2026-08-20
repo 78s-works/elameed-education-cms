@@ -4,6 +4,7 @@ namespace App\Modules\Catalog\Models;
 
 use App\Modules\Catalog\Enums\AccessMode;
 use App\Support\Traits\BelongsToAcademicYear;
+use App\Support\Files\Models\Document;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -36,7 +37,7 @@ class Package extends Model
     protected $fillable = [
         'name',
         'description',
-        'cover_url',
+        'cover_document_id',
         'promo_video_url',
         'access_mode',
         'price_minor',
@@ -94,5 +95,20 @@ class Package extends Model
         return $item->item_type === PackageItem::TYPE_LESSON
             ? Lesson::find($item->item_id)
             : static::find($item->item_id);
+    }
+
+    /**
+     * Marketing cover. A document like every other stored file, but public — it
+     * renders on the storefront to visitors who are not logged in — so the wire
+     * shape stays `cover_url` and no client has to change.
+     */
+    public function coverDocument(): BelongsTo
+    {
+        return $this->belongsTo(Document::class, 'cover_document_id');
+    }
+
+    public function getCoverUrlAttribute(): ?string
+    {
+        return $this->coverDocument?->publicUrl();
     }
 }

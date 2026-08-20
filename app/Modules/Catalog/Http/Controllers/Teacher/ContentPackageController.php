@@ -7,6 +7,7 @@ use App\Modules\Catalog\Http\Requests\PackageRequest;
 use App\Modules\Catalog\Http\Resources\PackageItemResource;
 use App\Modules\Catalog\Http\Resources\PackageResource;
 use App\Modules\Catalog\Models\Package;
+use App\Support\Files\Models\Document;
 use App\Modules\Catalog\Models\PackageItem;
 use App\Modules\Catalog\Services\PackageItemService;
 use Illuminate\Http\JsonResponse;
@@ -50,7 +51,7 @@ class ContentPackageController
     public function store(PackageRequest $request): JsonResponse
     {
         // tenant_id + academic_year_id are auto-filled by the model traits.
-        $package = Package::create($request->validated());
+        $package = Package::create($this->resolveCover($request->validated()));
 
         return (new PackageResource($package->fresh()->load('items', 'packageType')))
             ->response()->setStatusCode(201);
@@ -70,7 +71,7 @@ class ContentPackageController
             $this->items->assertNarrowingAllowed($package, AccessMode::from($data['access_mode']));
         }
 
-        $package->update($data);
+        $package->update($this->resolveCover($data));
 
         return new PackageResource($package->load('items', 'packageType'));
     }
@@ -114,5 +115,29 @@ class ContentPackageController
         $this->items->reorder($package, $validated['order']);
 
         return PackageItemResource::collection($package->items()->get());
+    }
+
+    /**
+     * Swap the cover's uuid for the FK the row stores. The client references an
+     * already-uploaded document, so a package can never point at a file the
+     * platform is not tracking.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function resolveCover(array $data): array
+    {
+        if (! array_key_exists('cover_document_uuid', $data)) {
+            return $data;
+        }
+
+        $uuid = $data['cover_document_uuid'];
+        unset($data['cover_document_uuid']);
+
+        $data['cover_document_id'] = $uuid === null
+            ? null
+            : Document::where('uuid', $uuid)->value('id');
+
+        return $data;
     }
 }

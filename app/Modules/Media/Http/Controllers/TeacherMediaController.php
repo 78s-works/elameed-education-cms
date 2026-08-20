@@ -11,7 +11,12 @@ use App\Modules\Media\Http\Resources\MediaAssetResource;
 use App\Modules\Media\Models\MediaAsset;
 use App\Modules\Media\Services\MediaThumbnailService;
 use App\Modules\Media\Services\PlaybackService;
+use App\Modules\Identity\Enums\TenantUserRole;
+use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Services\TenantContext;
+use App\Support\Files\DocumentService;
+use App\Support\Files\Enums\DocumentPurpose;
+use App\Support\Files\StoreOptions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -36,6 +41,7 @@ class TeacherMediaController
         private readonly MediaProvider $provider,
         private readonly PlaybackService $playback,
         private readonly PlanLimitGuard $limits,
+        private readonly DocumentService $documents,
     ) {}
 
     public function startUpload(Request $request): JsonResponse
@@ -67,8 +73,10 @@ class TeacherMediaController
 
             // Direct local upload: store the source privately and mark it ready.
             // The encrypted, watermarked HLS is produced per viewer on first play.
-            $asset->source_key = $file->store('media/source', $this->disk());
-            $asset->size_bytes = $file->getSize();
+            $source = $this->documents->store($file, DocumentPurpose::VideoSource);
+
+            $asset->source_document_id = $source->getKey();
+            $asset->size_bytes = $source->size_bytes;
             $asset->status = MediaStatus::Ready->value;
             $asset->save();
 
@@ -105,15 +113,21 @@ class TeacherMediaController
             throw ValidationException::withMessages(['file' => 'The upload body was empty.']);
         }
 
-        $path = "media/source/{$uuid}.mp4";
-        Storage::disk($this->disk())->put($path, $bytes);
+        // The signed receiver runs without a tenant context (see the route), so
+        // the document is stamped with the asset's tenant and uploader explicitly.
+        $source = $this->documents->storeContents(
+            $bytes,
+            "{$uuid}.mp4",
+            DocumentPurpose::VideoSource,
+            new StoreOptions(ownerId: $this->academyOwnerId((int) $asset->tenant_id)),
+        );
 
         // Record the stored size so it counts toward the tenant's storage quota
         // (FR-M03-02). The async path can't pre-check at startUpload (size is
         // unknown then), so accounting lands here on receipt.
         $asset->forceFill([
-            'source_key' => $path,
-            'size_bytes' => strlen($bytes),
+            'source_document_id' => $source->getKey(),
+            'size_bytes' => $source->size_bytes,
             'status' => MediaStatus::Ready->value,
         ])->save();
         $this->attachThumbnail($asset);
@@ -185,9 +199,23 @@ class TeacherMediaController
     /** Best-effort local poster (remote videos get their thumbnail from the host callback). */
     private function attachThumbnail(MediaAsset $asset): void
     {
-        $url = app(MediaThumbnailService::class)->forLocalAsset($asset);
-        if ($url !== null) {
-            $asset->forceFill(['thumbnail_url' => $url])->save();
+        $document = app(MediaThumbnailService::class)->forLocalAsset($asset);
+
+        if ($document !== null) {
+            $asset->forceFill(['thumbnail_document_id' => $document->getKey()])->save();
         }
+    }
+
+    /**
+     * Who owns a file that arrives on the signed receiver. That route runs with
+     * no session — the signature is the auth — so the document is attributed to
+     * the academy's teacher, who is the only person it could belong to.
+     */
+    private function academyOwnerId(int $tenantId): int
+    {
+        return (int) TenantUser::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('role', TenantUserRole::Teacher->value)
+            ->value('user_id');
     }
 }

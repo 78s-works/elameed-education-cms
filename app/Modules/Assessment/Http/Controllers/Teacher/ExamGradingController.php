@@ -7,9 +7,12 @@ use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Assessment\Services\GradingService;
 use App\Modules\Engagement\Services\PointsService;
+use App\Support\Files\DocumentService;
+use App\Support\Files\Enums\DocumentPurpose;
+use App\Support\Files\Models\Document;
+use App\Support\Files\StoreOptions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -21,6 +24,7 @@ class ExamGradingController
     public function __construct(
         private readonly GradingService $grading,
         private readonly PointsService $points,
+        private readonly DocumentService $documents,
     ) {}
 
     public function submissions(Request $request, Exam $exam): JsonResponse
@@ -49,13 +53,12 @@ class ExamGradingController
     {
         abort_unless($attempt->exam_id === $exam->id, 404);
 
-        $correctedFile = $this->storeCorrectedFile($request, $exam, $attempt);
+        $this->storeCorrectedFile($request, $attempt);
 
         $attempt = $this->grading->applyManualGrades(
             $attempt,
             $request->validated('grades'),
             $request->validated('feedback'),
-            $correctedFile,
         );
 
         // Award points once the attempt is fully graded and passing.
@@ -77,44 +80,42 @@ class ExamGradingController
     }
 
     /**
-     * Store an optional teacher-attached corrected/annotated file on the private
-     * assignments disk, replacing any previous one. Returns the pointer to persist.
-     *
-     * @return array{path: string, name: string, size: int, mime: string}|null
+     * Attach the teacher's corrected/annotated return to the attempt, replacing
+     * any previous one. Storing it as a document means the old file is actually
+     * deleted rather than left behind, and the student's download goes through
+     * the same policy as every other private file.
      */
-    private function storeCorrectedFile(GradeAttemptRequest $request, Exam $exam, ExamAttempt $attempt): ?array
+    private function storeCorrectedFile(GradeAttemptRequest $request, ExamAttempt $attempt): ?Document
     {
         $file = $request->file('corrected_file');
+
         if ($file === null) {
             return null;
         }
 
-        $disk = (string) config('assessment.upload_disk', 'local');
+        $previous = $attempt->firstDocumentFor(DocumentPurpose::AssignmentCorrected);
 
-        $previous = $attempt->corrected_file['path'] ?? null;
         if ($previous !== null) {
-            Storage::disk($disk)->delete($previous);
+            $this->documents->delete($previous);
         }
 
-        $path = $file->store("assignments/{$exam->tenant_id}/{$attempt->id}/corrected", $disk);
-
-        return [
-            'path' => $path,
-            'name' => $file->getClientOriginalName(),
-            'size' => $file->getSize(),
-            'mime' => $file->getClientMimeType(),
-        ];
+        return $this->documents->store(
+            $file,
+            DocumentPurpose::AssignmentCorrected,
+            new StoreOptions(owner: $attempt),
+        );
     }
 
-    /** Public (name/size) view of the corrected file pointer, without the path. */
+    /** Public (name/size) view of the corrected file, without the storage key. */
     private function correctedFileInfo(ExamAttempt $attempt): ?array
     {
-        $file = $attempt->corrected_file;
-        if ($file === null || empty($file['path'])) {
-            return null;
-        }
+        $document = $attempt->firstDocumentFor(DocumentPurpose::AssignmentCorrected);
 
-        return ['name' => $file['name'] ?? null, 'size' => $file['size'] ?? null];
+        return $document === null ? null : [
+            'uuid' => $document->uuid,
+            'name' => $document->original_name,
+            'size' => $document->size_bytes,
+        ];
     }
 
     /** Download the file a student submitted for a `file`-type question. */
@@ -122,16 +123,16 @@ class ExamGradingController
     {
         abort_unless($attempt->exam_id === $exam->id, 404);
 
-        $file = $attempt->answers[$question]['file'] ?? null;
-        abort_if($file === null || empty($file['path']), 404, 'No file submitted for this question.');
+        $uuid = $attempt->answers[$question]['document_uuid'] ?? null;
+        abort_if($uuid === null, 404, 'No file submitted for this question.');
 
-        $disk = (string) config('assessment.upload_disk', 'local');
-        $path = (string) $file['path'];
+        $document = $attempt->documents()
+            ->ofPurpose(DocumentPurpose::AssignmentSubmission)
+            ->where('uuid', $uuid)
+            ->first();
 
-        // Submissions live only under assignments/; reject anything else.
-        abort_unless(str_starts_with($path, 'assignments/') && ! str_contains($path, '..'), 404);
-        abort_unless(Storage::disk($disk)->exists($path), 404);
+        abort_if($document === null, 404, 'No file submitted for this question.');
 
-        return Storage::disk($disk)->download($path, $file['name'] ?? basename($path));
+        return $this->documents->download($document);
     }
 }

@@ -5,6 +5,7 @@ namespace App\Modules\Media\Models;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Media\Enums\MediaStatus;
 use App\Modules\Media\Enums\MediaType;
+use App\Support\Files\Models\Document;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -29,9 +30,9 @@ class MediaAsset extends Model
         'status',
         'provider',
         'current_version_id',
-        'thumbnail_url',
+        'thumbnail_document_id',
         'title',
-        'source_key',
+        'source_document_id',
         'hls_path',
         'encryption_key_ref',
         'renditions',
@@ -75,5 +76,36 @@ class MediaAsset extends Model
     public function isRemote(): bool
     {
         return $this->provider === 'remote';
+    }
+
+    // — the two files behind a video —
+    //
+    // A video is not one file: the HLS pipeline owns the encrypted renditions,
+    // the keys and the versions, and none of that belongs in the documents
+    // ledger. What does belong there is the raw upload and the poster, so they
+    // show up in the academy's library and count toward storage.
+    //
+    // `source_key` and `thumbnail_url` survive as accessors on purpose: the
+    // transcoder, the thumbnailer and the playback service read them, and this
+    // change deliberately does not touch video playback code.
+
+    public function sourceDocument(): BelongsTo
+    {
+        return $this->belongsTo(Document::class, 'source_document_id');
+    }
+
+    public function thumbnailDocument(): BelongsTo
+    {
+        return $this->belongsTo(Document::class, 'thumbnail_document_id');
+    }
+
+    public function getSourceKeyAttribute(): ?string
+    {
+        return $this->sourceDocument?->storage_key;
+    }
+
+    public function getThumbnailUrlAttribute(): ?string
+    {
+        return $this->thumbnailDocument?->publicUrl();
     }
 }

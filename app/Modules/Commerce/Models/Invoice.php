@@ -2,6 +2,7 @@
 
 namespace App\Modules\Commerce\Models;
 
+use App\Support\Files\Models\Document;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -15,7 +16,7 @@ class Invoice extends Model
     protected $fillable = [
         'order_id',
         'number',
-        'pdf_url',
+        'pdf_document_id',
         'eta_receipt_uuid',
         'issued_at',
     ];
@@ -49,6 +50,12 @@ class Invoice extends Model
     /** A stored PDF path exists (does not verify the file is on disk). */
     public function hasPdf(): bool
     {
-        return is_string($this->pdf_url) && $this->pdf_url !== '';
+        return $this->pdf_document_id !== null;
+    }
+
+    /** The rendered PDF. Private — served only through the download endpoint. */
+    public function pdfDocument(): BelongsTo
+    {
+        return $this->belongsTo(Document::class, 'pdf_document_id');
     }
 }

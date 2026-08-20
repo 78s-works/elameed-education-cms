@@ -19,10 +19,13 @@ use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Engagement\Services\PointsService;
 use App\Modules\Tenancy\Services\TenantContext;
+use App\Support\Files\DocumentService;
+use App\Support\Files\Enums\DocumentPurpose;
+use App\Support\Files\Models\Document;
+use App\Support\Files\StoreOptions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
@@ -39,6 +42,7 @@ class AttemptController
         private readonly GradingService $grading,
         private readonly PointsService $points,
         private readonly ExamTimeExtensionService $timeExtensions,
+        private readonly DocumentService $documents,
     ) {}
 
     /**
@@ -194,26 +198,23 @@ class AttemptController
             throw new ConflictHttpException('This question does not accept a file answer.');
         }
 
-        $disk = $this->uploadDisk();
         $file = $request->file('file');
         $answers = $attempt->answers ?? [];
 
-        // Replace any file the student uploaded earlier for this question.
-        $previous = $answers[$question->id]['file']['path'] ?? null;
-        if ($previous !== null) {
-            Storage::disk($disk)->delete($previous);
-        }
+        // One submission per question: the earlier upload is deleted outright,
+        // not orphaned on disk the way the old path-in-JSON approach left it.
+        $this->submissionFor($attempt, (int) $question->id)
+            ?->tap(fn ($previous) => $this->documents->delete($previous));
 
-        $path = $file->store("assignments/{$exam->tenant_id}/{$attempt->id}", $disk);
+        $document = $this->documents->store(
+            $file,
+            DocumentPurpose::AssignmentSubmission,
+            new StoreOptions(owner: $attempt, meta: ['question_id' => (int) $question->id]),
+        );
 
         $answers[$question->id] = [
-            'answer' => $file->getClientOriginalName(),
-            'file' => [
-                'path' => $path,
-                'name' => $file->getClientOriginalName(),
-                'size' => $file->getSize(),
-                'mime' => $file->getClientMimeType(),
-            ],
+            'answer' => $document->original_name,
+            'document_uuid' => $document->uuid,
             'awarded' => null,
             'is_correct' => null,
         ];
@@ -222,14 +223,18 @@ class AttemptController
 
         return response()->json(['data' => [
             'question_id' => $question->id,
-            'name' => $file->getClientOriginalName(),
-            'size' => $file->getSize(),
+            'name' => $document->original_name,
+            'size' => $document->size_bytes,
         ]]);
     }
 
-    private function uploadDisk(): string
+    /** The student's current submission document for one question, if any. */
+    private function submissionFor(ExamAttempt $attempt, int $questionId): ?Document
     {
-        return (string) config('assessment.upload_disk', 'local');
+        return $attempt->documents()
+            ->ofPurpose(DocumentPurpose::AssignmentSubmission)
+            ->get()
+            ->first(fn (Document $d) => (int) ($d->meta['question_id'] ?? 0) === $questionId);
     }
 
     public function result(Request $request, Exam $exam, ExamAttempt $attempt): JsonResponse
@@ -244,17 +249,10 @@ class AttemptController
     {
         $this->assertOwned($request, $exam, $attempt);
 
-        $file = $attempt->corrected_file;
-        abort_if($file === null || empty($file['path']), 404, 'No corrected file for this attempt.');
+        $document = $attempt->firstDocumentFor(DocumentPurpose::AssignmentCorrected);
+        abort_if($document === null, 404, 'No corrected file for this attempt.');
 
-        $disk = $this->uploadDisk();
-        $path = (string) $file['path'];
-
-        // Corrected files live only under assignments/; reject anything else.
-        abort_unless(str_starts_with($path, 'assignments/') && ! str_contains($path, '..'), 404);
-        abort_unless(Storage::disk($disk)->exists($path), 404);
-
-        return Storage::disk($disk)->download($path, $file['name'] ?? basename($path));
+        return $this->documents->download($document);
     }
 
     // — guards —
@@ -346,11 +344,12 @@ class AttemptController
         if ($attempt->feedback !== null) {
             $data['feedback'] = $attempt->feedback;
         }
-        $corrected = $attempt->corrected_file;
-        if (is_array($corrected) && ! empty($corrected['path'])) {
+        $corrected = $attempt->firstDocumentFor(DocumentPurpose::AssignmentCorrected);
+        if ($corrected !== null) {
             $data['corrected_file'] = [
-                'name' => $corrected['name'] ?? null,
-                'size' => $corrected['size'] ?? null,
+                'uuid' => $corrected->uuid,
+                'name' => $corrected->original_name,
+                'size' => $corrected->size_bytes,
             ];
         }
 

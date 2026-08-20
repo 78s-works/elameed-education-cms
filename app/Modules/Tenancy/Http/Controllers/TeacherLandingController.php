@@ -8,9 +8,11 @@ use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Modules\Tenancy\Support\EntityVersion;
 use App\Modules\Tenancy\Support\LandingSchema;
+use App\Support\Files\DocumentService;
+use App\Support\Files\Enums\DocumentPurpose;
+use App\Support\Files\StoreOptions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 
 /**
  * GET/PUT /teacher/landing — landing authoring (FR-M02-04 + EDU enhancement):
@@ -21,7 +23,10 @@ use Illuminate\Support\Facades\Storage;
  */
 class TeacherLandingController
 {
-    public function __construct(private readonly TenantContext $context) {}
+    public function __construct(
+        private readonly TenantContext $context,
+        private readonly DocumentService $documents,
+    ) {}
 
     public function show(): JsonResponse
     {
@@ -80,9 +85,20 @@ class TeacherLandingController
             'file' => ['required', 'file', 'mimetypes:image/jpeg,image/png,image/webp,image/gif', 'max:5120'],
         ]);
 
-        $path = $request->file('file')->store('landing/'.$this->context->tenantOrFail()->getKey(), 'public');
+        $document = $this->documents->store(
+            $request->file('file'),
+            DocumentPurpose::LandingImage,
+            new StoreOptions(owner: $this->context->tenantOrFail()),
+        );
 
-        return response()->json(['data' => ['url' => Storage::disk('public')->url($path)]]);
+        // The URL is what goes into the landing JSON, exactly as before — the
+        // page builder stores plain public URLs and is not touched by this work.
+        // The uuid rides along so the client can reference the document itself
+        // (branding fields, the files tab) without a second lookup.
+        return response()->json(['data' => [
+            'uuid' => $document->uuid,
+            'url' => $document->publicUrl(),
+        ]]);
     }
 
     private function profile(): TeacherProfile
