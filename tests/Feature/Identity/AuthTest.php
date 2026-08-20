@@ -308,12 +308,15 @@ class AuthTest extends TestCase
 
         $user = User::where('phone', '01000000030')->firstOrFail();
 
-        // Center + study_mode + decoded grade all come from the code.
+        // Center + study_mode + the code's OWN academic year all come from the code.
+        // The label mirrors that year's real name (NOT the decoded grade label) —
+        // the pin is what the panel gates on, so it must never be null.
         $this->assertDatabaseHas('student_profiles', [
             'user_id' => $user->id,
             'center_id' => $center->id,
             'study_mode' => 'center',
-            'academic_year' => CenterIdCode::GRADE_LABELS[3], // grade 3 decoded
+            'academic_year_id' => $code->academic_year_id,
+            'academic_year' => AcademicYear::withoutGlobalScopes()->find($code->academic_year_id)->name,
         ]);
 
         // The code is consumed: redeemed + stamped with this student.
@@ -728,5 +731,66 @@ class AuthTest extends TestCase
             ->assertJsonPath('data.study_mode', 'online')
             ->assertJsonPath('data.center', null)
             ->assertJsonPath('data.academic_year.name', $year->name);
+    }
+
+    public function test_register_with_id_code_pins_the_year_even_when_names_differ(): void
+    {
+        // REGRESSION: the pin used to be a name-match between the code's decoded
+        // grade label ("الصف الثالث الثانوي") and an AcademicYear row. A teacher
+        // whose years are named anything else ("Year A", "3rd Sec", …) produced a
+        // student with academic_year_id = null, who was then refused the panel by
+        // LoginAction with `academic_year_required`. The code's own academic_year_id
+        // is the source of truth, so the name is irrelevant.
+        $this->setAccess(login: true, registration: true, verificationMode: 'auto');
+        $center = $this->center();
+        $year = new AcademicYear(['name' => 'Totally Unrelated Year Name', 'sort_order' => 3]);
+        $year->tenant_id = $this->tenant->id;
+        $year->save();
+
+        $code = $this->idCode($center, grade: 3, sequence: 11);
+        $code->academic_year_id = $year->id; // a year whose name matches no grade label
+        $code->save();
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Pinned Kid',
+            'phone' => '01000000040',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'id_code' => $code->code,
+        ])->assertCreated();
+
+        $user = User::where('phone', '01000000040')->firstOrFail();
+
+        $this->assertDatabaseHas('student_profiles', [
+            'user_id' => $user->id,
+            'academic_year_id' => $year->id,
+            'academic_year' => 'Totally Unrelated Year Name',
+        ]);
+
+        // …and the student can actually log in (the reported bug was a 403 here).
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/login', [
+            'identifier' => '01000000040',
+            'password' => 'password123',
+        ])->assertOk()->assertJsonPath('data.user.phone', '01000000040');
+    }
+
+    public function test_public_centers_lists_active_branches_of_this_tenant_only(): void
+    {
+        // The registration center picker reads this: `center` is validated as a
+        // uuid, so the student can only ever supply one from this list.
+        $mine = $this->center();
+        $inactive = new Center(['name' => 'Closed Branch', 'is_active' => false]);
+        $inactive->tenant_id = $this->tenant->id;
+        $inactive->save();
+
+        $other = Tenant::create(['slug' => 'other-c', 'name' => 'Other', 'status' => TenantStatus::Active]);
+        $foreign = $this->center($other);
+
+        $res = $this->withHeaders($this->tenantHeader())->getJson('/api/v1/centers')->assertOk();
+
+        $uuids = array_column($res->json('data'), 'uuid');
+        $this->assertContains($mine->uuid, $uuids);
+        $this->assertNotContains($inactive->uuid, $uuids);
+        $this->assertNotContains($foreign->uuid, $uuids);
     }
 }

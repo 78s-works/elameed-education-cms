@@ -100,13 +100,20 @@ class RegisterStudentAction
                 $idCode = $this->idCodes->consume($tenant->getKey(), $data['id_code'], $user);
                 $profile->center_id = $idCode->center_id;
                 $profile->study_mode = 'center';
-                $profile->academic_year = $idCode->gradeLabel();
-                // Best-effort pin: match the code's grade label to a real academic
-                // year by name so the student is scoped like the manual path. Stays
-                // null (unpinned) if the teacher has no year of that name.
-                $profile->academic_year_id = AcademicYear::query()
-                    ->where('name', $idCode->gradeLabel())
-                    ->value('id');
+                // Pin the student to the code's OWN academic year. center_id_codes
+                // carry a NOT-NULL academic_year_id (they are minted inside the
+                // `academic-year` middleware), so this always resolves — unlike the
+                // old name-match on the decoded grade label, which left the student
+                // unpinned whenever the teacher's year names differed from the three
+                // hardcoded labels. An unpinned student is then locked out of the
+                // panel by LoginAction/ResolveAcademicYear ('academic_year_required').
+                $year = AcademicYear::withoutGlobalScopes()
+                    ->whereKey($idCode->academic_year_id)
+                    ->first();
+                $profile->academic_year_id = $idCode->academic_year_id;
+                // Mirror the real year name into the free-text label (display only);
+                // fall back to the code's decoded grade label if the year vanished.
+                $profile->academic_year = $year->name ?? $idCode->gradeLabel();
             } elseif (! empty($data['center'])) {
                 $profile->center_id = Center::query()->where('uuid', $data['center'])->value('id');
             }
@@ -120,6 +127,17 @@ class RegisterStudentAction
                     $profile->academic_year_id = $year->getKey();
                     $profile->academic_year = $year->name;
                 }
+            }
+
+            // Last line of defence: NEVER persist a student without a pinned year.
+            // Both paths above guarantee one, so reaching here means the year was
+            // deleted between validation and this write — fail the whole
+            // registration (rolling back the user + membership + code redemption)
+            // instead of creating an account that can't ever log in.
+            if ($profile->academic_year_id === null) {
+                throw ValidationException::withMessages([
+                    'academic_year_uuid' => __('The selected grade is invalid.'),
+                ]);
             }
 
             $profile->save();

@@ -23,6 +23,7 @@ use App\Modules\Catalog\Http\Controllers\Teacher\LessonAvailabilityController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonController;
 use App\Modules\Catalog\Http\Controllers\Teacher\LessonSectionController;
 use App\Modules\Catalog\Http\Controllers\Teacher\PackageTypeController;
+use App\Modules\Centers\Http\Controllers\PublicCenterController;
 use App\Modules\Centers\Http\Controllers\RedeemCodeController;
 use App\Modules\Centers\Http\Controllers\StudentCenterExamGradeController;
 use App\Modules\Centers\Http\Controllers\Teacher\ActivationCodeController;
@@ -213,6 +214,11 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
     // Public academic-year (grade) list for the registration grade picker. Tenant-
     // scoped; NOT year-scoped (this is where a student picks their year).
     Route::get('/academic-years', [PublicCatalogController::class, 'academicYears']);
+
+    // Public center (branch) list for the registration center picker — a center
+    // student must pick the branch they attend, and `center` is validated as a
+    // uuid, which the student can only supply from this list.
+    Route::get('/centers', PublicCenterController::class)->middleware('throttle:public');
 
     // Identity, auth & OTP (M11) — public
     Route::post('/auth/register', [AuthController::class, 'register'])->middleware('throttle:otp');
