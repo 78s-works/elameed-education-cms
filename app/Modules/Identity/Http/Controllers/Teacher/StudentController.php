@@ -330,6 +330,7 @@ class StudentController
     private function profileFor(int $tenantId, int $userId): ?StudentProfile
     {
         return StudentProfile::withoutGlobalScopes()
+            ->with(['center', 'academicYear'])
             ->where('tenant_id', $tenantId)->where('user_id', $userId)->first();
     }
 
@@ -341,6 +342,10 @@ class StudentController
             'governorate' => $profile?->governorate,
             'region' => $profile?->region,
             'academic_year' => $profile?->academic_year,
+            // The pinned year's uuid, not just its display label: the panel scopes
+            // the grant picker to the STUDENT's year with it, so a teacher can't be
+            // shown content from whatever year they happen to have selected.
+            'academic_year_uuid' => $profile?->academicYear?->uuid,
             'education_type' => $profile?->education_type,
             'guardian_phone' => $profile?->guardian_phone,
             'study_mode' => $profile?->study_mode,

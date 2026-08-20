@@ -4,6 +4,7 @@ namespace App\Modules\Identity\Http\Controllers\Teacher;
 
 use App\Models\User;
 use App\Modules\Assessment\Models\Exam;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Commerce\Enums\EnrollmentSource;
@@ -12,9 +13,11 @@ use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Identity\Http\Controllers\Teacher\Concerns\ManagesTenantStudents;
 use App\Modules\Identity\Http\Requests\EnrollStudentRequest;
+use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
+use Illuminate\Validation\ValidationException;
 
 /**
  * A teacher granting/revoking a student's access directly (no payment) — e.g.
@@ -68,14 +71,16 @@ class StudentEnrollmentController
 
         // A package grant fans out into per-lesson rows — report the count, not one id.
         if ($type === 'package') {
-            $grants = $this->enrollments->grantPackage($tenantId, $userId, $this->findPackage($target), EnrollmentSource::Manual);
+            $package = $this->findPackage($target);
+            $this->assertSameYearAsStudent($tenantId, $userId, $package->academic_year_id);
+            $grants = $this->enrollments->grantPackage($tenantId, $userId, $package, EnrollmentSource::Manual);
 
             return response()->json(['data' => ['target_type' => 'package', 'granted' => $grants->count()]], 201);
         }
 
         $enrollment = match ($type) {
-            'lesson' => $this->enrollments->grantLesson($tenantId, $userId, $this->findLesson($target), EnrollmentSource::Manual),
-            'exam' => $this->enrollments->grantExam($tenantId, $userId, $this->findExam($target), EnrollmentSource::Manual),
+            'lesson' => $this->grantLesson($tenantId, $userId, $this->findLesson($target)),
+            'exam' => $this->grantExam($tenantId, $userId, $this->findExam($target)),
         };
 
         return response()->json(['data' => [
@@ -84,6 +89,50 @@ class StudentEnrollmentController
             'status' => $enrollment->status->value,
             'expires_at' => $enrollment->expires_at?->toIso8601String(),
         ]], 201);
+    }
+
+    private function grantLesson(int $tenantId, int $userId, Lesson $lesson): Enrollment
+    {
+        $this->assertSameYearAsStudent($tenantId, $userId, $lesson->academic_year_id);
+
+        return $this->enrollments->grantLesson($tenantId, $userId, $lesson, EnrollmentSource::Manual);
+    }
+
+    private function grantExam(int $tenantId, int $userId, Exam $exam): Enrollment
+    {
+        $this->assertSameYearAsStudent($tenantId, $userId, $exam->academic_year_id);
+
+        return $this->enrollments->grantExam($tenantId, $userId, $exam, EnrollmentSource::Manual);
+    }
+
+    /**
+     * A student is PINNED to one academic year and every student-facing query is
+     * scoped to it, so content from another year would be granted and then never
+     * appear for them — a silent no-op. The target resolves against the TEACHER's
+     * active year (the `academic-year` middleware), which is not necessarily the
+     * student's, so refuse the mismatch with a message naming both years instead.
+     */
+    private function assertSameYearAsStudent(int $tenantId, int $userId, ?int $targetYearId): void
+    {
+        $studentYearId = StudentProfile::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->where('user_id', $userId)
+            ->value('academic_year_id');
+
+        if ($targetYearId === null || $studentYearId === null || (int) $targetYearId === (int) $studentYearId) {
+            return;
+        }
+
+        $names = AcademicYear::withoutGlobalScopes()
+            ->whereIn('id', [$targetYearId, $studentYearId])
+            ->pluck('name', 'id');
+
+        throw ValidationException::withMessages([
+            'target' => __('This content belongs to :target, but the student is in :student. Switch to that academic year to grant them content.', [
+                'target' => $names[$targetYearId] ?? '#'.$targetYearId,
+                'student' => $names[$studentYearId] ?? '#'.$studentYearId,
+            ]),
+        ]);
     }
 
     private function findLesson(?string $id): Lesson

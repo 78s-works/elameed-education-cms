@@ -11,6 +11,7 @@ use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\LoginAttempt;
+use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
@@ -285,5 +286,76 @@ class TeacherStudentManagementTest extends TestCase
         $this->withHeaders($this->h)
             ->postJson("/api/v1/teacher/students/{$otherStudent->uuid}/wallet/adjust", ['amount_minor' => 100, 'direction' => 'credit'])
             ->assertStatus(404);
+    }
+
+    public function test_grant_is_refused_when_the_content_is_from_another_year(): void
+    {
+        // A student is pinned to ONE academic year and every student-facing query
+        // is scoped to it, so content from another year would be granted and then
+        // never appear for them. The target resolves against the TEACHER's active
+        // year, which is not necessarily the student's — refuse the mismatch.
+        $studentYear = AcademicYear::where('tenant_id', $this->tenant->id)->orderBy('id')->firstOrFail();
+        $student = $this->pinnedStudent($studentYear);
+
+        $otherYear = new AcademicYear(['name' => 'Other Year', 'sort_order' => 1]);
+        $otherYear->tenant_id = $this->tenant->id;
+        $otherYear->save();
+        $otherLesson = new Lesson(['title' => 'Other-year lesson', 'visibility' => ContentVisibility::Visible->value, 'price_minor' => 1000]);
+        $otherLesson->tenant_id = $this->tenant->id;
+        $otherLesson->academic_year_id = $otherYear->id;
+        $otherLesson->save();
+
+        // The teacher is browsing the OTHER year, so the lesson resolves for them.
+        $this->withHeaders(['X-Tenant' => 'demo', 'X-Academic-Year' => $otherYear->uuid])
+            ->postJson("/api/v1/teacher/students/{$student->uuid}/enrollments", [
+                'target_type' => 'lesson', 'target' => (string) $otherLesson->id,
+            ])
+            ->assertStatus(422);
+
+        $this->assertDatabaseMissing('enrollments', ['user_id' => $student->id, 'lesson_id' => $otherLesson->id]);
+    }
+
+    public function test_grant_succeeds_for_content_in_the_students_own_year(): void
+    {
+        $studentYear = AcademicYear::where('tenant_id', $this->tenant->id)->orderBy('id')->firstOrFail();
+        $student = $this->pinnedStudent($studentYear);
+        $lesson = $this->lesson(); // same year as $this->h
+
+        $this->withHeaders($this->h)
+            ->postJson("/api/v1/teacher/students/{$student->uuid}/enrollments", [
+                'target_type' => 'lesson', 'target' => (string) $lesson->id,
+            ])
+            ->assertStatus(201);
+
+        $this->assertDatabaseHas('enrollments', ['user_id' => $student->id, 'lesson_id' => $lesson->id]);
+    }
+
+    public function test_student_detail_exposes_the_pinned_year_uuid(): void
+    {
+        // The panel scopes the grant picker with this, so it must be the uuid and
+        // not only the free-text label.
+        $year = AcademicYear::where('tenant_id', $this->tenant->id)->orderBy('id')->firstOrFail();
+        $student = $this->pinnedStudent($year);
+
+        $this->withHeaders($this->h)->getJson("/api/v1/teacher/students/{$student->uuid}")
+            ->assertOk()
+            ->assertJsonPath('data.academic_year_uuid', $year->uuid)
+            ->assertJsonPath('data.academic_year', $year->name);
+    }
+
+    /** A student membership WITH a profile pinned to $year. */
+    private function pinnedStudent(AcademicYear $year): User
+    {
+        $student = $this->member($this->tenant, TenantUserRole::Student);
+        $profile = new StudentProfile([
+            'user_id' => $student->id,
+            'academic_year_id' => $year->id,
+            'academic_year' => $year->name,
+            'study_mode' => 'center',
+        ]);
+        $profile->tenant_id = $this->tenant->id;
+        $profile->save();
+
+        return $student;
     }
 }
