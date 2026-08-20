@@ -4,6 +4,7 @@ namespace App\Support\Http;
 
 use App\Modules\Media\Exceptions\MediaException;
 use App\Support\Exceptions\DomainException;
+use App\Support\Files\Exceptions\DocumentException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -48,6 +49,12 @@ final class ApiExceptionRenderer
         // Media pipeline failures (unready source, no transcode backend, transcode
         // failed) map to a clean 409/422/503 envelope — never a raw 500.
         if ($e instanceof MediaException) {
+            return self::envelope($e->errorCode, $e->getMessage(), $e->status);
+        }
+
+        // Storage failures (write, delete, missing blob) — the disk name and key
+        // are logged by the exception itself and never reach the client.
+        if ($e instanceof DocumentException) {
             return self::envelope($e->errorCode, $e->getMessage(), $e->status);
         }
 
