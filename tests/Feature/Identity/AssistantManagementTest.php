@@ -4,6 +4,7 @@ namespace Tests\Feature\Identity;
 
 use App\Models\User;
 use App\Modules\Billing\Models\SubscriptionPackage;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Billing\Services\SubscriptionService;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
@@ -26,11 +27,20 @@ class AssistantManagementTest extends TestCase
 
     private Tenant $tenant;
 
+    private AcademicYear $year;
+
     protected function setUp(): void
     {
         parent::setUp();
         Cache::flush();
         $this->tenant = Tenant::create(['slug' => 'demo', 'name' => 'Demo', 'status' => TenantStatus::Active]);
+
+        // An assistant must be assigned to at least one academic year (the years
+        // they may author in), so every academy needs one before assistants can be
+        // created — mirrors the panel, which always has an active year.
+        $this->year = new AcademicYear(['name' => 'الثالث الثانوي', 'sort_order' => 0]);
+        $this->year->tenant_id = $this->tenant->id; // no request context in tests
+        $this->year->save();
 
         // A stand-in route on the shared teacher/assistant surface gated by the
         // new `finance` permission — mirrors the real stack (tenant → auth →
@@ -61,6 +71,7 @@ class AssistantManagementTest extends TestCase
 
         $res = $this->withHeaders(['X-Tenant' => 'demo'])->postJson('/api/v1/teacher/assistants', [
             'name' => 'Omar', 'phone' => '01099999999', 'permissions' => ['students'],
+            'academic_year_ids' => [$this->year->uuid],
         ])->assertStatus(201)
             ->assertJsonPath('data.name', 'Omar')
             ->assertJsonPath('data.permissions', ['students'])
@@ -144,9 +155,10 @@ class AssistantManagementTest extends TestCase
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
         $h = ['X-Tenant' => 'demo'];
 
-        $this->withHeaders($h)->postJson('/api/v1/teacher/assistants', ['name' => 'A', 'phone' => '01000000011'])
+        $y = ['academic_year_ids' => [$this->year->uuid]];
+        $this->withHeaders($h)->postJson('/api/v1/teacher/assistants', ['name' => 'A', 'phone' => '01000000011'] + $y)
             ->assertStatus(201);
-        $this->withHeaders($h)->postJson('/api/v1/teacher/assistants', ['name' => 'B', 'phone' => '01000000012'])
+        $this->withHeaders($h)->postJson('/api/v1/teacher/assistants', ['name' => 'B', 'phone' => '01000000012'] + $y)
             ->assertStatus(403)
             ->assertJsonPath('error.code', 'plan_limit_reached')
             ->assertJsonPath('error.details.key', 'max_assistants');
@@ -215,6 +227,7 @@ class AssistantManagementTest extends TestCase
         // Create with finance.
         $uuid = $this->withHeaders($h)->postJson('/api/v1/teacher/assistants', [
             'name' => 'Finance Aide', 'phone' => '01055555555', 'permissions' => ['finance'],
+            'academic_year_ids' => [$this->year->uuid],
         ])->assertStatus(201)
             ->assertJsonPath('data.permissions', ['finance'])
             ->json('data.uuid');
@@ -225,5 +238,27 @@ class AssistantManagementTest extends TestCase
             'permissions' => ['finance', 'students'],
         ])->assertOk()
             ->assertJsonPath('data.permissions', ['students', 'finance']);
+    }
+
+    public function test_creating_an_assistant_without_any_academic_year_is_rejected(): void
+    {
+        // An assistant with no year would be invisible on every year-scoped screen
+        // (AssistantController::index filters by the active year), so the create
+        // refuses it: pass `academic_year_ids`, or have an active year via the
+        // X-Academic-Year header. Locks in the 422 the older tests tripped over.
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $this->withHeaders(['X-Tenant' => 'demo'])->postJson('/api/v1/teacher/assistants', [
+            'name' => 'Yearless', 'phone' => '01088888888',
+        ])->assertStatus(422);
+    }
+
+    public function test_the_active_year_header_is_used_when_no_year_is_passed(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $this->withHeaders(['X-Tenant' => 'demo', 'X-Academic-Year' => $this->year->uuid])
+            ->postJson('/api/v1/teacher/assistants', ['name' => 'Header Aide', 'phone' => '01077777777'])
+            ->assertStatus(201);
     }
 }

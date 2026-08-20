@@ -100,7 +100,7 @@ class AssistantController
         $permissions = Permission::sanitize($data['permissions'] ?? []);
         $temporaryPassword = null;
 
-        $assistant = DB::transaction(function () use ($existing, $data, $tenantId, $permissions, &$temporaryPassword): User {
+        $assistant = DB::transaction(function () use ($existing, $data, $tenantId, $permissions, $yearIds, &$temporaryPassword): User {
             if ($existing !== null) {
                 $user = $existing; // link an existing global identity — don't modify it
             } else {
