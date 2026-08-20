@@ -3,6 +3,7 @@
 namespace Tests\Feature\Identity;
 
 use App\Models\User;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
@@ -34,6 +35,12 @@ class StudentImportTest extends TestCase
         parent::setUp();
         Cache::flush();
         $this->tenant = Tenant::create(['slug' => 'demo', 'name' => 'Demo', 'status' => TenantStatus::Active]);
+        // The academy needs a year: a student profile is pinned to one
+        // (`academic_year_id` is NOT NULL), so importing history for a student who
+        // has no profile yet has to create it against a real year.
+        $year = new AcademicYear(['name' => 'الثالث الثانوي', 'sort_order' => 0]);
+        $year->tenant_id = $this->tenant->id; // no request context in tests
+        $year->save();
         $this->h = ['X-Tenant' => 'demo'];
     }
 

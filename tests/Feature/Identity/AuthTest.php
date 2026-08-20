@@ -14,8 +14,12 @@ use App\Modules\Notifications\Contracts\SmsSender;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
+use Illuminate\Database\QueryException;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Tests\Support\RecordingSmsSender;
 use Tests\TestCase;
@@ -509,8 +513,11 @@ class AuthTest extends TestCase
 
     public function test_login_is_blocked_for_a_student_with_no_academic_year(): void
     {
-        // Every student-facing surface is year-scoped; a student with no pinned year
-        // is an incomplete account and must not reach the panel — deny at login.
+        // Every student-facing surface is year-scoped, so LoginAction requires a
+        // student to have a profile carrying a year. `academic_year_id` is NOT NULL
+        // now, so the reachable form of "no year" is a student MEMBERSHIP with no
+        // profile row at all (e.g. added straight to tenant_user by a back-office
+        // script) — that must be denied exactly the same way.
         $user = User::factory()->create(['phone' => '01000000021', 'password' => 'secret123']);
         TenantUser::create([
             'tenant_id' => $this->tenant->id,
@@ -519,9 +526,6 @@ class AuthTest extends TestCase
             'status' => MembershipStatus::Active->value,
             'joined_at' => now(),
         ]);
-        $profile = new StudentProfile(['user_id' => $user->id]); // academic_year_id left null
-        $profile->tenant_id = $this->tenant->id;
-        $profile->save();
 
         $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/login', [
             'identifier' => '01000000021',
@@ -529,27 +533,64 @@ class AuthTest extends TestCase
         ])->assertStatus(403)->assertJsonPath('error.code', 'academic_year_required');
     }
 
+    public function test_a_student_profile_cannot_be_persisted_without_an_academic_year(): void
+    {
+        // The schema-level guarantee that replaced the runtime one: an unpinned
+        // student profile is not a representable state, so the ID-code register bug
+        // (which produced exactly that row) cannot recur. ResolveAcademicYear still
+        // carries its null-year branch as a backstop for databases created before
+        // the column became NOT NULL.
+        $user = User::factory()->create(['phone' => '01000000022']);
+
+        $profile = new StudentProfile(['user_id' => $user->id]);
+        $profile->tenant_id = $this->tenant->id;
+
+        $this->expectException(QueryException::class);
+        $profile->save();
+    }
+
     public function test_authed_student_with_no_academic_year_is_denied_the_panel(): void
     {
         // Backstop for an already-issued token: ResolveAcademicYear blocks a pinned
         // student surface (here /me) when the profile carries no year.
-        $user = User::factory()->create(['phone' => '01000000022']);
+        //
+        // On a fresh schema `student_profiles.academic_year_id` is NOT NULL, so the
+        // row has to be forced past the model to reproduce a legacy database (the
+        // column was nullable before, and installs created back then still are).
+        // The middleware branch stays covered for exactly those databases.
+        $user = User::factory()->create(['phone' => '01000000023']);
         TenantUser::create([
             'tenant_id' => $this->tenant->id,
             'user_id' => $user->id,
             'role' => TenantUserRole::Student->value,
             'status' => MembershipStatus::Active->value,
         ]);
-        $profile = new StudentProfile(['user_id' => $user->id]); // no academic_year_id
-        $profile->tenant_id = $this->tenant->id;
-        $profile->save();
 
-        $token = $user->createToken('test')->plainTextToken;
+        Schema::table('student_profiles', function (Blueprint $table): void {
+            $table->unsignedBigInteger('academic_year_id')->nullable()->change();
+        });
 
-        $this->withHeaders($this->tenantHeader() + ['Authorization' => "Bearer {$token}"])
-            ->getJson('/api/v1/me')
-            ->assertStatus(403)
-            ->assertJsonPath('error.code', 'academic_year_required');
+        try {
+            DB::table('student_profiles')->insert([
+                'tenant_id' => $this->tenant->id,
+                'user_id' => $user->id,
+                'academic_year_id' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $token = $user->createToken('test')->plainTextToken;
+
+            $this->withHeaders($this->tenantHeader() + ['Authorization' => "Bearer {$token}"])
+                ->getJson('/api/v1/me')
+                ->assertStatus(403)
+                ->assertJsonPath('error.code', 'academic_year_required');
+        } finally {
+            DB::table('student_profiles')->where('user_id', $user->id)->delete();
+            Schema::table('student_profiles', function (Blueprint $table): void {
+                $table->unsignedBigInteger('academic_year_id')->nullable(false)->change();
+            });
+        }
     }
 
     public function test_login_with_wrong_password_is_generic_unauthenticated(): void

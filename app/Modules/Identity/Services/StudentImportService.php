@@ -4,6 +4,7 @@ namespace App\Modules\Identity\Services;
 
 use App\Models\User;
 use App\Modules\Identity\Enums\TenantUserRole;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use DateTimeInterface;
@@ -26,6 +27,9 @@ use Throwable;
  */
 class StudentImportService
 {
+    /** @var array<int, int|null> tenant_id => first academic-year id */
+    private array $defaultYearIds = [];
+
     /** Recognised header columns: the two match keys + the canonical profile fields. */
     private function knownColumns(): array
     {
@@ -145,9 +149,14 @@ class StudentImportService
                 return $this->fail($rowNumber, (string) $validator->errors()->flatten()->first());
             }
 
+            // A student normally already has a profile (registration creates it).
+            // If they don't, one is created here — and it MUST carry an academic
+            // year: `student_profiles.academic_year_id` is NOT NULL, because an
+            // unpinned student is refused the panel outright. Fall back to the
+            // tenant's first year, same rule the legacy backfill migration used.
             StudentProfile::withoutGlobalScopes()->updateOrCreate(
                 ['tenant_id' => $tenantId, 'user_id' => $student->id],
-                $fields,
+                $fields + ['academic_year_id' => $this->defaultYearId($tenantId)],
             );
 
             $seen[$student->id] = true;
@@ -156,6 +165,17 @@ class StudentImportService
         } catch (Throwable) {
             return $this->fail($rowNumber, 'Could not process this row.');
         }
+    }
+
+    /** The tenant's first academic year — the pin a newly created profile gets
+     *  when the import row does not identify one. Cached per tenant per run. */
+    private function defaultYearId(int $tenantId): ?int
+    {
+        return $this->defaultYearIds[$tenantId] ??= AcademicYear::withoutGlobalScopes()
+            ->where('tenant_id', $tenantId)
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->value('id');
     }
 
     /** Match a student user (of THIS tenant) by phone or email. */

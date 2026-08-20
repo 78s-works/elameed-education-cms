@@ -5,6 +5,7 @@ namespace App\Modules\Catalog\Http\Controllers\Teacher;
 use App\Modules\Catalog\Http\Requests\AcademicYearRequest;
 use App\Modules\Catalog\Http\Resources\AcademicYearResource;
 use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Identity\Models\StudentProfile;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -53,6 +54,20 @@ class AcademicYearController
         if ($request->input('confirm_name') !== $academicYear->name) {
             throw ValidationException::withMessages([
                 'confirm_name' => 'The confirmation name does not match the academic year name.',
+            ]);
+        }
+
+        // Students are PINNED to a year (student_profiles.academic_year_id is NOT
+        // NULL and RESTRICTs on delete). Refuse the delete with a clear message
+        // instead of letting the FK raise a 500 — the teacher must move those
+        // students to another year first. Historically this FK was nullOnDelete,
+        // which silently unpinned them and locked every one of them out of the
+        // panel (LoginAction: `academic_year_required`).
+        $pinned = StudentProfile::query()->where('academic_year_id', $academicYear->getKey())->count();
+
+        if ($pinned > 0) {
+            throw ValidationException::withMessages([
+                'academic_year' => __('This academic year still has :count student(s) assigned to it. Move them to another year before deleting it.', ['count' => $pinned]),
             ]);
         }
 
