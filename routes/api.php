@@ -90,6 +90,9 @@ use App\Modules\Tenancy\Http\Controllers\TenantLandingController;
 use App\Modules\Tenancy\Http\Controllers\TenantLandingMetaController;
 use App\Modules\Wallet\Http\Controllers\Teacher\PaymentReceiptController;
 use App\Modules\Wallet\Http\Controllers\WalletController;
+use App\Support\Files\Http\Controllers\DocumentController;
+use App\Support\Files\Http\Controllers\StudentDocumentController;
+use App\Support\Files\Http\Controllers\TeacherDocumentController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -194,6 +197,15 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
     Route::get('/tenant/landing', TenantLandingController::class)->middleware('throttle:public');
     // Public landing bundle: branding + teacher site metadata (SEO/OG) for the <head>.
     Route::get('/tenant/landing/meta', TenantLandingMetaController::class)->middleware('throttle:public');
+
+    // File delivery. Outside the auth group on purpose: `<img src>`, `<iframe>`
+    // and `<a download>` cannot send an Authorization header, so a private file
+    // is reached with a short-lived signed URL instead — minted only after the
+    // policy has already authorized the caller. Without a valid signature the
+    // controller falls back to the bearer token + policy, so this is not an open
+    // door. Tenant is still resolved by host, and RLS still applies.
+    Route::get('/documents/{document}/download', [DocumentController::class, 'download'])
+        ->name('documents.download');
 
     // Public catalogue (M04) — published courses of the resolved tenant. Year-aware
     // via `academic-year:optional`: when the SPA sends X-Academic-Year the listing
@@ -300,7 +312,18 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
 
         // Q&A comments + polymorphic attachments (M09). Shared by students (need
         // lesson access) and staff; {lesson} binds by id, {comment} by uuid.
-        Route::post('/attachments', [AttachmentController::class, 'store'])->middleware('throttle:60,1');
+        // Generic upload (M-Files). Returns an unattached document; the client
+        // passes its uuid as `document_ids` on the request that creates the owner
+        // (comment, ticket, submission). Purposes only staff may upload are
+        // refused in the controller, not just hidden in the UI.
+        Route::post('/documents', [DocumentController::class, 'store'])->middleware('throttle:60,1');
+        Route::get('/documents/{document}', [DocumentController::class, 'show']);
+
+        // The student's own library: what they submitted, paid with, or attached.
+        Route::get('/student/documents', [StudentDocumentController::class, 'index']);
+        Route::get('/student/documents/summary', [StudentDocumentController::class, 'summary']);
+        Route::delete('/student/documents/{document}', [StudentDocumentController::class, 'destroy']);
+
         Route::get('/lessons/{lesson}/comments', [CommentController::class, 'index']);
         Route::post('/lessons/{lesson}/comments', [CommentController::class, 'store']);
         Route::post('/comments/{comment}/replies', [CommentController::class, 'reply']);
@@ -731,6 +754,18 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             // &priority=), reads a thread, replies (notifies the student), and
             // moves the status. {ticket} binds by uuid, tenant-scoped (no owner
             // check — staff see the whole tenant). Student side: /support/tickets.
+            // The academy's file library (M-Files) — every document in the tenant,
+            // with storage totals. Delete is two-step by design: a file something
+            // still points at is refused with the holder named, so unlinking is a
+            // deliberate act and deletion (which is permanent) is never a surprise.
+            Route::middleware('permission:files')->group(function (): void {
+                Route::get('/teacher/documents', [TeacherDocumentController::class, 'index']);
+                Route::get('/teacher/documents/summary', [TeacherDocumentController::class, 'summary']);
+                Route::get('/teacher/documents/{document}', [TeacherDocumentController::class, 'show']);
+                Route::delete('/teacher/documents/{document}/link', [TeacherDocumentController::class, 'unlink']);
+                Route::delete('/teacher/documents/{document}', [TeacherDocumentController::class, 'destroy']);
+            }); // permission:files
+
             Route::middleware('permission:support')->group(function (): void {
                 Route::get('/teacher/support/tickets', [TeacherSupportTicketController::class, 'index']);
                 Route::get('/teacher/support/tickets/{ticket}', [TeacherSupportTicketController::class, 'show']);

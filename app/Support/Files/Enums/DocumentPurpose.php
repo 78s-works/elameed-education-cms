@@ -63,6 +63,27 @@ enum DocumentPurpose: string
     }
 
     /**
+     * Purposes only a teacher or assistant may upload. A student posting a
+     * comment attachment is ordinary; a student uploading academy branding or
+     * lesson material is not, so the generic endpoint refuses it.
+     */
+    public function requiresStaff(): bool
+    {
+        return in_array($this, [
+            self::LessonAttachment,
+            self::LandingImage,
+            self::BrandingLogo,
+            self::BrandingFavicon,
+            self::BrandingCover,
+            self::PackageCover,
+            self::VideoSource,
+            self::VideoThumbnail,
+            self::AssignmentCorrected,
+            self::StudentImport,
+        ], true);
+    }
+
+    /**
      * Purposes whose row is created by the system rather than by a person
      * clicking upload. They appear in the files tab but are not user-deletable.
      */

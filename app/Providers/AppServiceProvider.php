@@ -2,8 +2,11 @@
 
 namespace App\Providers;
 
+use App\Support\Files\DocumentPolicy;
+use App\Support\Files\Models\Document;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -17,6 +20,10 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->configureRateLimiters();
+
+        // Every stored file is authorized through one policy, keyed off the
+        // document's purpose. See App\Support\Files\DocumentPolicy.
+        Gate::policy(Document::class, DocumentPolicy::class);
     }
 
     private function configureRateLimiters(): void

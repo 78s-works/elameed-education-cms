@@ -18,6 +18,7 @@ enum Permission: string
     case Homework = 'homework';
     case Finance = 'finance';
     case Support = 'support';
+    case Files = 'files';
 
     /** @return list<string> */
     public static function values(): array
@@ -57,6 +58,11 @@ enum Permission: string
                 'key' => self::Support->value,
                 'label' => 'Support tickets',
                 'description' => 'Read, reply to and change the status of student support tickets.',
+            ],
+            [
+                'key' => self::Files->value,
+                'label' => 'Files',
+                'description' => 'Browse the academy library, download files, and delete unused ones.',
             ],
         ];
     }
