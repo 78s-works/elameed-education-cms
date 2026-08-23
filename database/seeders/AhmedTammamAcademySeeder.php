@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\User;
 use App\Modules\Assessment\Enums\AttemptStatus;
 use App\Modules\Assessment\Enums\ExamGradingMode;
+use App\Modules\Assessment\Enums\ExamMode;
 use App\Modules\Assessment\Enums\ExamPassMode;
 use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Enums\QuestionType;
@@ -1207,7 +1208,9 @@ class AhmedTammamAcademySeeder extends Seeder
             'type' => LessonSectionType::Homework->value,
             'title' => 'واجب الحصة',
             'sort_order' => 3,
-            'delivery' => SectionDelivery::PdfUpload->value,
+            // Standard upload homework (file/photo/PDF). delivery mirrors a standard
+            // exam mode; pdf_upload is no longer app-derived (it maps to image_upload).
+            'delivery' => SectionDelivery::ImageUpload->value,
             'gate_rule' => GateRule::MustSubmit->value,
             'max_tries' => 3,
             // Upload homework: the student uploads a file, a teacher corrects it.
@@ -1227,6 +1230,10 @@ class AhmedTammamAcademySeeder extends Seeder
                 'title' => 'اختبار بعد الحصة',
                 'sort_order' => 4,
                 'exam_id' => $exam->id,
+                // Derived from the backing exam's mode (single source of truth).
+                'delivery' => ($exam->mode === ExamMode::BubbleSheet
+                    ? SectionDelivery::BubbleSheet
+                    : SectionDelivery::ImageUpload)->value,
                 'gate_rule' => GateRule::MustPass->value,
                 'is_required' => true,
             ]);
@@ -1301,7 +1308,12 @@ class AhmedTammamAcademySeeder extends Seeder
         $exam->academic_year_id = $year->id;
         $exam->lesson_id = $lesson?->id;
         $exam->type = ($attrs['type'] ?? ExamType::LessonQuiz)->value;
-        $exam->grading_mode = ($attrs['grading_mode'] ?? ExamGradingMode::Auto)->value;
+        // Delivery mode mirrors grading: auto-graded ⇒ bubble sheet (LP-12); a
+        // manually-graded exam is a standard file/photo upload. Keeps the seed
+        // consistent with the app (grading + delivery now live on the exam).
+        $grading = $attrs['grading_mode'] ?? ExamGradingMode::Auto;
+        $exam->grading_mode = $grading->value;
+        $exam->mode = ($grading === ExamGradingMode::Auto ? ExamMode::BubbleSheet : ExamMode::Standard)->value;
         $exam->total_marks = $essay ? 15 : 10;
         // An essay exam is graded by absolute marks, not a percentage, so it also
         // carries `pass_value` (the marks needed) — exercises ExamPassMode::Marks.
@@ -1550,7 +1562,7 @@ class AhmedTammamAcademySeeder extends Seeder
             'max_score' => $max,
             'status' => $status->value,
             'answers' => ['1' => 1, '2' => 0],
-            'needs_manual_grade' => $exam->grading_mode === ExamGradingMode::Manual->value && $status !== AttemptStatus::Graded,
+            'needs_manual_grade' => $exam->grading_mode === ExamGradingMode::Manual && $status !== AttemptStatus::Graded,
         ]);
         $attempt->tenant_id = $this->tenant->id;
         $attempt->academic_year_id = $exam->academic_year_id;
@@ -2345,6 +2357,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $archived->academic_year_id = $year->id;
         $archived->type = ExamType::FreeExam->value;
         $archived->grading_mode = ExamGradingMode::Auto->value;
+        $archived->mode = ExamMode::BubbleSheet->value; // auto grading ⇒ bubble sheet (LP-12)
         $archived->total_marks = 10;
         $archived->save();
         $archived->delete();
