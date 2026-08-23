@@ -18,6 +18,7 @@ use App\Modules\Billing\Enums\SubscriptionStatus;
 use App\Modules\Billing\Models\SubscriptionPackage;
 use App\Modules\Billing\Models\TenantSubscription;
 use App\Modules\Catalog\Enums\AccessMode;
+use App\Modules\Catalog\Enums\AssignmentKind;
 use App\Modules\Catalog\Enums\ContentAccessTarget;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Enums\DependencyEnforcement;
@@ -85,7 +86,11 @@ use App\Modules\Media\Enums\MediaStatus;
 use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Enums\MediaVersionState;
 use App\Modules\Media\Models\MediaAsset;
+use App\Modules\Media\Models\MediaCallbackEvent;
+use App\Modules\Media\Models\MediaRendition;
+use App\Modules\Media\Models\MediaUploadSession;
 use App\Modules\Media\Models\MediaVersion;
+use App\Modules\Media\Models\PlaybackSession;
 use App\Modules\Notifications\Enums\NotificationChannel;
 use App\Modules\Notifications\Enums\NotificationModule;
 use App\Modules\Notifications\Enums\NotificationSeverity;
@@ -93,8 +98,12 @@ use App\Modules\Notifications\Enums\NotificationTypeStatus;
 use App\Modules\Notifications\Models\Notification;
 use App\Modules\Notifications\Models\NotificationChannelSetting;
 use App\Modules\Notifications\Models\NotificationEvent;
+use App\Modules\Notifications\Models\NotificationFailure;
+use App\Modules\Notifications\Models\NotificationLog;
 use App\Modules\Notifications\Models\NotificationMessage;
 use App\Modules\Notifications\Models\NotificationPreference;
+use App\Modules\Notifications\Models\NotificationTemplate;
+use App\Modules\Notifications\Models\NotificationTemplateTranslation;
 use App\Modules\Notifications\Models\NotificationType;
 use App\Modules\Reporting\Models\AuditLog;
 use App\Modules\Tenancy\Enums\TenantDomainType;
@@ -104,19 +113,10 @@ use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Models\TenantDomain;
 use App\Modules\Tenancy\Services\TenantContext;
+use App\Modules\Tenancy\Support\LandingSchema;
 use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Services\LedgerService;
 use App\Modules\Wallet\Services\PaymentReceiptService;
-use App\Modules\Catalog\Enums\AssignmentKind;
-use App\Modules\Media\Models\MediaCallbackEvent;
-use App\Modules\Media\Models\MediaRendition;
-use App\Modules\Media\Models\MediaUploadSession;
-use App\Modules\Media\Models\PlaybackSession;
-use App\Modules\Notifications\Models\NotificationFailure;
-use App\Modules\Notifications\Models\NotificationLog;
-use App\Modules\Notifications\Models\NotificationTemplate;
-use App\Modules\Notifications\Models\NotificationTemplateTranslation;
-use App\Modules\Tenancy\Support\LandingSchema;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -370,6 +370,12 @@ class AhmedTammamAcademySeeder extends Seeder
             'login_enabled' => true,
             'registration_enabled' => true,
             'registration_verification_mode' => 'auto',
+            // Center students self-register through a Center ID-code: this academy
+            // mints codes per center (see mintIdCode), so the forced-code path is
+            // the one it actually runs on. The demo academy in DatabaseSeeder
+            // covers the other variant (pick a branch OR type a code).
+            'center_registration_enabled' => true,
+            'center_id_code_required' => true,
             'custom_landing_enabled' => true,
         ]);
         $profile->tenant_id = $this->tenant->id;

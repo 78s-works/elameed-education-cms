@@ -49,6 +49,11 @@ class TenantContextResource extends JsonResource
                 'login_enabled' => (bool) ($profile?->login_enabled ?? true),
                 'registration_enabled' => (bool) ($profile?->registration_enabled ?? true),
                 'registration_verification_mode' => (string) ($profile?->registration_verification_mode ?? 'auto'),
+                // Center-student registration: whether the sign-up form offers a
+                // study-system choice at all, and — when it does — whether the
+                // on-site path is forced through a Center ID-code.
+                'center_registration_enabled' => (bool) ($profile?->center_registration_enabled ?? true),
+                'center_id_code_required' => (bool) ($profile?->center_id_code_required ?? false),
             ],
             'landing' => [
                 // Landing mode (teacher-controlled via PUT /teacher/custom-landing).

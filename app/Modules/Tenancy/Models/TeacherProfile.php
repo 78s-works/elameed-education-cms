@@ -45,6 +45,8 @@ class TeacherProfile extends Model
         'login_enabled',
         'registration_enabled',
         'registration_verification_mode',
+        'center_registration_enabled',
+        'center_id_code_required',
         'custom_landing_enabled',
     ];
 
@@ -55,6 +57,10 @@ class TeacherProfile extends Model
         'login_enabled' => true,
         'registration_enabled' => true,
         'registration_verification_mode' => 'auto',
+        // Center students may self-register by default; forcing them through a
+        // Center ID-code is the narrower, opt-in choice.
+        'center_registration_enabled' => true,
+        'center_id_code_required' => false,
         // Custom landing is opt-in: a fresh academy uses the CMS sections until
         // the teacher turns this on (mirrors the DB default).
         'custom_landing_enabled' => false,
@@ -69,6 +75,8 @@ class TeacherProfile extends Model
         'login_enabled' => 'boolean',
         'registration_enabled' => 'boolean',
         'registration_verification_mode' => 'string',
+        'center_registration_enabled' => 'boolean',
+        'center_id_code_required' => 'boolean',
         'custom_landing_enabled' => 'boolean',
     ];
 }

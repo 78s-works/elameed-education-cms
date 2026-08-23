@@ -19,6 +19,8 @@ class UpdateTenantAccessRequest extends FormRequest
             'login_enabled' => ['sometimes', 'boolean'],
             'registration_enabled' => ['sometimes', 'boolean'],
             'registration_verification_mode' => ['sometimes', 'string', Rule::in(['auto', 'otp'])],
+            'center_registration_enabled' => ['sometimes', 'boolean'],
+            'center_id_code_required' => ['sometimes', 'boolean'],
         ];
     }
 }

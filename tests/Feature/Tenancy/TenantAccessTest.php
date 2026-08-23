@@ -51,7 +51,38 @@ class TenantAccessTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.login_enabled', true)
             ->assertJsonPath('data.registration_enabled', true)
-            ->assertJsonPath('data.registration_verification_mode', 'auto');
+            ->assertJsonPath('data.registration_verification_mode', 'auto')
+            // Center students may self-register by default; forcing them through a
+            // Center ID-code is the narrower, opt-in choice.
+            ->assertJsonPath('data.center_registration_enabled', true)
+            ->assertJsonPath('data.center_id_code_required', false);
+    }
+
+    public function test_teacher_can_toggle_the_center_registration_switches(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $this->withHeaders($this->h)->putJson('/api/v1/teacher/access', [
+            'center_registration_enabled' => false,
+            'center_id_code_required' => true,
+        ])->assertOk()
+            ->assertJsonPath('data.center_registration_enabled', false)
+            ->assertJsonPath('data.center_id_code_required', true);
+
+        // Stored independently of each other: the "force the code" flag keeps its
+        // value while center registration is off (it simply has no effect there),
+        // so turning registration back on restores the teacher's earlier choice.
+        $this->assertDatabaseHas('teacher_profiles', [
+            'tenant_id' => $this->tenant->id,
+            'center_registration_enabled' => false,
+            'center_id_code_required' => true,
+        ]);
+
+        $this->withHeaders($this->h)->putJson('/api/v1/teacher/access', [
+            'center_registration_enabled' => true,
+        ])->assertOk()
+            ->assertJsonPath('data.center_registration_enabled', true)
+            ->assertJsonPath('data.center_id_code_required', true);
     }
 
     public function test_teacher_can_toggle_access_and_it_persists(): void
@@ -107,5 +138,21 @@ class TenantAccessTest extends TestCase
             ->assertJsonPath('data.auth.login_enabled', false)
             ->assertJsonPath('data.auth.registration_enabled', true)
             ->assertJsonPath('data.auth.registration_verification_mode', 'auto');
+    }
+
+    public function test_public_context_reflects_the_center_registration_switches(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+        $this->withHeaders($this->h)->putJson('/api/v1/teacher/access', [
+            'center_registration_enabled' => true,
+            'center_id_code_required' => true,
+        ])->assertOk();
+
+        // The sign-up form reads these to decide whether to offer a study-system
+        // choice at all, and — when it does — a branch picker or a code field.
+        $this->withHeaders($this->h)->getJson('/api/v1/tenant/context')
+            ->assertOk()
+            ->assertJsonPath('data.auth.center_registration_enabled', true)
+            ->assertJsonPath('data.auth.center_id_code_required', true);
     }
 }

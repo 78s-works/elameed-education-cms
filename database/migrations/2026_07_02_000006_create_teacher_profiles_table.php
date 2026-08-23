@@ -33,6 +33,14 @@ return new class extends Migration
             $table->boolean('login_enabled')->default(true);
             $table->boolean('registration_enabled')->default(true);
             $table->string('registration_verification_mode', 16)->default('auto');
+            // Center-student self-registration (the teacher's widest switch): when
+            // false the sign-up form has no "study system" choice at all and every
+            // new student is registered as `online`.
+            $table->boolean('center_registration_enabled')->default(true);
+            // Applies only while center registration is ON: force the on-site path
+            // through a Center ID-code (no branch picker), instead of letting the
+            // student pick a branch OR type a code.
+            $table->boolean('center_id_code_required')->default(false);
             $table->boolean('custom_landing_enabled')->default(false);
             $table->timestamps();
 

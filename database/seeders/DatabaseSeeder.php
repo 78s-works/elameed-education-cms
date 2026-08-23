@@ -12,6 +12,7 @@ use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Models\PackageType;
 use App\Modules\Catalog\Services\AcademicYearContext;
 use App\Modules\Catalog\Services\PackageItemService;
+use App\Modules\Centers\Models\Center;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Identity\Enums\MembershipStatus;
@@ -19,8 +20,8 @@ use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Enums\TenantStatus;
-use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Models\TeacherProfile;
+use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
@@ -104,9 +105,24 @@ class DatabaseSeeder extends Seeder
             'login_enabled' => true,
             'registration_enabled' => true,
             'registration_verification_mode' => 'auto',
+            // On-site sign-up open on the "branch OR code" path: the demo academy
+            // has real centers below, so a student can pick a branch from the
+            // public list. The forced-code variant is what AhmedTammamAcademySeeder
+            // is NOT — one seeded academy per combination.
+            'center_registration_enabled' => true,
+            'center_id_code_required' => false,
         ]);
         $profile->tenant_id = $tenant->id;
         $profile->save();
+
+        // Branches for the registration picker (GET /centers). Without at least
+        // one, `center_registration_enabled` is a switch with nothing behind it:
+        // the student picks "at the center" and faces an empty dropdown.
+        foreach ([['سنتر وسط البلد', 'وسط البلد، القاهرة'], ['سنتر الهرم', 'الهرم، الجيزة']] as [$name, $address]) {
+            $center = new Center(['name' => $name, 'address' => $address, 'is_active' => true]);
+            $center->tenant_id = $tenant->id;
+            $center->save();
+        }
 
         foreach (self::YEARS as $index => $yearName) {
             $year = new AcademicYear(['name' => $yearName, 'sort_order' => $index]);

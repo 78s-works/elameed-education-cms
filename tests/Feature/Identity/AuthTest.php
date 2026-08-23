@@ -133,12 +133,19 @@ class AuthTest extends TestCase
         return $profile;
     }
 
-    private function setAccess(bool $login, bool $registration, string $verificationMode = 'auto'): void
-    {
+    private function setAccess(
+        bool $login,
+        bool $registration,
+        string $verificationMode = 'auto',
+        bool $centerRegistration = true,
+        bool $forceIdCode = false,
+    ): void {
         $profile = new TeacherProfile([
             'login_enabled' => $login,
             'registration_enabled' => $registration,
             'registration_verification_mode' => $verificationMode,
+            'center_registration_enabled' => $centerRegistration,
+            'center_id_code_required' => $forceIdCode,
         ]);
         $profile->tenant_id = $this->tenant->id; // no request context in tests
         $profile->save();
@@ -271,6 +278,135 @@ class AuthTest extends TestCase
         ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
 
         $this->assertDatabaseMissing('users', ['phone' => '01000000022']);
+    }
+
+    public function test_register_as_center_student_is_rejected_when_center_registration_is_off(): void
+    {
+        // The teacher's widest switch: with center registration off the on-site
+        // path does not exist — neither a branch pick nor a Center ID-code.
+        $this->setAccess(login: true, registration: true, centerRegistration: false);
+        $center = $this->center();
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Center Denied',
+            'phone' => '01000000060',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'study_mode' => 'center',
+            'center' => $center->uuid,
+            'academic_year_uuid' => $this->academicYear()->uuid,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+
+        $this->assertDatabaseMissing('users', ['phone' => '01000000060']);
+    }
+
+    public function test_register_with_an_id_code_is_rejected_when_center_registration_is_off(): void
+    {
+        $this->setAccess(login: true, registration: true, centerRegistration: false);
+        $idCode = $this->idCode($this->center());
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Code Denied',
+            'phone' => '01000000061',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'id_code' => $idCode->code,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+
+        $this->assertDatabaseMissing('users', ['phone' => '01000000061']);
+        $this->assertDatabaseHas('center_id_codes', ['code' => $idCode->code, 'status' => 'active']);
+    }
+
+    public function test_register_defaults_to_online_when_center_registration_is_off(): void
+    {
+        // The SPA drops the study-system field entirely, so nothing arrives.
+        $this->setAccess(login: true, registration: true, centerRegistration: false);
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Implicit Online',
+            'phone' => '01000000062',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'academic_year_uuid' => $this->academicYear()->uuid,
+        ])->assertCreated();
+
+        $user = User::where('phone', '01000000062')->firstOrFail();
+        $this->assertDatabaseHas('student_profiles', [
+            'user_id' => $user->id,
+            'study_mode' => 'online',
+            'center_id' => null,
+        ]);
+    }
+
+    public function test_forced_id_code_rejects_a_branch_pick(): void
+    {
+        // Force ON: the code is the ONLY on-site key — no branch picker exists.
+        $this->setAccess(login: true, registration: true, forceIdCode: true);
+        $center = $this->center();
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Branch Pick',
+            'phone' => '01000000063',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'study_mode' => 'center',
+            'center' => $center->uuid,
+            'academic_year_uuid' => $this->academicYear()->uuid,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+
+        $this->assertDatabaseMissing('users', ['phone' => '01000000063']);
+    }
+
+    public function test_forced_id_code_requires_the_code_on_the_center_path(): void
+    {
+        $this->setAccess(login: true, registration: true, forceIdCode: true);
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'No Code',
+            'phone' => '01000000064',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'study_mode' => 'center',
+            'academic_year_uuid' => $this->academicYear()->uuid,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+
+        $this->assertDatabaseMissing('users', ['phone' => '01000000064']);
+    }
+
+    public function test_center_path_requires_a_branch_or_a_code_when_the_code_is_optional(): void
+    {
+        // Force OFF: branch OR code — but one of them is mandatory.
+        $this->setAccess(login: true, registration: true, forceIdCode: false);
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Neither',
+            'phone' => '01000000065',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'study_mode' => 'center',
+            'academic_year_uuid' => $this->academicYear()->uuid,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+
+        $this->assertDatabaseMissing('users', ['phone' => '01000000065']);
+    }
+
+    public function test_center_path_rejects_a_branch_and_a_code_together(): void
+    {
+        // Mutually exclusive: the SPA locks one field when the other is typed in,
+        // and the API rejects a payload that carries both.
+        $this->setAccess(login: true, registration: true, forceIdCode: false);
+        $center = $this->center();
+
+        $this->withHeaders($this->tenantHeader())->postJson('/api/v1/auth/register', [
+            'name' => 'Both Keys',
+            'phone' => '01000000066',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+            'center' => $center->uuid,
+            'id_code' => $this->idCode($center)->code,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'validation_error');
+
+        $this->assertDatabaseMissing('users', ['phone' => '01000000066']);
     }
 
     public function test_register_rejects_center_from_another_tenant(): void

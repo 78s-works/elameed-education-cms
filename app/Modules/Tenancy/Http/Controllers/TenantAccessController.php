@@ -33,13 +33,18 @@ class TenantAccessController
         return TeacherProfile::query()->firstOrNew([]);
     }
 
-    /** @return array{login_enabled: bool, registration_enabled: bool, registration_verification_mode: string} */
+    /** @return array{login_enabled: bool, registration_enabled: bool, registration_verification_mode: string, center_registration_enabled: bool, center_id_code_required: bool} */
     private function payload(TeacherProfile $profile): array
     {
         return [
             'login_enabled' => (bool) $profile->login_enabled,
             'registration_enabled' => (bool) $profile->registration_enabled,
             'registration_verification_mode' => (string) ($profile->registration_verification_mode ?? 'auto'),
+            // Center-student registration switches (the two General-Settings
+            // toggles). `center_id_code_required` is meaningful only while
+            // `center_registration_enabled` is true — see RegisterRequest.
+            'center_registration_enabled' => (bool) $profile->center_registration_enabled,
+            'center_id_code_required' => (bool) $profile->center_id_code_required,
         ];
     }
 }
