@@ -95,8 +95,9 @@ class MediaUploadTest extends TestCase
         $this->assertArrayNotHasKey('media.file', app('router')->getRoutes()->getRoutesByName());
 
         // The source sits on the private disk, not the web-served public disk.
+        // It is a document now, under the tenant-scoped path the service owns.
         $asset = MediaAsset::withoutGlobalScopes()->first();
-        $this->assertStringStartsWith('media/source/', $asset->source_key);
+        $this->assertStringContainsString('/video_source/', $asset->source_key);
         Storage::disk('local')->assertExists($asset->source_key);
         Storage::disk('public')->assertMissing($asset->source_key);
     }

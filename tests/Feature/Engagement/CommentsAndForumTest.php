@@ -105,23 +105,24 @@ class CommentsAndForumTest extends TestCase
         $this->withHeaders($h)->postJson("/api/v1/lessons/{$this->lesson->id}/comments", ['body' => 'hi'])->assertStatus(403);
     }
 
-    public function test_comment_can_carry_an_uploaded_attachment(): void
+    public function test_comment_can_carry_an_uploaded_document(): void
     {
-        Storage::fake('public');
+        Storage::fake('local');
         $student = $this->member(TenantUserRole::Student);
         $this->enroll($student);
         Sanctum::actingAs($student);
         $h = ['X-Tenant' => 'demo'];
 
-        $attachmentUuid = $this->withHeaders($h)->postJson('/api/v1/attachments', [
+        $documentUuid = $this->withHeaders($h)->postJson('/api/v1/documents', [
+            'purpose' => 'comment_attachment',
             'file' => UploadedFile::fake()->image('question.jpg'),
         ])->assertStatus(201)->assertJsonPath('data.kind', 'image')->json('data.uuid');
 
         $this->withHeaders($h)->postJson("/api/v1/lessons/{$this->lesson->id}/comments", [
-            'body' => 'See attached', 'attachment_ids' => [$attachmentUuid],
+            'body' => 'See attached', 'document_ids' => [$documentUuid],
         ])->assertStatus(201)
-            ->assertJsonPath('data.attachments.0.uuid', $attachmentUuid)
-            ->assertJsonPath('data.attachments.0.kind', 'image');
+            ->assertJsonPath('data.documents.0.uuid', $documentUuid)
+            ->assertJsonPath('data.documents.0.kind', 'image');
     }
 
     public function test_teacher_forum_aggregates_and_moderates(): void

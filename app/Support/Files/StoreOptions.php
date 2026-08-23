@@ -23,6 +23,13 @@ final class StoreOptions
         /** Defaults to the authenticated user. */
         public readonly ?int $ownerId = null,
 
+        /**
+         * Defaults to the resolved tenant. Required on paths that run without a
+         * tenant context — the signed upload receiver authenticates by signature,
+         * so nothing has resolved a tenant by the time the file arrives.
+         */
+        public readonly ?int $tenantId = null,
+
         /** duration_sec, width, height, pages — whatever the caller already knows. */
         public readonly array $meta = [],
 
@@ -38,6 +45,7 @@ final class StoreOptions
             visibility: $this->visibility,
             owner: $owner,
             ownerId: $this->ownerId,
+            tenantId: $this->tenantId,
             meta: $this->meta,
             status: $this->status,
             originalName: $this->originalName,

@@ -3,7 +3,8 @@
 namespace Tests\Feature\Wallet;
 
 use App\Models\User;
-use App\Modules\Engagement\Models\Attachment;
+use App\Support\Files\Enums\DocumentPurpose;
+use App\Support\Files\Models\Document;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
@@ -48,32 +49,24 @@ class PaymentReceiptTest extends TestCase
         return $user;
     }
 
-    private function attachmentFor(User $user, ?Tenant $tenant = null): Attachment
+    private function receiptDocumentFor(User $user, ?Tenant $tenant = null): Document
     {
-        $tenant ??= $this->tenant;
-        $attachment = new Attachment([
-            'kind' => Attachment::KIND_IMAGE,
-            'storage_key' => 'attachments/receipt-'.uniqid().'.png',
-            'mime' => 'image/png',
-            'size_bytes' => 2048,
-            'uploaded_by' => $user->id,
-        ]);
-        $attachment->tenant_id = $tenant->id;
-        $attachment->save();
-
-        return $attachment;
+        return Document::factory()
+            ->purpose(DocumentPurpose::PaymentReceipt)
+            ->ownedBy($user)
+            ->create(['tenant_id' => ($tenant ?? $this->tenant)->id]);
     }
 
     /** Submit a manual top-up via the student endpoint; returns the receipt uuid. */
     private function submit(User $student, int $amount = 50000): string
     {
         Sanctum::actingAs($student);
-        $attachment = $this->attachmentFor($student);
+        $document = $this->receiptDocumentFor($student);
 
         return $this->withHeaders(['X-Tenant' => 'demo'])->postJson('/api/v1/wallet/topup/manual', [
             'method' => 'vodafone_cash',
             'amount_minor' => $amount,
-            'attachment_id' => $attachment->uuid,
+            'document_id' => $document->uuid,
         ])->assertStatus(201)
             ->assertJsonPath('data.status', 'pending')
             ->json('data.uuid');
@@ -99,15 +92,15 @@ class PaymentReceiptTest extends TestCase
         $this->assertSame(0, $this->balanceOf($student));
     }
 
-    public function test_student_cannot_submit_with_another_users_attachment(): void
+    public function test_student_cannot_submit_with_another_users_document(): void
     {
         $student = $this->member(TenantUserRole::Student);
         $other = $this->member(TenantUserRole::Student);
-        $foreignAttachment = $this->attachmentFor($other);
+        $foreignDocument = $this->receiptDocumentFor($other);
 
         Sanctum::actingAs($student);
         $this->withHeaders(['X-Tenant' => 'demo'])->postJson('/api/v1/wallet/topup/manual', [
-            'method' => 'instapay', 'amount_minor' => 10000, 'attachment_id' => $foreignAttachment->uuid,
+            'method' => 'instapay', 'amount_minor' => 10000, 'document_id' => $foreignDocument->uuid,
         ])->assertStatus(422);
     }
 

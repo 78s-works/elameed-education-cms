@@ -66,21 +66,22 @@ class SupportTicketTest extends TestCase
         ])->assertStatus(201)->assertJsonPath('data.priority', 'normal');
     }
 
-    public function test_ticket_carries_an_uploaded_attachment(): void
+    public function test_ticket_carries_an_uploaded_document(): void
     {
-        Storage::fake('public');
+        Storage::fake('local');
         Sanctum::actingAs($this->member($this->tenant));
         $h = ['X-Tenant' => 'demo'];
 
-        $attachmentUuid = $this->withHeaders($h)->postJson('/api/v1/attachments', [
+        $documentUuid = $this->withHeaders($h)->postJson('/api/v1/documents', [
+            'purpose' => 'ticket_attachment',
             'file' => UploadedFile::fake()->image('screenshot.png'),
         ])->assertStatus(201)->json('data.uuid');
 
         $this->withHeaders($h)->postJson('/api/v1/support/tickets', [
-            'subject' => 'See screenshot', 'body' => 'Error attached.', 'attachment_ids' => [$attachmentUuid],
+            'subject' => 'See screenshot', 'body' => 'Error attached.', 'document_ids' => [$documentUuid],
         ])->assertStatus(201)
-            ->assertJsonPath('data.attachments.0.uuid', $attachmentUuid)
-            ->assertJsonPath('data.attachments.0.kind', 'image');
+            ->assertJsonPath('data.documents.0.uuid', $documentUuid)
+            ->assertJsonPath('data.documents.0.kind', 'image');
     }
 
     public function test_index_lists_only_own_tickets_and_show_of_anothers_is_404(): void

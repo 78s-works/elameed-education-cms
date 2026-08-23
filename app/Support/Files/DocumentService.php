@@ -42,7 +42,7 @@ class DocumentService
         $visibility = $options->visibility ?? $purpose->visibility();
         $disk = $visibility->disk();
 
-        $key = $this->pathFor($purpose, $extension);
+        $key = $this->pathFor($purpose, $extension, $options->tenantId);
         $checksum = hash_file('sha256', $file->getRealPath()) ?: null;
 
         if (Storage::disk($disk)->putFileAs(dirname($key), $file, basename($key)) === false) {
@@ -67,7 +67,7 @@ class DocumentService
         $extension = strtolower(pathinfo($name, PATHINFO_EXTENSION)) ?: 'bin';
         $visibility = $options->visibility ?? $purpose->visibility();
         $disk = $visibility->disk();
-        $key = $this->pathFor($purpose, $extension);
+        $key = $this->pathFor($purpose, $extension, $options->tenantId);
 
         if (Storage::disk($disk)->put($key, $bytes) === false) {
             throw DocumentException::writeFailed($key, $disk);
@@ -88,6 +88,8 @@ class DocumentService
             'checksum' => hash('sha256', $bytes),
             'meta' => $options->meta ?: null,
         ]);
+
+        $this->stampTenant($document, $options);
 
         if ($options->owner !== null) {
             $this->setOwnerAttributes($document, $options->owner);
@@ -258,9 +260,10 @@ class DocumentService
      * bucket listing never mixes academies and dropping a tenant is a prefix
      * delete; ULID so the name is unguessable and sorts by upload time.
      */
-    private function pathFor(DocumentPurpose $purpose, string $extension): string
+    private function pathFor(DocumentPurpose $purpose, string $extension, ?int $tenantId = null): string
     {
-        $tenantId = $this->context->tenantId() ?? 0;
+        $tenantId ??= $this->context->tenantId()
+            ?? throw DocumentException::noTenant();
 
         return sprintf(
             'tenants/%d/%s/%s/%s.%s',
@@ -298,6 +301,8 @@ class DocumentService
             'meta' => $options->meta ?: null,
         ]);
 
+        $this->stampTenant($document, $options);
+
         if ($options->owner !== null) {
             $this->setOwnerAttributes($document, $options->owner);
         }
@@ -305,6 +310,17 @@ class DocumentService
         $document->save();
 
         return $document;
+    }
+
+    /**
+     * BelongsToTenant fills tenant_id from the request's tenant, which is absent
+     * on signature-authenticated paths — so an explicit tenant wins when given.
+     */
+    private function stampTenant(Document $document, StoreOptions $options): void
+    {
+        if ($options->tenantId !== null) {
+            $document->tenant_id = $options->tenantId;
+        }
     }
 
     private function setOwnerAttributes(Document $document, Model $owner): void

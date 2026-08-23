@@ -17,6 +17,7 @@ use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -105,24 +106,29 @@ class CourseCatalogTest extends TestCase
         $video->save();
         $lesson->update(['video_asset_id' => $video->id]);
 
-        // Two of the MANY assets (attachments) via the API.
+        // A material of each kind: an external link (still a media asset, since it
+        // stores no file) and an uploaded PDF (a document attached to the lesson).
         $this->withHeaders($h)->postJson("/api/v1/teacher/lessons/{$lesson->id}/attachments", ['type' => 'link', 'title' => 'Slides', 'url' => 'https://ex.com/s'])->assertStatus(201);
+        $this->withHeaders($h)->post("/api/v1/teacher/lessons/{$lesson->id}/attachments", [
+            'type' => 'pdf', 'title' => 'Worksheet', 'file' => UploadedFile::fake()->create('w.pdf', 12, 'application/pdf'),
+        ])->assertStatus(201);
 
-        // Relations: attachments/assets exclude the video; video/videoAsset is the one video.
-        $this->assertSame(1, $lesson->attachments()->count());   // the link only — NOT the video
-        $this->assertSame(1, $lesson->assets()->count());
+        // The link never counts as the video, and the PDF never lands in media_assets.
+        $this->assertSame(1, $lesson->links()->count());
+        $this->assertSame(1, $lesson->documents()->count());
         $this->assertSame($video->id, $lesson->videoAsset->id);
         $this->assertSame($video->id, $lesson->video->id);
 
-        // API: the lesson exposes `video` (one) separately from `attachments` (many).
+        // API: the lesson exposes `video` (one) separately from its materials.
         // Lessons are standalone now — read via the year-scoped show endpoint.
         $year = AcademicYear::where('tenant_id', $tenant->id)->firstOrFail();
         $row = $this->withHeaders($h + ['X-Academic-Year' => $year->uuid])
             ->getJson("/api/v1/teacher/lessons/{$lesson->id}")->assertOk()->json('data');
         $this->assertTrue($row['has_video']);
         $this->assertSame('hls_video', $row['video']['type']);
-        $this->assertCount(1, $row['attachments']);
-        $this->assertNotContains('hls_video', array_column($row['attachments'], 'type'));
+        $this->assertCount(1, $row['links']);
+        $this->assertCount(1, $row['documents']);
+        $this->assertNotContains('hls_video', array_column($row['links'], 'type'));
     }
 
     public function test_attachment_link_can_be_added_to_a_lesson(): void
@@ -145,7 +151,8 @@ class CourseCatalogTest extends TestCase
 
         $this->withHeaders($h)->getJson("/api/v1/teacher/lessons/{$lesson->id}/attachments")
             ->assertOk()
-            ->assertJsonCount(1, 'data');
+            ->assertJsonCount(1, 'data.links')
+            ->assertJsonCount(0, 'data.files');
     }
 
     // ── B19: view=lessons|packages + access_mode filter ────────────────────────

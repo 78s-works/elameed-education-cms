@@ -53,6 +53,16 @@ class DocumentException extends RuntimeException
         return new self('document_no_owner', __('The file could not be saved.'), 500);
     }
 
+    /**
+     * No tenant to file the document under. Always a bug: either the request
+     * never resolved a tenant, or a signature-authenticated path forgot to pass
+     * one explicitly through StoreOptions.
+     */
+    public static function noTenant(): self
+    {
+        return new self('document_no_tenant', __('The file could not be saved.'), 500);
+    }
+
     /** Deleting a document that something still points at → 409, with the link surfaced by the controller. */
     public static function stillLinked(): self
     {

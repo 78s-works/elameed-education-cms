@@ -14,6 +14,8 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
+use App\Support\Files\Models\Document;
+use App\Support\Files\Enums\DocumentPurpose;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -55,26 +57,39 @@ class TeacherProfileTest extends TestCase
         return $profile;
     }
 
+    private function brandingDocument($tenant, $owner, DocumentPurpose $purpose): Document
+    {
+        return Document::factory()
+            ->purpose($purpose)
+            ->ownedBy($owner)
+            ->create(['tenant_id' => $tenant->id]);
+    }
+
     public function test_teacher_can_view_and_update_profile(): void
     {
         $tenant = $this->makeTenant('demo');
         $teacher = $this->makeMember($tenant, TenantUserRole::Teacher);
         Sanctum::actingAs($teacher);
 
+        // Branding images are uploaded first and referenced by uuid; the wire
+        // still speaks `*_url`, resolved from the document.
+        $logo = $this->brandingDocument($tenant, $teacher, DocumentPurpose::BrandingLogo);
+        $favicon = $this->brandingDocument($tenant, $teacher, DocumentPurpose::BrandingFavicon);
+
         $this->withHeader('X-Tenant', 'demo')->putJson('/api/v1/teacher/profile', [
             'primary_color' => '#1D4ED8',
-            'logo_url' => 'https://cdn.example.com/logo.png',
-            'favicon_url' => 'https://cdn.example.com/favicon.ico',
+            'logo_document_uuid' => $logo->uuid,
+            'favicon_document_uuid' => $favicon->uuid,
             'contact' => ['phone' => '01000000000'],
         ])->assertOk()
             ->assertJsonPath('data.primary_color', '#1D4ED8')
-            ->assertJsonPath('data.favicon_url', 'https://cdn.example.com/favicon.ico');
+            ->assertJsonPath('data.favicon_url', $favicon->publicUrl());
 
         $this->withHeader('X-Tenant', 'demo')->getJson('/api/v1/teacher/profile')
             ->assertOk()
             ->assertJsonPath('data.primary_color', '#1D4ED8')
-            ->assertJsonPath('data.logo_url', 'https://cdn.example.com/logo.png')
-            ->assertJsonPath('data.favicon_url', 'https://cdn.example.com/favicon.ico');
+            ->assertJsonPath('data.logo_url', $logo->publicUrl())
+            ->assertJsonPath('data.favicon_url', $favicon->publicUrl());
     }
 
     public function test_invalid_color_is_rejected(): void

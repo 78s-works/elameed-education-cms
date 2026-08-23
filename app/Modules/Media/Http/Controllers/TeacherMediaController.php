@@ -119,7 +119,10 @@ class TeacherMediaController
             $bytes,
             "{$uuid}.mp4",
             DocumentPurpose::VideoSource,
-            new StoreOptions(ownerId: $this->academyOwnerId((int) $asset->tenant_id)),
+            new StoreOptions(
+                ownerId: $this->academyOwnerId((int) $asset->tenant_id),
+                tenantId: (int) $asset->tenant_id,
+            ),
         );
 
         // Record the stored size so it counts toward the tenant's storage quota

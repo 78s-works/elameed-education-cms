@@ -103,9 +103,11 @@ class InvoicePdfTest extends TestCase
 
         $invoice = $this->buy($student, $lesson);
 
-        // pdf_url populated on fulfillment + file actually on the private disk.
-        $this->assertTrue($invoice->fresh()->hasPdf());
-        $this->assertTrue(Storage::disk('local')->exists($invoice->fresh()->pdf_url));
+        // The PDF is recorded as a document on fulfillment, with the file actually
+        // written to the private disk.
+        $invoice = $invoice->fresh();
+        $this->assertTrue($invoice->hasPdf());
+        $this->assertTrue(Storage::disk('local')->exists($invoice->pdfDocument->storage_key));
 
         // Buyer downloads a real PDF.
         $res = $this->withHeaders($this->h)->get("/api/v1/invoices/{$invoice->uuid}/download");

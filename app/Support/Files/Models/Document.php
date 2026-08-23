@@ -8,6 +8,7 @@ use App\Support\Files\Enums\DocumentPurpose;
 use App\Support\Files\Enums\DocumentStatus;
 use App\Support\Files\Enums\DocumentVisibility;
 use App\Support\Traits\BelongsToTenant;
+use Database\Factories\DocumentFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -62,6 +63,12 @@ class Document extends Model
         'size_bytes' => 'integer',
         'meta' => 'array',
     ];
+
+    /** The model lives outside App\Models, so the factory is named explicitly. */
+    protected static function newFactory(): DocumentFactory
+    {
+        return DocumentFactory::new();
+    }
 
     public function uniqueIds(): array
     {

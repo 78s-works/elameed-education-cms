@@ -3,6 +3,7 @@
 namespace Tests\Feature\Assessment;
 
 use App\Models\User;
+use App\Support\Files\Enums\DocumentPurpose;
 use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
@@ -367,8 +368,13 @@ class ExamsTest extends TestCase
 
         $attempt->refresh();
         $this->assertSame('Good work — see the corrected copy.', $attempt->feedback);
-        $this->assertNotNull($attempt->corrected_file['path'] ?? null);
-        Storage::disk('local')->assertExists($attempt->corrected_file['path']);
+
+        // The corrected copy is a document attached to the attempt, on the
+        // private disk, with real bytes behind it.
+        $corrected = $attempt->firstDocumentFor(DocumentPurpose::AssignmentCorrected);
+        $this->assertNotNull($corrected);
+        $this->assertSame('corrected.pdf', $corrected->original_name);
+        Storage::disk('local')->assertExists($corrected->storage_key);
 
         // Student sees feedback + corrected file on their result, and can download it.
         Sanctum::actingAs($student);

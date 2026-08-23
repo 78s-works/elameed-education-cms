@@ -360,9 +360,10 @@ class RemoteVideoService
     {
         DB::transaction(function () use ($asset, $version): void {
             $previousId = $asset->current_version_id;
+            // The poster lives on the version: a remote host serves it from its
+            // own CDN, so there is no file of ours to record as a document.
             $asset->forceFill([
                 'current_version_id' => $version->getKey(),
-                'thumbnail_url' => $version->thumbnail_url,
                 'status' => MediaStatus::Ready->value,
             ])->save();
 

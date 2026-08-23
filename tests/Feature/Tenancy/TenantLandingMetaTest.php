@@ -6,6 +6,8 @@ use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\TeacherMeta;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
+use App\Support\Files\Models\Document;
+use App\Support\Files\Enums\DocumentPurpose;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
@@ -42,9 +44,14 @@ class TenantLandingMetaTest extends TestCase
 
     public function test_returns_branding_and_grouped_meta_without_auth(): void
     {
+        $logo = Document::factory()->purpose(DocumentPurpose::BrandingLogo)
+            ->create(['tenant_id' => $this->tenant->id]);
+        $favicon = Document::factory()->purpose(DocumentPurpose::BrandingFavicon)
+            ->create(['tenant_id' => $this->tenant->id]);
+
         $this->profile($this->tenant, [
-            'logo_url' => 'https://cdn.example.com/logo.png',
-            'favicon_url' => 'https://cdn.example.com/favicon.ico',
+            'logo_document_id' => $logo->id,
+            'favicon_document_id' => $favicon->id,
             'primary_color' => '#1E88E5',
             'bio' => 'Physics academy',
             'socials' => ['facebook' => 'https://facebook.com/x'],
@@ -58,8 +65,8 @@ class TenantLandingMetaTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.site.slug', 'demo')
             ->assertJsonPath('data.site.name', 'Demo')
-            ->assertJsonPath('data.branding.logo_url', 'https://cdn.example.com/logo.png')
-            ->assertJsonPath('data.branding.favicon_url', 'https://cdn.example.com/favicon.ico')
+            ->assertJsonPath('data.branding.logo_url', $logo->publicUrl())
+            ->assertJsonPath('data.branding.favicon_url', $favicon->publicUrl())
             ->assertJsonPath('data.branding.primary_color', '#1E88E5')
             ->assertJsonPath('data.branding.socials.facebook', 'https://facebook.com/x')
             // Grouped by `group`, ordered by sort_order then key within a group.

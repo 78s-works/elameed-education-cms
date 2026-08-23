@@ -104,8 +104,14 @@ class MediaAsset extends Model
         return $this->sourceDocument?->storage_key;
     }
 
+    /**
+     * Poster URL. Locally-transcoded videos own their poster as a public
+     * document; a remote host serves its own from its CDN, recorded on the
+     * current version — so fall through to that rather than duplicating it.
+     */
     public function getThumbnailUrlAttribute(): ?string
     {
-        return $this->thumbnailDocument?->publicUrl();
+        return $this->thumbnailDocument?->publicUrl()
+            ?? $this->currentVersion?->thumbnail_url;
     }
 }
