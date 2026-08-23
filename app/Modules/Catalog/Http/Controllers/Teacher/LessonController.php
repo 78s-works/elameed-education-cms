@@ -52,7 +52,7 @@ class LessonController
     public function show(Lesson $lesson): LessonResource
     {
         return new LessonResource($lesson->load([
-            'sections' => fn ($q) => $q->ordered()->with(['mediaAsset', 'exam']),
+            'sections' => fn ($q) => $q->ordered()->with(['mediaAsset', 'exam', 'document']),
             'academicYear', 'videoAsset', 'links', 'documents',
         ]));
     }
@@ -69,7 +69,7 @@ class LessonController
         $lesson->update($attributes);
 
         return new LessonResource(
-            $lesson->load(['sections' => fn ($q) => $q->ordered()->with(['mediaAsset', 'exam'])]),
+            $lesson->load(['sections' => fn ($q) => $q->ordered()->with(['mediaAsset', 'exam', 'document'])]),
         );
     }
 

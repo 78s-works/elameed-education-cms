@@ -4,6 +4,7 @@ namespace App\Modules\Catalog\Http\Resources;
 
 use App\Modules\Catalog\Models\LessonSection;
 use App\Modules\Media\Http\Resources\MediaAssetResource;
+use App\Support\Files\Http\Resources\DocumentResource;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -59,6 +60,12 @@ class LessonSectionResource extends JsonResource
             'media' => $this->when(
                 ! $gated,
                 fn () => $this->whenLoaded('mediaAsset', fn () => $this->mediaAsset ? new MediaAssetResource($this->mediaAsset) : null),
+            ),
+            // A PDF/image part's file. Private now, so what travels is a short-
+            // lived signed URL rather than a path anyone could open.
+            'document' => $this->when(
+                ! $gated,
+                fn () => $this->whenLoaded('document', fn () => $this->document ? new DocumentResource($this->document) : null),
             ),
         ];
     }

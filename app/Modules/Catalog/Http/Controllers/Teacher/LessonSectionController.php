@@ -33,7 +33,7 @@ class LessonSectionController
     public function index(Lesson $lesson): AnonymousResourceCollection
     {
         return LessonSectionResource::collection(
-            $lesson->sections()->ordered()->with(['mediaAsset', 'exam'])->get(),
+            $lesson->sections()->ordered()->with(['mediaAsset', 'exam', 'document'])->get(),
         );
     }
 
@@ -50,7 +50,7 @@ class LessonSectionController
             return $lesson->sections()->create($attributes);
         });
 
-        return (new LessonSectionResource($section->load(['mediaAsset', 'exam'])))
+        return (new LessonSectionResource($section->load(['mediaAsset', 'exam', 'document'])))
             ->response()->setStatusCode(201);
     }
 
@@ -79,7 +79,7 @@ class LessonSectionController
             $section->update($attributes);
         });
 
-        return new LessonSectionResource($section->fresh()->load(['mediaAsset', 'exam']));
+        return new LessonSectionResource($section->fresh()->load(['mediaAsset', 'exam', 'document']));
     }
 
     public function destroy(Lesson $lesson, LessonSection $section): Response
@@ -115,7 +115,7 @@ class LessonSectionController
         });
 
         return LessonSectionResource::collection(
-            $lesson->sections()->ordered()->with(['mediaAsset', 'exam'])->get(),
+            $lesson->sections()->ordered()->with(['mediaAsset', 'exam', 'document'])->get(),
         );
     }
 

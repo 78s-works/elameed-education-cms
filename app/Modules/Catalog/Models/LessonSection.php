@@ -11,6 +11,7 @@ use App\Modules\Catalog\Enums\PdfKind;
 use App\Modules\Catalog\Enums\SectionDelivery;
 use App\Modules\Media\Models\MediaAsset;
 use App\Support\Traits\BelongsToAcademicYear;
+use App\Support\Files\Models\Document;
 use App\Support\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -47,6 +48,7 @@ class LessonSection extends Model
         'title',
         'sort_order',
         'media_asset_id',
+        'document_id',
         'exam_id',
         'youtube_url',
         'pdf_kind',
@@ -77,6 +79,12 @@ class LessonSection extends Model
     public function mediaAsset(): BelongsTo
     {
         return $this->belongsTo(MediaAsset::class, 'media_asset_id');
+    }
+
+    /** The part's uploaded file (a PDF or image). Video parts use mediaAsset. */
+    public function document(): BelongsTo
+    {
+        return $this->belongsTo(Document::class);
     }
 
     public function exam(): BelongsTo

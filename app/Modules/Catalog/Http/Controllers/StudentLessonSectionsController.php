@@ -85,7 +85,7 @@ class StudentLessonSectionsController
 
         // Eager-load the backing exam so quiz/homework parts expose `exam.id`
         // (uuid) — the student player links its "Solve" action to it.
-        $sections = $lesson->sections()->ordered()->with(['mediaAsset', 'exam'])->get();
+        $sections = $lesson->sections()->ordered()->with(['mediaAsset', 'exam', 'document'])->get();
 
         // B12 (LP-6): hide parts outside the student's study_mode channel — an
         // online student never sees center-only parts, and vice versa; `both`
