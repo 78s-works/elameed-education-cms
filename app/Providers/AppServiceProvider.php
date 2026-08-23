@@ -2,8 +2,15 @@
 
 namespace App\Providers;
 
+use App\Modules\Assessment\Models\ExamAttempt;
+use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Engagement\Models\Comment;
+use App\Modules\Engagement\Models\SupportTicket;
+use App\Modules\Engagement\Models\TicketReply;
+use App\Modules\Tenancy\Models\Tenant;
 use App\Support\Files\DocumentPolicy;
 use App\Support\Files\Models\Document;
+use App\Support\Files\Observers\DocumentsObserver;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -12,6 +19,16 @@ use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
+    /** Models that hold Pattern B documents (see HasDocuments). */
+    private const DOCUMENT_OWNERS = [
+        Comment::class,
+        SupportTicket::class,
+        TicketReply::class,
+        ExamAttempt::class,
+        Lesson::class,
+        Tenant::class,
+    ];
+
     public function register(): void
     {
         //
@@ -24,6 +41,13 @@ class AppServiceProvider extends ServiceProvider
         // Every stored file is authorized through one policy, keyed off the
         // document's purpose. See App\Support\Files\DocumentPolicy.
         Gate::policy(Document::class, DocumentPolicy::class);
+
+        // Deleting an owner takes its files with it — blob included. A FK cascade
+        // would drop the row and strand the blob, which is the leak this whole
+        // change exists to close.
+        foreach (self::DOCUMENT_OWNERS as $owner) {
+            $owner::observe(DocumentsObserver::class);
+        }
     }
 
     private function configureRateLimiters(): void
