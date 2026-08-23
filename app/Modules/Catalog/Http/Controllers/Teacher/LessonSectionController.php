@@ -3,6 +3,7 @@
 namespace App\Modules\Catalog\Http\Controllers\Teacher;
 
 use App\Models\User;
+use App\Modules\Assessment\Enums\ExamGradingMode;
 use App\Modules\Assessment\Enums\ExamMode;
 use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Assessment\Models\Exam;
@@ -44,7 +45,10 @@ class LessonSectionController
             $type = LessonSectionType::from($attributes['type']);
 
             if ($type->backsExam()) {
-                $attributes['exam_id'] = $this->makeBackingExam($lesson, $type, $request)->id;
+                $exam = $this->makeBackingExam($lesson, $type, $request);
+                $attributes['exam_id'] = $exam->id;
+                // delivery is derived from the exam's mode (single source of truth).
+                $attributes['delivery'] = $this->deliveryForExam($exam);
             }
 
             return $lesson->sections()->create($attributes);
@@ -67,13 +71,20 @@ class LessonSectionController
                 $exam = $section->exam_id ? Exam::find($section->exam_id) : null;
 
                 if ($exam !== null) {
-                    $exam->update($this->examAttributes($lesson, $type, $request));
-                    $attributes['exam_id'] = $exam->id;
+                    // Only the degree fields the part dialog still owns — never the
+                    // exam's mode/grading/published state (those are exam-page owned).
+                    $exam->update($this->examAttributes($type, $request));
                 } else {
-                    $attributes['exam_id'] = $this->makeBackingExam($lesson, $type, $request)->id;
+                    $exam = $this->makeBackingExam($lesson, $type, $request);
                 }
+
+                $attributes['exam_id'] = $exam->id;
+                // Keep the part's delivery in step with the exam's mode; the teacher
+                // changes the mode itself on the exam settings page, not here.
+                $attributes['delivery'] = $this->deliveryForExam($exam->fresh());
             } else {
                 $attributes['exam_id'] = null; // a video part carries no exam
+                $attributes['delivery'] = null;
             }
 
             $section->update($attributes);
@@ -166,21 +177,30 @@ class LessonSectionController
     /** Build the exam that backs a quiz/homework part. */
     private function makeBackingExam(Lesson $lesson, LessonSectionType $type, LessonSectionRequest $request): Exam
     {
-        $exam = new Exam($this->examAttributes($lesson, $type, $request));
+        // Degree fields from the part payload, plus the create-only defaults: the
+        // delivery method (mode) and grading are set later from the exam settings
+        // page, so a fresh backing exam is a standard, manually-graded one.
+        $exam = new Exam(array_merge($this->examAttributes($type, $request), [
+            'lesson_id' => $lesson->id,
+            'type' => ($type === LessonSectionType::Quiz ? ExamType::LessonQuiz : ExamType::Homework)->value,
+            'mode' => ExamMode::Standard->value,
+            'grading_mode' => ExamGradingMode::Manual->value,
+            'is_published' => true,
+        ]));
         $exam->save(); // tenant_id via BelongsToTenant, uuid via HasUuids
 
         return $exam;
     }
 
     /**
-     * The exam column set derived from a part payload.
+     * The degree columns the part dialog still owns — safe to write on both create
+     * and update (they never touch the exam's mode/grading/published state).
      *
      * @return array<string, mixed>
      */
-    private function examAttributes(Lesson $lesson, LessonSectionType $type, LessonSectionRequest $request): array
+    private function examAttributes(LessonSectionType $type, LessonSectionRequest $request): array
     {
         $degree = $request->examAttributes();
-        $delivery = SectionDelivery::tryFrom((string) $request->input('delivery'));
 
         $passValue = (float) ($degree['pass_value'] ?? 0);
         $total = isset($degree['total_marks']) ? (float) $degree['total_marks'] : null;
@@ -189,17 +209,20 @@ class LessonSectionController
             : (int) round($passValue);
 
         return [
-            'lesson_id' => $lesson->id,
             'title' => $request->input('name') ?: ucfirst($type->value),
-            'type' => ($type === LessonSectionType::Quiz ? ExamType::LessonQuiz : ExamType::Homework)->value,
-            'mode' => ($delivery === SectionDelivery::BubbleSheet ? ExamMode::BubbleSheet : ExamMode::Standard)->value,
             'pass_percent' => max(0, min(100, $legacyPercent)),
             'pass_mode' => $degree['pass_mode'] ?? 'percent',
             'pass_value' => $degree['pass_value'] ?? null,
             'total_marks' => $degree['total_marks'] ?? null,
-            'grading_mode' => $degree['grading_mode'] ?? 'manual',
             'duration_min' => $degree['duration_min'] ?? null,
-            'is_published' => true,
         ];
+    }
+
+    /** The part's delivery, derived from its backing exam's mode (single source). */
+    private function deliveryForExam(Exam $exam): string
+    {
+        return ($exam->mode === ExamMode::BubbleSheet
+            ? SectionDelivery::BubbleSheet
+            : SectionDelivery::ImageUpload)->value;
     }
 }

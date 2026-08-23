@@ -6,8 +6,11 @@ use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Centers\Models\Center;
+use App\Modules\Centers\Models\CenterIdCode;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Modules\Commerce\Models\Enrollment;
+use Illuminate\Support\Str;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\LoginAttempt;
@@ -78,6 +81,77 @@ class TeacherStudentManagementTest extends TestCase
         $this->assertDatabaseHas('tenant_user', [
             'tenant_id' => $this->tenant->id, 'user_id' => $user->id, 'role' => 'student', 'status' => 'active',
         ]);
+    }
+
+    public function test_teacher_creates_center_student_with_an_unused_id_code(): void
+    {
+        $year = AcademicYear::where('tenant_id', $this->tenant->id)->orderBy('id')->firstOrFail();
+
+        $center = new Center(['name' => 'Main Center']);
+        $center->tenant_id = $this->tenant->id;
+        $center->save();
+
+        $code = new CenterIdCode([
+            'center_id' => $center->id,
+            'grade' => 3,
+            'sequence' => 1,
+            'code' => '3-'.$center->id.'-000001',
+            'status' => 'active',
+            'batch_id' => (string) Str::uuid(),
+        ]);
+        $code->tenant_id = $this->tenant->id;
+        $code->academic_year_id = $year->id;
+        $code->save();
+
+        $this->withHeaders($this->h)->postJson('/api/v1/teacher/students', [
+            'name' => 'Center Kid', 'phone' => '01555000777',
+            'study_mode' => 'center', 'id_code' => $code->code,
+        ])->assertStatus(201)->assertJsonPath('data.study_mode', 'center');
+
+        $user = User::where('phone', '01555000777')->firstOrFail();
+
+        // Profile bound to the code's center + year; study_mode forced to center.
+        $this->assertDatabaseHas('student_profiles', [
+            'user_id' => $user->id, 'tenant_id' => $this->tenant->id,
+            'study_mode' => 'center', 'center_id' => $center->id, 'academic_year_id' => $year->id,
+        ]);
+
+        // Code consumed — redeemed and bound to this student.
+        $this->assertDatabaseHas('center_id_codes', [
+            'id' => $code->id, 'status' => 'redeemed', 'used_by' => $user->id,
+        ]);
+    }
+
+    public function test_center_student_requires_an_id_code(): void
+    {
+        $this->withHeaders($this->h)->postJson('/api/v1/teacher/students', [
+            'name' => 'No Code', 'phone' => '01555000778', 'study_mode' => 'center',
+        ])->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['id_code']]]);
+    }
+
+    public function test_used_id_code_is_rejected(): void
+    {
+        $year = AcademicYear::where('tenant_id', $this->tenant->id)->orderBy('id')->firstOrFail();
+        $center = new Center(['name' => 'Main Center']);
+        $center->tenant_id = $this->tenant->id;
+        $center->save();
+
+        $code = new CenterIdCode([
+            'center_id' => $center->id, 'grade' => 2, 'sequence' => 1,
+            'code' => '2-'.$center->id.'-000001', 'status' => 'redeemed',
+            'batch_id' => (string) Str::uuid(), 'used_at' => now(),
+        ]);
+        $code->tenant_id = $this->tenant->id;
+        $code->academic_year_id = $year->id;
+        $code->save();
+
+        $this->withHeaders($this->h)->postJson('/api/v1/teacher/students', [
+            'name' => 'Late Kid', 'phone' => '01555000779',
+            'study_mode' => 'center', 'id_code' => $code->code,
+        ])->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['id_code']]]);
+
+        // No student membership created — the whole create rolled back.
+        $this->assertDatabaseMissing('users', ['phone' => '01555000779']);
     }
 
     public function test_show_returns_360_summary(): void

@@ -2,8 +2,10 @@
 
 namespace App\Modules\Assessment\Http\Requests;
 
+use App\Modules\Assessment\Enums\ExamGradingMode;
 use App\Modules\Assessment\Enums\ExamType;
 use App\Modules\Tenancy\Services\TenantContext;
+use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -49,8 +51,33 @@ class ExamRequest extends FormRequest
             'ends_at' => ['nullable', 'date', 'after_or_equal:starts_at'],
             'result_visibility' => ['nullable', Rule::in(['immediate', 'after_close', 'manual'])],
             'show_answers' => ['boolean'],
+            // Delivery method: standard (file/photo/PDF upload) or an on-site bubble
+            // sheet. Grading: manual, or auto (bubble sheet only). Both moved here
+            // from the lesson part dialog (BUGS.docx).
             'mode' => ['nullable', Rule::in(['standard', 'bubble_sheet'])],
+            'grading_mode' => ['nullable', Rule::enum(ExamGradingMode::class)],
             'is_published' => ['boolean'],
         ];
+    }
+
+    /**
+     * Automatic grading is only possible for an on-site bubble sheet (LP-12). The
+     * effective mode is the one being set, or — on a partial update that omits it —
+     * the exam's current mode.
+     */
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator): void {
+            if ($this->input('grading_mode') !== ExamGradingMode::Auto->value) {
+                return;
+            }
+
+            $exam = $this->route('exam');
+            $mode = $this->input('mode', $exam?->mode?->value ?? 'standard');
+
+            if ($mode !== 'bubble_sheet') {
+                $validator->errors()->add('grading_mode', 'Automatic grading requires bubble_sheet mode.');
+            }
+        });
     }
 }

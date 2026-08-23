@@ -20,6 +20,7 @@ class ExamResource extends JsonResource
             'title' => $this->title,
             'type' => $this->type->value,
             'mode' => $this->mode->value,
+            'grading_mode' => $this->grading_mode->value,
             'pass_percent' => $this->pass_percent,
             'duration_min' => $this->duration_min,
             'attempts_allowed' => $this->attempts_allowed,

@@ -202,38 +202,55 @@ class LessonAuthoringTest extends TestCase
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
         $lesson = $this->makeLesson('both');
 
+        // delivery + grading_mode are no longer part inputs (BUGS.docx move) — a
+        // backing exam is created standard + manual, and delivery is derived from
+        // the exam's mode (standard → image_upload).
         $examId = $this->withHeaders($this->headers())->postJson("/api/v1/teacher/lessons/{$lesson}/sections", [
             'name' => 'HW1', 'type' => 'homework', 'access_mode' => 'both', 'is_required' => true,
-            'delivery' => 'pdf_upload', 'grading_mode' => 'manual', 'pass_mode' => 'marks',
-            'pass_value' => 30, 'total_marks' => 50, 'gate_rule' => 'must_submit', 'max_tries' => 2,
+            'pass_mode' => 'marks', 'pass_value' => 30, 'total_marks' => 50, 'gate_rule' => 'must_submit', 'max_tries' => 2,
         ])->assertStatus(201)
             ->assertJsonPath('data.type', 'homework')
-            ->assertJsonPath('data.delivery', 'pdf_upload')
+            ->assertJsonPath('data.delivery', 'image_upload')
             ->assertJsonPath('data.gate_rule', 'must_submit')
             ->assertJsonPath('data.max_tries', 2)
             ->assertJsonPath('data.exam.pass_mode', 'marks')
+            ->assertJsonPath('data.exam.mode', 'standard')
             ->assertJsonPath('data.exam.grading_mode', 'manual')
             ->json('data.exam.id');
 
         $this->assertDatabaseHas('exams', ['uuid' => $examId, 'lesson_id' => $lesson, 'type' => 'homework', 'pass_mode' => 'marks', 'total_marks' => 50.00]);
     }
 
-    public function test_create_quiz_part_with_bubble_sheet_auto_grade(): void
+    public function test_quiz_part_backs_a_standard_exam_and_delivery_grading_move_to_the_exam(): void
     {
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
         $lesson = $this->makeLesson('both');
 
-        $this->withHeaders($this->headers())->postJson("/api/v1/teacher/lessons/{$lesson}/sections", [
+        // Even if a client sends delivery/grading_mode on the part, they are ignored:
+        // the backing exam is standard + manual and delivery derives to image_upload.
+        $examId = $this->withHeaders($this->headers())->postJson("/api/v1/teacher/lessons/{$lesson}/sections", [
             'name' => 'Quiz1', 'type' => 'quiz', 'access_mode' => 'both', 'is_required' => true,
             'delivery' => 'bubble_sheet', 'grading_mode' => 'auto', 'pass_mode' => 'percent',
             'pass_value' => 60, 'gate_rule' => 'must_pass', 'max_tries' => 3, 'duration_min' => 15,
         ])->assertStatus(201)
             ->assertJsonPath('data.type', 'quiz')
-            ->assertJsonPath('data.exam.mode', 'bubble_sheet')
-            ->assertJsonPath('data.exam.grading_mode', 'auto')
-            ->assertJsonPath('data.exam.duration_min', 15);
+            ->assertJsonPath('data.delivery', 'image_upload')
+            ->assertJsonPath('data.exam.mode', 'standard')
+            ->assertJsonPath('data.exam.grading_mode', 'manual')
+            ->assertJsonPath('data.exam.duration_min', 15)
+            ->json('data.exam.id');
 
-        $this->assertDatabaseHas('exams', ['lesson_id' => $lesson, 'type' => 'lesson_quiz', 'mode' => 'bubble_sheet', 'grading_mode' => 'auto', 'duration_min' => 15]);
+        // The teacher sets delivery (mode) + grading on the exam settings page; that
+        // re-syncs the backing part's derived delivery.
+        $this->withHeaders($this->headers())->putJson("/api/v1/teacher/exams/{$examId}", [
+            'mode' => 'bubble_sheet', 'grading_mode' => 'auto', 'is_published' => false,
+        ])->assertStatus(200)
+            ->assertJsonPath('data.mode', 'bubble_sheet')
+            ->assertJsonPath('data.grading_mode', 'auto');
+
+        $this->assertDatabaseHas('exams', ['uuid' => $examId, 'mode' => 'bubble_sheet', 'grading_mode' => 'auto']);
+        // The backing part's delivery re-synced to match the exam's new mode.
+        $this->assertDatabaseHas('lesson_sections', ['lesson_id' => $lesson, 'type' => 'quiz', 'delivery' => 'bubble_sheet']);
     }
 
     public function test_parts_can_be_reordered(): void
@@ -307,9 +324,16 @@ class LessonAuthoringTest extends TestCase
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
         $lesson = $this->makeLesson('both');
 
-        $this->withHeaders($this->headers())->postJson("/api/v1/teacher/lessons/{$lesson}/sections", [
-            'name' => 'HW', 'type' => 'homework', 'access_mode' => 'both', 'delivery' => 'pdf_upload',
-            'grading_mode' => 'auto', 'pass_mode' => 'percent', 'pass_value' => 50, 'gate_rule' => 'must_submit',
+        // The auto⇒bubble-sheet rule moved from the part to the exam (BUGS.docx): a
+        // homework part creates a standard exam, and setting grading_mode=auto on it
+        // while mode stays standard is rejected on the exam endpoint.
+        $examId = $this->withHeaders($this->headers())->postJson("/api/v1/teacher/lessons/{$lesson}/sections", [
+            'name' => 'HW', 'type' => 'homework', 'access_mode' => 'both',
+            'pass_mode' => 'percent', 'pass_value' => 50, 'gate_rule' => 'must_submit',
+        ])->assertStatus(201)->json('data.exam.id');
+
+        $this->withHeaders($this->headers())->putJson("/api/v1/teacher/exams/{$examId}", [
+            'mode' => 'standard', 'grading_mode' => 'auto', 'is_published' => false,
         ])->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['grading_mode']]]);
     }
 
@@ -320,14 +344,14 @@ class LessonAuthoringTest extends TestCase
 
         // Missing total_marks → 422
         $this->withHeaders($this->headers())->postJson("/api/v1/teacher/lessons/{$lesson}/sections", [
-            'name' => 'HW', 'type' => 'homework', 'access_mode' => 'both', 'delivery' => 'pdf_upload',
-            'grading_mode' => 'manual', 'pass_mode' => 'marks', 'pass_value' => 20, 'gate_rule' => 'must_submit',
+            'name' => 'HW', 'type' => 'homework', 'access_mode' => 'both',
+            'pass_mode' => 'marks', 'pass_value' => 20, 'gate_rule' => 'must_submit',
         ])->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['total_marks']]]);
 
         // pass_value > total_marks → 422
         $this->withHeaders($this->headers())->postJson("/api/v1/teacher/lessons/{$lesson}/sections", [
-            'name' => 'HW', 'type' => 'homework', 'access_mode' => 'both', 'delivery' => 'pdf_upload',
-            'grading_mode' => 'manual', 'pass_mode' => 'marks', 'pass_value' => 80, 'total_marks' => 50, 'gate_rule' => 'must_submit',
+            'name' => 'HW', 'type' => 'homework', 'access_mode' => 'both',
+            'pass_mode' => 'marks', 'pass_value' => 80, 'total_marks' => 50, 'gate_rule' => 'must_submit',
         ])->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['pass_value']]]);
     }
 
@@ -385,8 +409,8 @@ class LessonAuthoringTest extends TestCase
     private function addHomework(int $lesson): int
     {
         return $this->withHeaders($this->headers())->postJson("/api/v1/teacher/lessons/{$lesson}/sections", [
-            'name' => 'HW', 'type' => 'homework', 'access_mode' => 'both', 'delivery' => 'pdf_upload',
-            'grading_mode' => 'manual', 'pass_mode' => 'percent', 'pass_value' => 50, 'gate_rule' => 'must_pass', 'max_tries' => 1,
+            'name' => 'HW', 'type' => 'homework', 'access_mode' => 'both',
+            'pass_mode' => 'percent', 'pass_value' => 50, 'gate_rule' => 'must_pass', 'max_tries' => 1,
         ])->assertStatus(201)->json('data.id');
     }
 }

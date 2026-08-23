@@ -24,7 +24,12 @@ class CreateStudentRequest extends FormRequest
             'phone' => ['required', 'string', 'max:20', 'regex:/^[0-9+]{6,20}$/'],
             'email' => ['nullable', 'email', 'max:255'],
             'password' => ['nullable', 'string', Password::min(8)],
-            ...StudentProfile::rules(), // gender, governorate, region, academic_year, education_type, guardian_phone
+            ...StudentProfile::rules(), // gender, governorate, region, academic_year, education_type, guardian_phone, study_mode
+            // A center student is onboarded by an UNUSED Center ID-code (B21 parity):
+            // the code binds center + grade + study_mode, so it is required when the
+            // teacher marks the student as `center`. The controller consumes it and
+            // is the single source of truth (it overrides center/year from the code).
+            'id_code' => ['nullable', 'string', 'max:40', 'required_if:study_mode,center'],
         ];
     }
 }

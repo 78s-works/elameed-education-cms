@@ -93,6 +93,13 @@ class ExamController
 
         $exam->update($data);
 
+        // The delivery method now lives on the exam (as `mode`); the backing lesson
+        // part mirrors it. Re-sync the part's `delivery` whenever the mode is (re)set
+        // so both surfaces agree (BUGS.docx — options moved to the exam page).
+        if (array_key_exists('mode', $data)) {
+            $this->resyncSectionDelivery($exam);
+        }
+
         return new ExamResource($exam->loadCount('questions'));
     }
 
@@ -176,11 +183,26 @@ class ExamController
             'type' => $sectionType->value,
             'title' => $exam->title,
             'access_mode' => $lesson->access_mode->value, // ⊆ the lesson ceiling (equal is a subset)
-            'delivery' => ($exam->mode === ExamMode::BubbleSheet ? SectionDelivery::BubbleSheet : SectionDelivery::ImageUpload)->value,
+            'delivery' => $this->deliveryForExam($exam),
             'gate_rule' => GateRule::MustSubmit->value,
             'sort_order' => (int) $lesson->sections()->max('sort_order') + 1,
             'exam_id' => $exam->id,
             'is_required' => true,
         ]);
+    }
+
+    /** Mirror the exam's mode onto the backing part's `delivery` (single source). */
+    private function resyncSectionDelivery(Exam $exam): void
+    {
+        LessonSection::query()
+            ->where('exam_id', $exam->id)
+            ->update(['delivery' => $this->deliveryForExam($exam)]);
+    }
+
+    private function deliveryForExam(Exam $exam): string
+    {
+        return ($exam->mode === ExamMode::BubbleSheet
+            ? SectionDelivery::BubbleSheet
+            : SectionDelivery::ImageUpload)->value;
     }
 }

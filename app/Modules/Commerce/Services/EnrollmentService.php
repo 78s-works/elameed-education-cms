@@ -14,6 +14,7 @@ use App\Modules\Catalog\Services\StudentPartVisibility;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Modules\Commerce\Models\Enrollment;
+use App\Modules\Engagement\Services\ProgressResetService;
 use Illuminate\Support\Collection;
 
 /**
@@ -34,6 +35,7 @@ class EnrollmentService
         private readonly PackageItemService $packageItems,
         private readonly SequentialUnlockService $sequential,
         private readonly StudentPartVisibility $studyMode,
+        private readonly ProgressResetService $progressReset,
     ) {}
 
     /**
@@ -235,6 +237,20 @@ class EnrollmentService
             return $existing;
         }
 
+        // Re-purchase after a teacher REVOKED access: a Cancelled enrollment for this
+        // same lesson still on file means the student had — and lost — this lesson.
+        // A fresh grant then wipes their old progress so they redo the video,
+        // homework and quiz (STUDENT DASHBOARD.docx). First-time buyers have no prior
+        // row, so this never fires on them; a natural expiry (Expired, not Cancelled)
+        // or a renewal of a still-active grant is left untouched.
+        $reGrantAfterRevoke = $lessonId !== null
+            && Enrollment::withoutGlobalScopes()
+                ->where('tenant_id', $tenantId)
+                ->where('user_id', $userId)
+                ->where('lesson_id', $lessonId)
+                ->where('status', EnrollmentStatus::Cancelled->value)
+                ->exists();
+
         $enrollment = new Enrollment([
             'user_id' => $userId,
             'lesson_id' => $lessonId,
@@ -247,6 +263,10 @@ class EnrollmentService
         ]);
         $enrollment->tenant_id = $tenantId;
         $enrollment->save();
+
+        if ($reGrantAfterRevoke) {
+            $this->progressReset->resetLesson($tenantId, $userId, $lessonId);
+        }
 
         return $enrollment;
     }

@@ -2,13 +2,11 @@
 
 namespace App\Modules\Catalog\Http\Requests;
 
-use App\Modules\Assessment\Enums\ExamGradingMode;
 use App\Modules\Assessment\Enums\ExamPassMode;
 use App\Modules\Catalog\Enums\AccessMode;
 use App\Modules\Catalog\Enums\GateRule;
 use App\Modules\Catalog\Enums\LessonSectionType;
 use App\Modules\Catalog\Enums\PdfKind;
-use App\Modules\Catalog\Enums\SectionDelivery;
 use App\Modules\Catalog\Models\Lesson;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
@@ -18,14 +16,18 @@ use Illuminate\Validation\Rule;
  * Validates a lesson part (VD change set §8.3). `type` drives the payload:
  *
  *   video    → { media_asset_id }
- *   homework → { delivery, grading_mode, pass_mode, pass_value, total_marks?,
- *                gate_rule, max_tries? }
+ *   homework → { pass_mode, pass_value, total_marks?, gate_rule, max_tries? }
  *   quiz     → same as homework, plus an optional duration_min cap
  *
+ * Delivery method (upload vs bubble sheet) and grading mode are NO LONGER part
+ * inputs — they live on the backing exam and are edited from the exam settings
+ * page (BUGS.docx). `delivery` on the part row is derived by the controller from
+ * the exam's mode.
+ *
  * Cross rules (server-authoritative): part.access_mode ⊆ lesson.access_mode;
- * grading_mode=auto ⇒ delivery=bubble_sheet; pass_mode=marks ⇒ total_marks
- * present and pass_value ≤ total_marks. The exam-degree fields are split out via
- * examAttributes() — the controller uses them to build the backing exam.
+ * pass_mode=marks ⇒ total_marks present and pass_value ≤ total_marks. The
+ * exam-degree fields are split out via examAttributes() — the controller uses them
+ * to build the backing exam.
  */
 class LessonSectionRequest extends FormRequest
 {
@@ -54,9 +56,9 @@ class LessonSectionRequest extends FormRequest
                 }
             }],
 
-            // homework / quiz — backed by an exam
-            'delivery' => ['nullable', Rule::enum(SectionDelivery::class), 'required_if:type,homework,quiz'],
-            'grading_mode' => ['nullable', Rule::enum(ExamGradingMode::class), 'required_if:type,homework,quiz'],
+            // homework / quiz — backed by an exam. Delivery method (upload vs bubble
+            // sheet) and grading mode now live on the exam and are set from the exam
+            // settings page, NOT here (BUGS.docx — "move these options to exam page").
             'pass_mode' => ['nullable', Rule::enum(ExamPassMode::class), 'required_if:type,homework,quiz'],
             'pass_value' => ['nullable', 'numeric', 'min:0', 'required_if:type,homework,quiz'],
             'total_marks' => ['nullable', 'numeric', 'min:0', 'required_if:pass_mode,marks'],
@@ -81,7 +83,7 @@ class LessonSectionRequest extends FormRequest
             }
 
             if ($type->backsExam()) {
-                $this->assertExamRules($validator, $type);
+                $this->assertExamRules($validator);
             }
         });
     }
@@ -111,21 +113,9 @@ class LessonSectionRequest extends FormRequest
         }
     }
 
-    private function assertExamRules(Validator $validator, LessonSectionType $type): void
+    private function assertExamRules(Validator $validator): void
     {
-        $delivery = SectionDelivery::tryFrom((string) $this->input('delivery'));
-        $grading = ExamGradingMode::tryFrom((string) $this->input('grading_mode'));
         $passMode = ExamPassMode::tryFrom((string) $this->input('pass_mode'));
-
-        // Uploads (video_upload) never back a quiz/homework; the rest are allowed.
-        if ($delivery === SectionDelivery::VideoUpload) {
-            $validator->errors()->add('delivery', "A {$type->value} part cannot use video_upload delivery.");
-        }
-
-        // Automatic grading is only possible for an on-site bubble sheet (LP-12).
-        if ($grading === ExamGradingMode::Auto && $delivery !== SectionDelivery::BubbleSheet) {
-            $validator->errors()->add('grading_mode', 'Automatic grading requires bubble_sheet delivery.');
-        }
 
         // Absolute-marks threshold needs a total, and cannot exceed it (LP-11).
         if ($passMode === ExamPassMode::Marks) {
@@ -157,7 +147,9 @@ class LessonSectionRequest extends FormRequest
     public function sectionAttributes(): array
     {
         $data = $this->validated();
-        $keys = ['type', 'access_mode', 'delivery', 'gate_rule', 'max_tries', 'sort_order', 'media_asset_id', 'youtube_url', 'pdf_kind', 'is_required'];
+        // `delivery` is NOT client-set anymore — the controller derives it from the
+        // backing exam's mode (single source of truth), so it's absent here.
+        $keys = ['type', 'access_mode', 'gate_rule', 'max_tries', 'sort_order', 'media_asset_id', 'youtube_url', 'pdf_kind', 'is_required'];
 
         $attrs = array_intersect_key($data, array_flip($keys));
 
@@ -175,7 +167,8 @@ class LessonSectionRequest extends FormRequest
      */
     public function examAttributes(): array
     {
-        $keys = ['pass_mode', 'pass_value', 'total_marks', 'grading_mode', 'duration_min'];
+        // grading_mode is set from the exam settings page, not the part dialog.
+        $keys = ['pass_mode', 'pass_value', 'total_marks', 'duration_min'];
 
         return array_intersect_key($this->validated(), array_flip($keys));
     }

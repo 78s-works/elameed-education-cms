@@ -29,6 +29,10 @@ class Exam extends Model
     protected $attributes = [
         'type' => 'free_exam',
         'mode' => 'standard',
+        // Model-level default (mirrors the DB default) so a freshly-built exam that
+        // omits grading_mode is `manual` in memory too — ExamResource reads it before
+        // any DB round-trip. auto is only valid on a bubble_sheet (LP-12).
+        'grading_mode' => 'manual',
     ];
 
     // `depends_on_exam_id` is retired (exam→exam gating removed). Column kept

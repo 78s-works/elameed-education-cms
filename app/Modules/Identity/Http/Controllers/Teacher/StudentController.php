@@ -16,7 +16,10 @@ use App\Modules\Identity\Http\Requests\UpdateStudentRequest;
 use App\Modules\Identity\Http\Resources\StudentResource;
 use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Services\AcademicYearContext;
+use App\Modules\Centers\Models\CenterIdCode;
+use App\Modules\Centers\Services\CenterIdCodeRedemptionService;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Modules\Wallet\Services\LedgerService;
 use App\Support\Audit\AuditLogger;
@@ -42,6 +45,7 @@ class StudentController
         private readonly AcademicYearContext $years,
         private readonly LedgerService $ledger,
         private readonly PlanLimitGuard $limits,
+        private readonly CenterIdCodeRedemptionService $idCodes,
     ) {}
 
     public function index(Request $request): AnonymousResourceCollection
@@ -131,8 +135,9 @@ class StudentController
         $this->limits->ensure($tenantId, 'max_students');
 
         $temporaryPassword = null;
+        $idCode = null; // set when a center student is onboarded by a Center ID-code
 
-        $student = DB::transaction(function () use ($existing, $data, $tenantId, &$temporaryPassword): User {
+        $student = DB::transaction(function () use ($existing, $data, $tenantId, &$temporaryPassword, &$idCode): User {
             if ($existing !== null) {
                 // Existing global identity from elsewhere — link, don't modify it.
                 $user = $existing;
@@ -158,10 +163,17 @@ class StudentController
                 'joined_at' => now(),
             ]);
 
+            // Center student (B21 parity): consume the chosen UNUSED Center ID-code
+            // under lock, inside this transaction, so a bad/used code rolls the whole
+            // create back and no code is ever bound to two students.
+            if (! empty($data['id_code'])) {
+                $idCode = $this->idCodes->consume($tenantId, $data['id_code'], $user);
+            }
+
             return $user;
         });
 
-        $this->syncProfile($tenantId, $student->id, $data);
+        $this->syncProfile($tenantId, $student->id, $data, $idCode);
 
         return response()->json(['data' => array_filter([
             'uuid' => $student->uuid,
@@ -310,7 +322,7 @@ class StudentController
     }
 
     /** Create/update the student's per-academy registration profile. */
-    private function syncProfile(int $tenantId, int $userId, array $data): void
+    private function syncProfile(int $tenantId, int $userId, array $data, ?CenterIdCode $idCode = null): void
     {
         $fields = StudentProfile::fields($data);
 
@@ -319,6 +331,18 @@ class StudentController
         $yearId = $this->years->id();
         if ($yearId !== null) {
             $fields['academic_year_id'] = $yearId;
+        }
+
+        // A Center ID-code is the single source of truth for a center student
+        // (B21 parity): it binds center + study_mode and pins the student to the
+        // CODE's own year (center_id_codes carry a NOT-NULL academic_year_id), which
+        // overrides the header-year pin above.
+        if ($idCode !== null) {
+            $year = AcademicYear::withoutGlobalScopes()->whereKey($idCode->academic_year_id)->first();
+            $fields['study_mode'] = 'center';
+            $fields['center_id'] = $idCode->center_id;
+            $fields['academic_year_id'] = $idCode->academic_year_id;
+            $fields['academic_year'] = $year->name ?? $idCode->gradeLabel();
         }
 
         StudentProfile::withoutGlobalScopes()->updateOrCreate(
