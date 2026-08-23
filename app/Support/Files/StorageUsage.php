@@ -58,7 +58,8 @@ final class StorageUsage
             ->groupBy($column)
             ->get()
             ->mapWithKeys(fn ($row) => [
-                (string) $row->{$column} => [
+                // The model casts purpose/kind to enums, so read the backing value.
+                ($row->{$column} instanceof \BackedEnum ? $row->{$column}->value : (string) $row->{$column}) => [
                     'count' => (int) $row->row_count,
                     'bytes' => (int) $row->total_bytes,
                 ],

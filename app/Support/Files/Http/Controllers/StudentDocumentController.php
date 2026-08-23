@@ -67,7 +67,7 @@ class StudentDocumentController
      * Permanent delete, own unlinked files only. A submission still attached to
      * an attempt stays put — removing it would silently empty a graded answer.
      */
-    public function destroy(Request $request, Document $document): Response
+    public function destroy(Request $request, Document $document): Response|JsonResponse
     {
         $this->assertOwn($request, $document);
 

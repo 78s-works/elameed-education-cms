@@ -83,7 +83,7 @@ class TeacherDocumentController
      * blanking a lesson part. There is no force flag: deletion cannot be undone,
      * so the two steps are the safeguard.
      */
-    public function destroy(Document $document): Response
+    public function destroy(Document $document): Response|JsonResponse
     {
         $link = $this->links->resolve($document);
 

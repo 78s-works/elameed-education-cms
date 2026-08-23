@@ -64,6 +64,12 @@ class DocumentController
 
     private function authorizeRead(Request $request, Document $document): void
     {
+        // A public asset — a logo, a landing image — has to load for a visitor
+        // who has not logged in yet, so it never reaches the policy.
+        if ($document->isPublic()) {
+            return;
+        }
+
         $user = $request->user();
 
         if ($user === null || $user->cannot('view', $document)) {
