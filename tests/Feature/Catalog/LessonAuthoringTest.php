@@ -13,6 +13,8 @@ use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Models\MediaAsset;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
+use App\Support\Files\Enums\DocumentPurpose;
+use App\Support\Files\Models\Document;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Laravel\Sanctum\Sanctum;
@@ -169,20 +171,24 @@ class LessonAuthoringTest extends TestCase
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
         $lesson = $this->makeLesson('both');
 
-        $asset = new MediaAsset(['type' => MediaType::Pdf->value, 'status' => MediaStatus::Ready->value, 'title' => 'notes.pdf']);
-        $asset->tenant_id = $this->tenant->id;
-        $asset->save();
+        // A PDF part points at a document: it is a plain file, with none of the
+        // transcode/playback machinery a MediaAsset carries.
+        $document = Document::factory()
+            ->purpose(DocumentPurpose::LessonAttachment)
+            ->ownedBy($this->member(TenantUserRole::Teacher))
+            ->create(['tenant_id' => $this->tenant->id, 'original_name' => 'notes.pdf']);
 
         $this->withHeaders($this->headers())->postJson("/api/v1/teacher/lessons/{$lesson}/sections", [
             'name' => 'Lecture notes', 'type' => 'pdf', 'access_mode' => 'both', 'is_required' => true,
-            'media_asset_id' => $asset->id, 'pdf_kind' => 'lecture_notes',
+            'document_uuid' => $document->uuid, 'pdf_kind' => 'lecture_notes',
         ])->assertStatus(201)
             ->assertJsonPath('data.type', 'pdf')
             ->assertJsonPath('data.pdf_kind', 'lecture_notes')
-            ->assertJsonPath('data.media_asset_id', $asset->id);
+            ->assertJsonPath('data.document.uuid', $document->uuid);
 
         $this->assertDatabaseHas('lesson_sections', [
-            'lesson_id' => $lesson, 'type' => 'pdf', 'pdf_kind' => 'lecture_notes', 'media_asset_id' => $asset->id, 'exam_id' => null,
+            'lesson_id' => $lesson, 'type' => 'pdf', 'pdf_kind' => 'lecture_notes',
+            'document_id' => $document->id, 'media_asset_id' => null, 'exam_id' => null,
         ]);
     }
 
@@ -194,7 +200,7 @@ class LessonAuthoringTest extends TestCase
         $this->withHeaders($this->headers())->postJson("/api/v1/teacher/lessons/{$lesson}/sections", [
             'name' => 'Empty pdf', 'type' => 'pdf', 'access_mode' => 'both',
         ])->assertStatus(422)
-            ->assertJsonStructure(['error' => ['details' => ['media_asset_id', 'pdf_kind']]]);
+            ->assertJsonStructure(['error' => ['details' => ['document_uuid', 'pdf_kind']]]);
     }
 
     public function test_create_homework_part_backs_an_exam(): void

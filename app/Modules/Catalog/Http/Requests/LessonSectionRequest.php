@@ -11,13 +11,16 @@ use App\Modules\Catalog\Enums\PdfKind;
 use App\Modules\Catalog\Enums\SectionDelivery;
 use App\Modules\Catalog\Models\Lesson;
 use Illuminate\Contracts\Validation\Validator;
+use App\Support\Files\Enums\DocumentPurpose;
+use App\Support\Files\Models\Document;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 /**
  * Validates a lesson part (VD change set §8.3). `type` drives the payload:
  *
- *   video    → { media_asset_id }
+ *   video    → { media_asset_id | youtube_url }
+ *   pdf      → { document_uuid, pdf_kind }
  *   homework → { delivery, grading_mode, pass_mode, pass_value, total_marks?,
  *                gate_rule, max_tries? }
  *   quiz     → same as homework, plus an optional duration_min cap
@@ -45,8 +48,14 @@ class LessonSectionRequest extends FormRequest
 
             // video — an uploaded asset OR a YouTube link (one is required, see
             // assertVideoSource()). youtube_url is validated as a real YouTube URL.
-            // pdf — a required uploaded file (a MediaAsset of type pdf).
-            'media_asset_id' => ['nullable', 'integer', 'min:1', 'required_if:type,pdf'],
+            'media_asset_id' => ['nullable', 'integer', 'min:1'],
+            // pdf — a document uploaded beforehand, referenced by uuid. It is a
+            // plain file, so it no longer masquerades as a MediaAsset.
+            'document_uuid' => [
+                'nullable', 'uuid', 'required_if:type,pdf',
+                Rule::exists('documents', 'uuid')
+                    ->where('purpose', DocumentPurpose::LessonAttachment->value),
+            ],
             'pdf_kind' => ['nullable', Rule::enum(PdfKind::class), 'required_if:type,pdf'],
             'youtube_url' => ['nullable', 'string', 'max:2048', function ($attr, $value, $fail): void {
                 if ($value !== null && $value !== '' && ! \App\Support\Youtube::isValid($value)) {
@@ -160,6 +169,13 @@ class LessonSectionRequest extends FormRequest
         $keys = ['type', 'access_mode', 'delivery', 'gate_rule', 'max_tries', 'sort_order', 'media_asset_id', 'youtube_url', 'pdf_kind', 'is_required'];
 
         $attrs = array_intersect_key($data, array_flip($keys));
+
+        // The client references the file by uuid; the column holds the id.
+        if (array_key_exists('document_uuid', $data)) {
+            $attrs['document_id'] = $data['document_uuid'] === null
+                ? null
+                : Document::where('uuid', $data['document_uuid'])->value('id');
+        }
 
         if (array_key_exists('name', $data)) {
             $attrs['title'] = $data['name'];
