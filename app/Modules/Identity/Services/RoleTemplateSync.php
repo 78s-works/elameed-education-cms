@@ -70,8 +70,15 @@ class RoleTemplateSync
                 $this->group(PermissionGroup::Centers),
             ),
 
+            // The whole finance group EXCEPT refunding: a bookkeeper reads the
+            // books and reviews receipts, while sending money back — and revoking
+            // the access it bought — is the academy owner's call until they
+            // deliberately add the key to the role.
             RoleTemplateKey::Finance => array_merge(
-                $this->group(PermissionGroup::Finance),
+                array_values(array_diff(
+                    $this->group(PermissionGroup::Finance),
+                    [PermissionEnum::RefundsManage->value],
+                )),
                 [
                     PermissionEnum::StudentsView->value,
                     PermissionEnum::StudentsWalletView->value,

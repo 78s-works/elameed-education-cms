@@ -6,6 +6,8 @@ use App\Models\User;
 use App\Modules\Commerce\Enums\OrderStatus;
 use App\Modules\Commerce\Enums\SalesMethod;
 use App\Modules\Commerce\Models\OrderItem;
+use App\Modules\Reporting\Services\SalesLedgerQuery;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -40,7 +42,7 @@ class SalesLedgerRequest extends FormRequest
     }
 
     /**
-     * Normalized filters for {@see \App\Modules\Reporting\Services\SalesLedgerQuery}.
+     * Normalized filters for {@see SalesLedgerQuery}.
      *
      * @return array<string, mixed>
      */
@@ -50,8 +52,8 @@ class SalesLedgerRequest extends FormRequest
         $to = $this->input('date_to');
 
         return [
-            'date_from' => $from === null ? null : \Carbon\CarbonImmutable::parse($from)->startOfDay(),
-            'date_to' => $to === null ? null : \Carbon\CarbonImmutable::parse($to)->endOfDay(),
+            'date_from' => $from === null ? null : CarbonImmutable::parse($from)->startOfDay(),
+            'date_to' => $to === null ? null : CarbonImmutable::parse($to)->endOfDay(),
             'item_type' => $this->input('item_type'),
             'item_id' => $this->input('item_id'),
             'student_id' => $this->studentId(),

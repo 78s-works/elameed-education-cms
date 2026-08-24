@@ -30,7 +30,7 @@ class StorePackageRequest extends FormRequest
             // Limits (FR-M03-02): omit a key or send null = unlimited.
             'limits' => ['nullable', 'array'],
             'limits.max_students' => ['nullable', 'integer', 'min:0'],
-            'limits.max_courses' => ['nullable', 'integer', 'min:0'],
+            'limits.max_lessons' => ['nullable', 'integer', 'min:0'],
             'limits.storage_mb' => ['nullable', 'integer', 'min:0'],
             'limits.max_assistants' => ['nullable', 'integer', 'min:0'],
         ];

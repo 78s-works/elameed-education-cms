@@ -62,7 +62,7 @@ class AdminTenantDetailTest extends TestCase
 
         $package = SubscriptionPackage::create([
             'slug' => 'growth', 'name' => 'Growth', 'price_minor' => 150000, 'interval' => 'monthly', 'trial_days' => 0,
-            'limits' => ['max_students' => 100, 'max_courses' => 30, 'storage_mb' => 5000, 'max_assistants' => 3],
+            'limits' => ['max_students' => 100, 'max_lessons' => 30, 'storage_mb' => 5000, 'max_assistants' => 3],
         ]);
         app(SubscriptionService::class)->assign($tenant, $package);
 

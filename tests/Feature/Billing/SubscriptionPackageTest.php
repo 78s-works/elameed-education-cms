@@ -62,7 +62,7 @@ class SubscriptionPackageTest extends TestCase
             'price_minor' => 150000,
             'interval' => 'monthly',
             'trial_days' => 14,
-            'limits' => ['max_students' => 100, 'max_courses' => 10, 'storage_mb' => 5000, 'max_assistants' => 2],
+            'limits' => ['max_students' => 100, 'max_lessons' => 10, 'storage_mb' => 5000, 'max_assistants' => 2],
         ], $attrs));
     }
 
@@ -78,7 +78,7 @@ class SubscriptionPackageTest extends TestCase
             'price_minor' => 150000,
             'interval' => 'monthly',
             'trial_days' => 14,
-            'limits' => ['max_students' => 2000, 'max_courses' => 30],
+            'limits' => ['max_students' => 2000, 'max_lessons' => 30],
         ])->assertStatus(201)
             ->assertJsonPath('data.slug', 'growth')
             ->assertJsonPath('data.price_minor', 150000)
@@ -186,7 +186,7 @@ class SubscriptionPackageTest extends TestCase
             ->assertJsonPath('data.usage.max_students.limit', 100)
             ->assertJsonPath('data.usage.max_students.used', 1)
             ->assertJsonPath('data.usage.max_students.remaining', 99)
-            ->assertJsonPath('data.usage.max_courses.used', 0);
+            ->assertJsonPath('data.usage.max_lessons.used', 0);
     }
 
     public function test_teacher_without_a_subscription_gets_null(): void

@@ -21,7 +21,7 @@ class SubscriptionPackage extends Model
     use SoftDeletes;
 
     /** Canonical limit keys (FR-M03-02); a null value means "unlimited". */
-    public const LIMIT_KEYS = ['max_students', 'max_courses', 'storage_mb', 'max_assistants'];
+    public const LIMIT_KEYS = ['max_students', 'max_lessons', 'storage_mb', 'max_assistants'];
 
     protected $fillable = [
         'slug',

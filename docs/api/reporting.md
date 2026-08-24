@@ -205,6 +205,163 @@ Notes:
 
 ---
 
+### Teacher · Sales ledger (M17)
+
+The transaction list behind the dashboard's revenue widgets. Every endpoint below
+takes the SAME filter set, so the rows, the totals, the top-ups panel and the
+export always describe one slice.
+
+**Auth:** permission `finance.sales.view` (refunding needs `finance.refunds.manage`)
+**Middleware:** `tenant` group -> `auth:sanctum` -> `active` -> `can:...`
+
+**Shared query params**
+
+| Param | Type | Notes |
+|---|---|---|
+| `date_from` / `date_to` | date | Inclusive DAY bounds (`from` -> 00:00, `to` -> 23:59:59). |
+| `item_type` + `item_id` | `lesson`\|`package`\|`book` + int | One sellable item. (`courses` are retired — VD §7.) |
+| `student_id` | string | The student's **uuid** (a numeric id is also accepted). Unknown uuid → zero rows. |
+| `method[]` | enum | `fawry`, `card_paymob`, `wallet`, `code`, `manual`, `center`, `free`. |
+| `status[]` | enum | `paid`, `pending`, `failed`, `refunded`. |
+| `q` | string | Student name / phone, or order reference. |
+| `page`, `per_page` | int | `per_page` max 200, default 25. |
+
+#### The unified payment method
+
+"Payment method" is not a stored column; it is derived per row:
+
+| Value | Derived from |
+|---|---|
+| `card_paymob` | latest `payments.gateway = paymob` on the order (any attempt state). |
+| `fawry` | latest `payments.gateway = fawry`. Reserved — works the day the gateway goes live. |
+| `wallet` | a paid order with no gateway payment row (funded from wallet balance). |
+| `code` | `enrollments.source = code` — a content activation code redeemed (M12). |
+| `manual` | `enrollments.source = manual` — a staff-issued grant. |
+| `center` | `enrollments.source = center` — enrolled by center attendance. |
+| `free` | the row's net amount is 0. |
+
+> A manual receipt (Vodafone Cash / InstaPay) tops up the **wallet**; it never buys
+> content directly. A purchase funded that way therefore reports as `wallet`, and
+> the receipt itself appears under wallet top-ups.
+
+#### `GET /v1/teacher/sales`
+
+**Purpose:** Paginated rows, newest first, plus totals for the active filter.
+
+A row is one transaction — a checkout order, or a grant that never had one
+(code / staff / center; those carry no `orders` row at all, so the row set is a
+UNION of both). `items[]` is the row's sub-lines. A package grant fans out into
+one enrollment per descendant lesson; those are folded back into ONE row per
+(student, package, source), priced at the package's current price.
+
+**Response 200**
+
+```json
+{
+  "data": [
+    {
+      "kind": "order",
+      "id": 5512,
+      "reference": "01a0…-order-uuid",
+      "occurred_at": "2026-08-24 11:04:12",
+      "status": "paid",
+      "method": "card_paymob",
+      "student": { "uuid": "01a0…", "name": "أحمد علي", "phone": "01011112222" },
+      "items": [{ "item_type": "lesson", "item_id": 88, "title": "الجبر", "price_minor": 20000 }],
+      "currency": "EGP",
+      "gross_minor": 20000,
+      "discount_minor": 5000,
+      "net_minor": 15000,
+      "refunded_minor": 0,
+      "coupon_code": "BACK2SCHOOL",
+      "refundable_minor": 15000,
+      "refunds": []
+    }
+  ],
+  "meta": { "current_page": 1, "per_page": 25, "total": 348, "last_page": 14 },
+  "totals": {
+    "currency": "EGP",
+    "transactions": 348,
+    "collected_minor": 5100000,
+    "refunded_minor": 60000,
+    "net_sales_minor": 5040000,
+    "pending_minor": 40000, "pending_count": 3,
+    "failed_minor": 20000, "failed_count": 2,
+    "refunded_count": 4,
+    "by_method": [{ "method": "wallet", "net_minor": 2200000, "transactions": 140 }]
+  }
+}
+```
+
+Notes:
+- **Totals follow the filter, never the whole dataset.**
+- `net_sales_minor` = `collected_minor` (paid + refunded rows — a refunded row WAS
+  collected) − `refunded_minor` (`SUM(refunds.amount_minor)`, so a partial refund
+  subtracts only its own amount). Pending / failed appear in the table and in their
+  own totals, never in this figure.
+- Wallet top-up orders produce **no row** and no revenue here.
+- `reference` is the order uuid for a checkout, the redeemed code for a code grant,
+  else `GRANT-{id}`.
+- All amounts are integer minor units.
+
+#### `GET /v1/teacher/sales/filters`
+
+**Purpose:** Dropdown vocabularies — the academy's sellable lessons + packages
+(`{item_type, item_id, title, price_minor}`), the 7 method values with labels, and
+the 4 status values.
+
+#### `GET /v1/teacher/sales/topups`
+
+**Purpose:** Wallet top-ups in the same date window, reported **apart** from sales:
+a top-up is counted when the student SPENDS it, so adding it to revenue would
+count the same money twice. Sources: `gateway` (top-up checkout), `code` (wallet
+activation code), `manual_receipt` (approved Vodafone Cash / InstaPay receipt,
+using the reviewer's corrected amount when there is one). The response carries
+`counted_in_sales: false` to say so explicitly.
+
+#### `GET /v1/teacher/sales/export`
+
+**Purpose:** The current filter as a spreadsheet, same columns as the table
+(`format=csv|xlsx`, streamed via openspout). One line per ITEM; a
+transaction-level discount / refund is attributed to the first line. **Amounts are
+in pounds here** — the only place minor units are converted, because a human reads
+the file.
+
+### Teacher · Refunds (M17)
+
+#### `POST /v1/teacher/orders/{order:uuid}/refunds`
+
+**Purpose:** Refund a paid order. **Auth:** permission `finance.refunds.manage`.
+
+| Param | Type | Notes |
+|---|---|---|
+| `amount_minor` | int, optional | Omitted → refund everything still refundable (the whole order, first time). |
+| `reason` | string, optional | Recorded on the refund row and in the audit log. |
+| `destination` | `wallet`\|`offline` | Default `wallet`. |
+
+One call, one transaction: a balanced ledger reversal (`ref_type = refund`,
+debiting `teacher_earnings` + the platform's commission share), a `refunds` row,
+and — for a FULL refund — the order flips to `refunded` and the enrollments it
+granted are `cancelled`. A partial refund is a price correction: access survives
+and the order stays `paid`.
+
+Money goes back to the student's **wallet** (gateway refund APIs are not wired:
+Paymob is stubbed, Fawry not live). `destination = offline` records a refund
+settled in cash outside the platform — the books move, the wallet does not.
+
+**Response 201** — `{ "data": { "uuid", "order_uuid", "amount_minor", "currency", "destination", "reason", "revoked_access", "order_status", "refundable_minor" } }`
+
+**Errors:** `422` — order not paid, already fully refunded, or the amount exceeds
+the refundable remainder · `403` — missing `finance.refunds.manage` · `404` — unknown/other-tenant order.
+
+#### `GET /v1/teacher/orders/{order:uuid}/refunds`
+
+**Purpose:** The refunds already posted against one order (rides on
+`finance.sales.view`). `meta` carries `order_total_minor`, `refunded_minor`,
+`refundable_minor`.
+
+---
+
 ### Teacher · Audit log
 
 #### `GET /v1/teacher/audit-logs`

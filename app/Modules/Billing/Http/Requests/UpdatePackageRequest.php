@@ -32,7 +32,7 @@ class UpdatePackageRequest extends FormRequest
 
             'limits' => ['sometimes', 'nullable', 'array'],
             'limits.max_students' => ['nullable', 'integer', 'min:0'],
-            'limits.max_courses' => ['nullable', 'integer', 'min:0'],
+            'limits.max_lessons' => ['nullable', 'integer', 'min:0'],
             'limits.storage_mb' => ['nullable', 'integer', 'min:0'],
             'limits.max_assistants' => ['nullable', 'integer', 'min:0'],
         ];

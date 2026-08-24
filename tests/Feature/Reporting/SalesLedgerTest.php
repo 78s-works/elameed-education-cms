@@ -14,9 +14,12 @@ use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Commerce\Models\OrderItem;
 use App\Modules\Commerce\Models\Payment;
+use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Commerce\Services\RefundService;
+use App\Modules\Engagement\Models\Attachment;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
+use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
@@ -152,7 +155,7 @@ class SalesLedgerTest extends TestCase
         $lesson = $this->lesson('Algebra', 20000);
         $student = $this->student('Refunded', '01000000031');
         $order = $this->order($student, [[$lesson, 20000]], OrderStatus::Paid, 'paymob');
-        app(\App\Modules\Commerce\Services\EnrollmentService::class)
+        app(EnrollmentService::class)
             ->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Purchase);
 
         app(RefundService::class)->refund($order->fresh(), null, 'Duplicate charge');
@@ -311,6 +314,57 @@ class SalesLedgerTest extends TestCase
         $this->assertCount(7, $response->json('data.methods'));
     }
 
+    public function test_a_pending_order_offers_no_refund(): void
+    {
+        $lesson = $this->lesson('Algebra', 20000);
+        $this->order($this->student('Pending', '01000000071'), [[$lesson, 20000]], OrderStatus::Pending, 'paymob');
+
+        $response = $this->asLedgerReader()->tenantGet('/api/v1/teacher/sales')->assertStatus(200);
+
+        // Nothing was collected, so there is nothing to send back.
+        $this->assertSame(0, $response->json('data.0.refundable_minor'));
+    }
+
+    public function test_the_ledger_follows_the_active_academic_year(): void
+    {
+        $thisYearLesson = $this->lesson('Algebra', 20000);
+        $otherYear = $this->academicYear('Next year');
+        $otherYearLesson = $this->lesson('Chemistry', 30000, $otherYear);
+
+        $mine = $this->student('Pinned Here', '01000000081', $this->year);
+        $theirs = $this->student('Pinned There', '01000000082', $otherYear);
+
+        $this->order($mine, [[$thisYearLesson, 20000]], OrderStatus::Paid, 'paymob');
+        $this->order($theirs, [[$otherYearLesson, 30000]], OrderStatus::Paid, 'paymob');
+        $this->grantRow($theirs, $otherYearLesson, EnrollmentSource::Center, null, $otherYear);
+
+        // No year pinned → the whole academy.
+        $all = $this->asLedgerReader()->tenantGet('/api/v1/teacher/sales')->assertStatus(200);
+        $this->assertSame(3, $all->json('meta.total'));
+        $this->assertSame(80000, $all->json('totals.net_sales_minor'));
+
+        // Year pinned → only that year's money, by the grant's own year and by the
+        // buyer's pinned year for an order.
+        $pinned = $this->asLedgerReader()->yearGet('/api/v1/teacher/sales', $this->year->uuid)->assertStatus(200);
+        $this->assertSame(1, $pinned->json('meta.total'));
+        $this->assertSame(20000, $pinned->json('totals.net_sales_minor'));
+        $this->assertSame('Pinned Here', $pinned->json('data.0.student.name'));
+    }
+
+    public function test_a_grant_row_keeps_its_title_across_years(): void
+    {
+        $otherYear = $this->academicYear('Next year');
+        $otherYearLesson = $this->lesson('Chemistry', 30000, $otherYear);
+        $student = $this->student('Cross Year', '01000000091', $otherYear);
+        $this->grantRow($student, $otherYearLesson, EnrollmentSource::Code, null, $otherYear);
+
+        // Read the ledger with a DIFFERENT year pinned but no year filter on the
+        // row set: the title still resolves (it is not scoped away to an em dash).
+        $response = $this->asLedgerReader()->tenantGet('/api/v1/teacher/sales')->assertStatus(200);
+
+        $this->assertSame('Chemistry', $response->json('data.0.items.0.title'));
+    }
+
     // ── Fixtures ─────────────────────────────────────────────────────────────
 
     private function asLedgerReader(): self
@@ -323,6 +377,12 @@ class SalesLedgerTest extends TestCase
     private function tenantGet(string $uri)
     {
         return $this->withHeaders(['X-Tenant' => 'demo'])->getJson($uri);
+    }
+
+    /** Same as {@see tenantGet} with an academic year pinned on the request. */
+    private function yearGet(string $uri, string $yearUuid)
+    {
+        return $this->withHeaders(['X-Tenant' => 'demo', 'X-Academic-Year' => $yearUuid])->getJson($uri);
     }
 
     private function tenantPost(string $uri, array $payload)
@@ -346,7 +406,7 @@ class SalesLedgerTest extends TestCase
         return $user;
     }
 
-    private function student(string $name, string $phone): User
+    private function student(string $name, string $phone, ?AcademicYear $year = null): User
     {
         $user = User::factory()->create(['name' => $name, 'phone' => $phone]);
         TenantUser::create([
@@ -355,23 +415,28 @@ class SalesLedgerTest extends TestCase
             'joined_at' => now(),
         ]);
 
+        // The pinned year is what an ORDER is keyed on (orders carry no year).
+        $profile = new StudentProfile(['user_id' => $user->id, 'academic_year_id' => ($year ?? $this->year)->id]);
+        $profile->tenant_id = $this->tenant->id;
+        $profile->save();
+
         return $user;
     }
 
-    private function academicYear(): AcademicYear
+    private function academicYear(string $name = 'Default'): AcademicYear
     {
-        $year = new AcademicYear(['name' => 'Default', 'sort_order' => 0]);
+        $year = new AcademicYear(['name' => $name, 'sort_order' => 0]);
         $year->tenant_id = $this->tenant->id;
         $year->save();
 
-        return $year;
+        return $year->fresh();
     }
 
-    private function lesson(string $title, int $priceMinor): Lesson
+    private function lesson(string $title, int $priceMinor, ?AcademicYear $year = null): Lesson
     {
         $lesson = new Lesson(['title' => $title, 'price_minor' => $priceMinor, 'sort_order' => 0]);
         $lesson->tenant_id = $this->tenant->id;
-        $lesson->academic_year_id = $this->year->id;
+        $lesson->academic_year_id = ($year ?? $this->year)->id;
         $lesson->save();
 
         return $lesson->fresh();
@@ -479,7 +544,7 @@ class SalesLedgerTest extends TestCase
         $this->grantRow($student, $item, $source, null);
     }
 
-    private function grantRow(User $student, Lesson $lesson, EnrollmentSource $source, ?Package $package): Enrollment
+    private function grantRow(User $student, Lesson $lesson, EnrollmentSource $source, ?Package $package, ?AcademicYear $year = null): Enrollment
     {
         $enrollment = new Enrollment([
             'user_id' => $student->id,
@@ -487,7 +552,7 @@ class SalesLedgerTest extends TestCase
             'package_id' => $package?->id,
             'source' => $source->value,
             'status' => EnrollmentStatus::Active->value,
-            'academic_year_id' => $this->year->id,
+            'academic_year_id' => ($year ?? $this->year)->id,
         ]);
         $enrollment->tenant_id = $this->tenant->id;
         $enrollment->save();
@@ -511,8 +576,8 @@ class SalesLedgerTest extends TestCase
 
     private function approvedReceipt(User $student, int $amountMinor): void
     {
-        $attachment = new \App\Modules\Engagement\Models\Attachment([
-            'kind' => \App\Modules\Engagement\Models\Attachment::KIND_IMAGE,
+        $attachment = new Attachment([
+            'kind' => Attachment::KIND_IMAGE,
             'storage_key' => 'attachments/r-'.uniqid().'.png',
             'mime' => 'image/png',
             'size_bytes' => 1024,

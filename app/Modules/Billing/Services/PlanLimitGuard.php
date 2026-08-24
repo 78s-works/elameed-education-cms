@@ -66,7 +66,7 @@ class PlanLimitGuard
     private function message(string $key): string
     {
         return match ($key) {
-            'max_courses' => 'Your current plan does not allow adding more courses. Upgrade to add more.',
+            'max_lessons' => 'Your current plan does not allow adding more lessons. Upgrade to add more.',
             'max_students' => 'Your current plan has reached its student limit. Upgrade to add more.',
             'max_assistants' => 'Your current plan has reached its assistant limit. Upgrade to add more.',
             'storage_mb' => 'Your current plan has reached its media-storage limit. Upgrade for more space.',

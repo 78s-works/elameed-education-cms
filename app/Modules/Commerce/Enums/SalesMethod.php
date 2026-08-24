@@ -2,6 +2,8 @@
 
 namespace App\Modules\Commerce\Enums;
 
+use App\Modules\Reporting\Services\SalesLedgerQuery;
+
 /**
  * The unified payment method / source of one sale row (sales ledger).
  *
@@ -10,7 +12,7 @@ namespace App\Modules\Commerce\Enums;
  * `enrollments.source` for grants that never went through checkout (activation
  * code, staff grant, center attendance). This enum is the single normalized
  * value the ledger filters and groups by; the derivation lives in
- * {@see \App\Modules\Reporting\Services\SalesLedgerQuery}.
+ * {@see SalesLedgerQuery}.
  *
  * Note on manual receipts (Vodafone Cash / InstaPay): an approved receipt tops
  * up the student's WALLET — it never buys content directly. So a purchase funded

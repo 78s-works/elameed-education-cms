@@ -58,8 +58,11 @@ use App\Modules\Commerce\Models\Coupon;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Invoice;
 use App\Modules\Commerce\Models\Order;
+use App\Modules\Commerce\Models\OrderItem;
 use App\Modules\Commerce\Models\Payment;
+use App\Modules\Commerce\Models\Refund;
 use App\Modules\Commerce\Services\EnrollmentService;
+use App\Modules\Commerce\Services\RefundService;
 use App\Modules\Engagement\Enums\CommentStatus;
 use App\Modules\Engagement\Enums\TicketPriority;
 use App\Modules\Engagement\Enums\TicketStatus;
@@ -76,7 +79,6 @@ use App\Modules\Engagement\Services\PointsService;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\OtpPurpose;
 use App\Modules\Identity\Enums\RoleTemplateKey;
-use App\Modules\Identity\Support\RbacGuard;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\LoginAttempt;
 use App\Modules\Identity\Models\OtpCode as OtpCodeModel;
@@ -84,6 +86,7 @@ use App\Modules\Identity\Models\ParentLink;
 use App\Modules\Identity\Models\ParentMagicLink;
 use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Identity\Support\RbacGuard;
 use App\Modules\Media\Enums\MediaStatus;
 use App\Modules\Media\Enums\MediaType;
 use App\Modules\Media\Enums\MediaVersionState;
@@ -119,11 +122,13 @@ use App\Modules\Tenancy\Support\LandingSchema;
 use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Services\LedgerService;
 use App\Modules\Wallet\Services\PaymentReceiptService;
+use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Seeder;
-use Spatie\Permission\Models\Role;
-use Spatie\Permission\PermissionRegistrar;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 /**
  * Real-world tenant seed modelled on https://ahmedtammam.com — د. أحمد تمّام's
@@ -153,6 +158,9 @@ class AhmedTammamAcademySeeder extends Seeder
     private const SLUG = 'ahmedtammam.com';
 
     private const CURRENCY = 'EGP';
+
+    /** Platform cut on content revenue, in percent (demo figure). */
+    private const COMMISSION_PERCENT = 15;
 
     /** @var string[] */
     private const MALE_NAMES = [
@@ -252,6 +260,8 @@ class AhmedTammamAcademySeeder extends Seeder
 
     private PaymentReceiptService $receipts;
 
+    private RefundService $refunds;
+
     private ContentAccessOverrideService $overrides;
 
     private CenterSessionAttendanceService $sessionAttendance;
@@ -287,6 +297,12 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->ledger = app(LedgerService::class);
         $this->points = app(PointsService::class);
         $this->receipts = app(PaymentReceiptService::class);
+        $this->refunds = app(RefundService::class);
+
+        // The demo books are more interesting with a real platform cut, and
+        // RefundService reads this config — pinning it here keeps the seeder's
+        // own ledger posts and the refunds it triggers on the same split.
+        config(['commerce.commission_percent' => self::COMMISSION_PERCENT]);
         $this->overrides = app(ContentAccessOverrideService::class);
         $this->sessionAttendance = app(CenterSessionAttendanceService::class);
 
@@ -428,7 +444,7 @@ class AhmedTammamAcademySeeder extends Seeder
                 'currency' => self::CURRENCY,
                 'interval' => BillingInterval::Monthly->value,
                 'trial_days' => 14,
-                'limits' => ['max_students' => 500, 'max_courses' => 10, 'storage_mb' => 20480, 'max_assistants' => 2],
+                'limits' => ['max_students' => 500, 'max_lessons' => 10, 'storage_mb' => 20480, 'max_assistants' => 2],
                 'is_active' => true,
                 'sort_order' => 1,
             ],
@@ -442,7 +458,7 @@ class AhmedTammamAcademySeeder extends Seeder
                 'currency' => self::CURRENCY,
                 'interval' => BillingInterval::Monthly->value,
                 'trial_days' => 14,
-                'limits' => ['max_students' => 20000, 'max_courses' => 200, 'storage_mb' => 512000, 'max_assistants' => 20],
+                'limits' => ['max_students' => 20000, 'max_lessons' => 200, 'storage_mb' => 512000, 'max_assistants' => 20],
                 'is_active' => true,
                 'sort_order' => 2,
             ],
@@ -1504,7 +1520,7 @@ class AhmedTammamAcademySeeder extends Seeder
     // -- commerce -------------------------------------------------------------
 
     /** Full paid path: order + item + payment + invoice + enrollment + ledger. */
-    private function paidPurchase(User $user, $item, string $type, int $priceMinor, ?int $couponPercent = null): void
+    private function paidPurchase(User $user, $item, string $type, int $priceMinor, ?int $couponPercent = null, ?int $daysAgo = null): Order
     {
         $discount = $couponPercent ? intdiv($priceMinor * $couponPercent, 100) : 0;
         $total = max(0, $priceMinor - $discount);
@@ -1559,7 +1575,7 @@ class AhmedTammamAcademySeeder extends Seeder
         }
 
         // Ledger: gateway clearing debit, teacher earnings (85%) + platform (15%).
-        $commission = intdiv($total * 15, 100);
+        $commission = intdiv($total * self::COMMISSION_PERCENT, 100);
         $this->ledger->post($this->tenant->id, 'order:'.$order->id, [
             ['account' => LedgerEntry::GATEWAY_CLEARING, 'direction' => LedgerEntry::DEBIT, 'amount_minor' => $total],
             ['account' => LedgerEntry::TEACHER_EARNINGS, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $total - $commission],
@@ -1572,10 +1588,12 @@ class AhmedTammamAcademySeeder extends Seeder
         } else {
             $this->enroll->grantLesson($this->tenant->id, $user->id, $item, EnrollmentSource::Purchase);
         }
+
+        return $this->backdate($order, $daysAgo);
     }
 
     /** Buy a lesson from wallet balance (funding = student wallet). */
-    private function walletPurchase(User $user, Lesson $lesson, int $priceMinor): void
+    private function walletPurchase(User $user, Lesson $lesson, int $priceMinor, ?int $daysAgo = null): Order
     {
         $order = new Order([
             'user_id' => $user->id,
@@ -1608,7 +1626,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->makeInvoice($order);
 
         $wallet = $this->ledger->walletFor($this->tenant->id, $user->id);
-        $commission = intdiv($priceMinor * 15, 100);
+        $commission = intdiv($priceMinor * self::COMMISSION_PERCENT, 100);
         $this->ledger->post($this->tenant->id, 'order:'.$order->id, [
             ['account' => LedgerEntry::STUDENT_WALLET, 'direction' => LedgerEntry::DEBIT, 'amount_minor' => $priceMinor, 'wallet_id' => $wallet->id],
             ['account' => LedgerEntry::TEACHER_EARNINGS, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $priceMinor - $commission],
@@ -1616,6 +1634,8 @@ class AhmedTammamAcademySeeder extends Seeder
         ], 'order', $order->id);
 
         $this->enroll->grantLesson($this->tenant->id, $user->id, $lesson, EnrollmentSource::Wallet);
+
+        return $this->backdate($order, $daysAgo);
     }
 
     private function makeInvoice(Order $order): void
@@ -1930,6 +1950,36 @@ class AhmedTammamAcademySeeder extends Seeder
         $wallet->tenant_id = $this->tenant->id;
         $wallet->save();
 
+        // A REDEEMED wallet code — a scratch card actually sold at a center and
+        // cashed in. It is what the sales page's "recharge codes" top-up figure is
+        // built from, so the demo must contain one (an unredeemed code is money
+        // that has not moved yet).
+        $redeemedWallet = new ActivationCode([
+            'code' => 'WAL-'.strtoupper(Str::random(6)),
+            'type' => CodeType::Wallet->value,
+            'amount_minor' => 30000,
+            'center_id' => $this->centers[0]->id,
+            'generated_by' => $this->teacher->id,
+            'batch' => 'batch-wallet-1',
+            'status' => CodeStatus::Redeemed->value,
+            'redeemed_by' => User::query()->where('phone', '01200110101')->value('id'),
+            'redeemed_at' => now()->subDays(18),
+            'expires_at' => now()->addMonths(3),
+        ]);
+        $redeemedWallet->tenant_id = $this->tenant->id;
+        $redeemedWallet->save();
+
+        // The wallet side of that redemption: balance up, teacher's books down by
+        // the same amount (the cash was taken at the center, off-platform).
+        $redeemer = $redeemedWallet->redeemed_by;
+        if ($redeemer !== null) {
+            $redeemerWallet = $this->ledger->walletFor($this->tenant->id, (int) $redeemer);
+            $this->ledger->post($this->tenant->id, 'code:'.$redeemedWallet->uuid, [
+                ['account' => LedgerEntry::STUDENT_WALLET, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => 30000, 'wallet_id' => $redeemerWallet->id],
+                ['account' => LedgerEntry::TEACHER_EARNINGS, 'direction' => LedgerEntry::DEBIT, 'amount_minor' => 30000],
+            ], 'activation_code', $redeemedWallet->id);
+        }
+
         // A historical, already-redeemed CONTENT code. It keeps its target so the
         // redemption history shows WHAT was granted (target_type/target_id are the
         // only record of it once the code is spent).
@@ -1993,7 +2043,9 @@ class AhmedTammamAcademySeeder extends Seeder
         if ($sellable === []) {
             $sellable = $lessons; // fall back to any lesson
         }
-        $freeLesson = $lessons[0];
+        // A genuinely zero-price lesson when the year has one — it is what the
+        // `free` sale method in the ledger is derived from (price 0, no gateway).
+        $freeLesson = collect($lessons)->first(fn (Lesson $l) => (int) $l->price_minor === 0) ?? $lessons[0];
 
         $modes = ['online', 'center', 'both'];
         $eduTypes = ['عام', 'عام', 'عام', 'أزهر', 'لغات'];
@@ -2047,25 +2099,27 @@ class AhmedTammamAcademySeeder extends Seeder
             }
 
             $lesson = $sellable[$i % count($sellable)];
-            $path = $i % 8;
+            // One branch per way money (or access) actually reaches the academy —
+            // this is what the sales ledger has to be able to show and total.
+            $path = $i % 11;
             $hasAccess = true;
 
             switch ($path) {
-                case 0: // full-course package, some with coupon
+                case 0: // card (Paymob): package, some with a coupon
                     $this->paidPurchase($student, $mainPkg, 'package', $mainPkg->price_minor, couponPercent: $i % 3 === 0 ? 25 : null);
                     break;
-                case 1: // paid chapter package (or full-course fallback)
+                case 1: // card (Paymob): chapter package (or full-catalogue fallback)
                     if ($pkg) {
                         $this->paidPurchase($student, $pkg, 'package', $pkg->price_minor);
                     } else {
                         $this->paidPurchase($student, $mainPkg, 'package', $mainPkg->price_minor);
                     }
                     break;
-                case 2: // wallet: top-up then buy a lesson
+                case 2: // wallet: manual-receipt top-up, then buy a lesson from balance
                     $this->walletTopupViaReceipt($student, max($lesson->price_minor, 20000), $i % 2 ? 'vodafone_cash' : 'instapay', 'approved');
                     $this->walletPurchase($student, $lesson, $lesson->price_minor);
                     break;
-                case 3: // manual teacher grant
+                case 3: // manual staff grant
                     $this->enroll->grantLesson($this->tenant->id, $student->id, $lesson, EnrollmentSource::Manual);
                     break;
                 case 4: // activation-code grant
@@ -2081,9 +2135,21 @@ class AhmedTammamAcademySeeder extends Seeder
                     $this->failedOrder($student, $lesson);
                     $hasAccess = false;
                     break;
-                case 7: // bought then refunded — no access
+                case 7: // bought then fully refunded — money back, access revoked
                     $this->refundedOrder($student, $lesson);
                     $hasAccess = false;
+                    break;
+                case 8: // partial refund — a price correction; access survives
+                    $this->partiallyRefundedOrder($student, $lesson);
+                    break;
+                case 9: // wallet top-up by card, then a lesson bought from balance
+                    $this->topupCheckout($student, max($lesson->price_minor * 2, 50000));
+                    $this->walletPurchase($student, $lesson, $lesson->price_minor);
+                    break;
+                case 10: // checkout still hanging (pending) + the free lesson claimed
+                    $this->pendingOrder($student, $lesson);
+                    $this->freeClaim($student, $freeLesson);
+                    $lesson = $freeLesson;
                     break;
             }
 
@@ -2137,7 +2203,7 @@ class AhmedTammamAcademySeeder extends Seeder
     }
 
     /** Order that never completed — failed gateway, no invoice / enrolment / ledger. */
-    private function failedOrder(User $user, $item): void
+    private function failedOrder(User $user, $item, ?int $daysAgo = null): void
     {
         $price = (int) ($item->price_minor ?? 20000);
         $order = new Order([
@@ -2168,22 +2234,85 @@ class AhmedTammamAcademySeeder extends Seeder
         ]);
         $payment->tenant_id = $this->tenant->id;
         $payment->save();
+
+        $this->backdate($order, $daysAgo);
     }
 
-    /** Order paid then refunded — invoice kept, payment refunded, no active access. */
-    private function refundedOrder(User $user, $item): void
+    /**
+     * Bought, then refunded through the REAL refund path (M17): the order is paid
+     * first (so the money genuinely arrived), then RefundService reverses it —
+     * balanced ledger post, a `refunds` row, the order flipped to `refunded`, and
+     * the access it granted cancelled. Hand-writing a `refunded` order here would
+     * leave the sales ledger showing revenue that nothing ever gave back.
+     */
+    private function refundedOrder(User $user, $item, ?int $daysAgo = null): void
+    {
+        $order = $this->paidPurchase(
+            $user,
+            $item,
+            $item instanceof Lesson ? 'lesson' : 'package',
+            (int) ($item->price_minor ?? 20000),
+            daysAgo: $daysAgo ?? rand(20, 90),
+        );
+
+        $refund = $this->refunds->refund(
+            $order->fresh(),
+            reason: 'الطالب اشترى الدرس بالغلط.',
+            actorId: $this->teacher->id,
+        );
+
+        // Keep the refund on the order's own timeline, not on seed day.
+        $this->stamp($refund, $order->created_at->copy()->addDays(rand(1, 5)));
+        $this->markPaymentRefunded($order);
+    }
+
+    /**
+     * A PARTIAL refund — a price correction, not a cancellation: the order stays
+     * `paid`, the student keeps the access, and only the refunded slice comes off
+     * the sales total. Exercises the ledger's second-refund path too (the refund
+     * sequence in the idempotency key).
+     */
+    private function partiallyRefundedOrder(User $user, $item, ?int $daysAgo = null): void
     {
         $price = (int) ($item->price_minor ?? 20000);
+
+        $order = $this->paidPurchase(
+            $user,
+            $item,
+            $item instanceof Lesson ? 'lesson' : 'package',
+            $price,
+            daysAgo: $daysAgo ?? rand(10, 60),
+        );
+
+        $refund = $this->refunds->refund(
+            $order->fresh(),
+            amountMinor: max(1000, intdiv($price, 4)),
+            reason: 'خصم تعويضي عن انقطاع البث في المحاضرة.',
+            actorId: $this->teacher->id,
+        );
+
+        $this->stamp($refund, $order->created_at->copy()->addDays(rand(1, 4)));
+    }
+
+    /**
+     * A checkout that was started and never funded — the `pending` state the
+     * teacher sees as an incomplete attempt (no invoice, no ledger, no access).
+     */
+    private function pendingOrder(User $user, $item, ?int $daysAgo = null): void
+    {
+        $price = (int) ($item->price_minor ?? 20000);
+
         $order = new Order([
             'user_id' => $user->id,
             'subtotal_minor' => $price,
             'discount_minor' => 0,
             'total_minor' => $price,
             'currency' => self::CURRENCY,
-            'status' => OrderStatus::Refunded->value,
+            'status' => OrderStatus::Pending->value,
         ]);
         $order->tenant_id = $this->tenant->id;
         $order->save();
+
         $order->items()->create([
             'tenant_id' => $this->tenant->id,
             'item_type' => $item instanceof Lesson ? 'lesson' : 'package',
@@ -2191,18 +2320,138 @@ class AhmedTammamAcademySeeder extends Seeder
             'price_minor' => $price,
             'title' => $item->name ?? $item->title,
         ]);
+
+        // The gateway handed back a payment intent; the student never finished it.
         $payment = new Payment([
             'order_id' => $order->id,
             'gateway' => 'paymob',
             'gateway_txn_id' => 'PM-'.strtoupper(Str::random(10)),
             'amount_minor' => $price,
-            'status' => 'refunded',
+            'status' => 'pending',
             'reference_number' => (string) rand(100000, 999999),
-            'processed_at' => now()->subDays(rand(5, 25)),
         ]);
         $payment->tenant_id = $this->tenant->id;
         $payment->save();
+
+        $this->backdate($order, $daysAgo ?? rand(0, 6));
+    }
+
+    /**
+     * A wallet TOP-UP checkout (card -> wallet balance). Deliberately in the demo
+     * data: it must show under wallet top-ups and must NOT add a piastre to the
+     * sales figure — otherwise the same money is counted twice, once on the
+     * top-up and again when the student spends it.
+     */
+    private function topupCheckout(User $user, int $amountMinor, ?int $daysAgo = null): void
+    {
+        $order = new Order([
+            'user_id' => $user->id,
+            'subtotal_minor' => $amountMinor,
+            'discount_minor' => 0,
+            'total_minor' => $amountMinor,
+            'currency' => self::CURRENCY,
+            'status' => OrderStatus::Paid->value,
+        ]);
+        $order->tenant_id = $this->tenant->id;
+        $order->save();
+
+        $order->items()->create([
+            'tenant_id' => $this->tenant->id,
+            'item_type' => OrderItem::TYPE_WALLET_TOPUP,
+            'item_id' => null,
+            'price_minor' => $amountMinor,
+            'title' => 'شحن المحفظة',
+        ]);
+
+        $payment = new Payment([
+            'order_id' => $order->id,
+            'gateway' => 'paymob',
+            'gateway_txn_id' => 'PM-'.strtoupper(Str::random(10)),
+            'amount_minor' => $amountMinor,
+            'status' => 'paid',
+            'reference_number' => (string) rand(100000, 999999),
+            'processed_at' => now()->subDays(rand(1, 30)),
+        ]);
+        $payment->tenant_id = $this->tenant->id;
+        $payment->save();
+
+        // Money in: gateway clearing out, student wallet up. No teacher revenue —
+        // that only happens when the balance is spent on content.
+        $wallet = $this->ledger->walletFor($this->tenant->id, $user->id);
+        $this->ledger->post($this->tenant->id, 'order:'.$order->id, [
+            ['account' => LedgerEntry::GATEWAY_CLEARING, 'direction' => LedgerEntry::DEBIT, 'amount_minor' => $amountMinor],
+            ['account' => LedgerEntry::STUDENT_WALLET, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $amountMinor, 'wallet_id' => $wallet->id],
+        ], 'order', $order->id);
+
         $this->makeInvoice($order);
+        $this->backdate($order, $daysAgo);
+    }
+
+    /**
+     * A zero-price checkout — the `free` method in the ledger. No payment row and
+     * no ledger post (there is no money to move), but a real order + enrollment,
+     * which is how a free lesson is claimed.
+     */
+    private function freeClaim(User $user, Lesson $lesson, ?int $daysAgo = null): void
+    {
+        $order = new Order([
+            'user_id' => $user->id,
+            'subtotal_minor' => 0,
+            'discount_minor' => 0,
+            'total_minor' => 0,
+            'currency' => self::CURRENCY,
+            'status' => OrderStatus::Paid->value,
+        ]);
+        $order->tenant_id = $this->tenant->id;
+        $order->save();
+
+        $order->items()->create([
+            'tenant_id' => $this->tenant->id,
+            'item_type' => 'lesson',
+            'item_id' => $lesson->id,
+            'price_minor' => 0,
+            'title' => $lesson->title,
+        ]);
+
+        $this->enroll->grantLesson($this->tenant->id, $user->id, $lesson, EnrollmentSource::Purchase);
+        $this->backdate($order, $daysAgo);
+    }
+
+    /** Mark the order's gateway payment as refunded, for reconciliation. */
+    private function markPaymentRefunded(Order $order): void
+    {
+        Payment::query()
+            ->where('order_id', $order->getKey())
+            ->update(['status' => 'refunded']);
+    }
+
+    /**
+     * Move an order (with its items and payments) back in time. Everything the
+     * seeder writes is created "now", which would pile a year of trade onto seed
+     * day — the date filters, the month presets and the 12-month dashboard trend
+     * all need that spread to mean anything.
+     */
+    private function backdate(Order $order, ?int $daysAgo): Order
+    {
+        $daysAgo ??= rand(0, 180);
+        $when = now()->subDays($daysAgo)->subHours(rand(0, 23))->subMinutes(rand(0, 59));
+
+        $this->stamp($order, $when);
+        OrderItem::query()->where('order_id', $order->getKey())
+            ->update(['created_at' => $when, 'updated_at' => $when]);
+        Payment::query()->where('order_id', $order->getKey())
+            ->update(['created_at' => $when, 'updated_at' => $when]);
+
+        return $order->fresh();
+    }
+
+    /** Set a row's timestamps without touching anything else. */
+    private function stamp(Model $model, CarbonInterface $when): void
+    {
+        $model->newQuery()->whereKey($model->getKey())->update([
+            'created_at' => $when,
+            'updated_at' => $when,
+        ]);
     }
 
     private function makeBadge(string $name, string $desc, int $threshold): Badge
@@ -2549,7 +2798,7 @@ class AhmedTammamAcademySeeder extends Seeder
                 'currency' => self::CURRENCY,
                 'interval' => BillingInterval::Monthly->value,
                 'trial_days' => 0,
-                'limits' => ['max_students' => 100, 'max_courses' => 3, 'storage_mb' => 5120, 'max_assistants' => 1],
+                'limits' => ['max_students' => 100, 'max_lessons' => 3, 'storage_mb' => 5120, 'max_assistants' => 1],
                 'is_active' => false,
                 'sort_order' => 0,
             ],

@@ -31,7 +31,7 @@ return new class extends Migration
             $table->unsignedInteger('trial_days')->default(0);
 
             // Enforceable limits (FR-M03-02). Canonical keys: max_students,
-            // max_courses, storage_mb, max_assistants. A null value = unlimited.
+            // max_lessons, storage_mb, max_assistants. A null value = unlimited.
             $table->json('limits')->nullable();
 
             // Whether the plan can be offered to new tenants (retired via soft delete).

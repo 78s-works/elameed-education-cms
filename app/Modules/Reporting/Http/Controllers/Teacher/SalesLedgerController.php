@@ -2,6 +2,7 @@
 
 namespace App\Modules\Reporting\Http\Controllers\Teacher;
 
+use App\Modules\Commerce\Http\Controllers\Teacher\RefundController;
 use App\Modules\Reporting\Http\Requests\SalesLedgerRequest;
 use App\Modules\Reporting\Services\SalesLedgerExporter;
 use App\Modules\Reporting\Services\SalesLedgerQuery;
@@ -11,7 +12,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /**
  * The teacher's sales ledger (M17): the transaction list behind the dashboard's
  * revenue widgets. Read-only; refunding lives in Commerce
- * ({@see \App\Modules\Commerce\Http\Controllers\Teacher\RefundController}) behind
+ * ({@see RefundController}) behind
  * its own permission, because reading the books and moving money back are
  * different jobs.
  *

@@ -12,12 +12,12 @@ Money is integer minor units (`price_minor`), base currency EGP. Timestamps are 
 
 ## Models & artifacts
 
-- **`SubscriptionPackage`** (`app/Modules/Billing/Models`) — global, soft-deletes. `interval` cast to `BillingInterval` (`monthly`/`yearly`); `limits` cast to array. `LIMIT_KEYS = [max_students, max_courses, storage_mb, max_assistants]`; a `null` limit value = **unlimited**.
+- **`SubscriptionPackage`** (`app/Modules/Billing/Models`) — global, soft-deletes. `interval` cast to `BillingInterval` (`monthly`/`yearly`); `limits` cast to array. `LIMIT_KEYS = [max_students, max_lessons, storage_mb, max_assistants]`; a `null` limit value = **unlimited**.
 - **`TenantSubscription`** — global (`tenant_id` present but not scoped). `status` cast to `SubscriptionStatus` (`trialing`/`active`/`past_due`/`canceled`/`expired`). `price_minor` is locked at assignment (may differ from the plan price for a discount).
 - **Services:** `SubscriptionService` (assign/supersede + `current(tenantId)`), `PackageUsage` (usage-vs-limits snapshot), `PlanLimitGuard` (creation-time enforcement, FR-M03-02). Enums `SubscriptionStatus`, `BillingInterval`.
 - **Resources:** `PackageResource`, `TenantSubscriptionResource`.
 
-> **Now enforced (FR-M03-02).** `PlanLimitGuard::ensure()` **blocks creation** once the plan quota is hit at **three** create paths: students (`POST /teacher/students` → `max_students`), assistants (`POST /teacher/assistants` → `max_assistants`), and media storage (`POST /teacher/media/uploads` → `storage_mb`, checked on the direct-upload path against the incoming file size). Over-limit → **`403`** with the error envelope `code: plan_limit_reached` and `details: { key, limit, used }` (a reusable `App\Support\Exceptions\DomainException`, rendered by `ApiExceptionRenderer`). A tenant with **no active plan** or a **`null`** limit for that key = unlimited (never blocks). `max_courses` is still a `LIMIT_KEYS` member and `PackageUsage` still **counts/displays** it in the usage snapshot, but it is **display-only** — teacher course CRUD was retired (no `POST /teacher/courses`), so nothing enforces it. `PackageUsage` reports **real** `storage_mb.used` — summed from the per-asset `media_assets.size_bytes` recorded at upload (rounded up to whole MB; assets predating byte-tracking count as `0` until back-filled).
+> **Now enforced (FR-M03-02).** `PlanLimitGuard::ensure()` **blocks creation** once the plan quota is hit at **three** create paths: students (`POST /teacher/students` → `max_students`), assistants (`POST /teacher/assistants` → `max_assistants`), and media storage (`POST /teacher/media/uploads` → `storage_mb`, checked on the direct-upload path against the incoming file size). Over-limit → **`403`** with the error envelope `code: plan_limit_reached` and `details: { key, limit, used }` (a reusable `App\Support\Exceptions\DomainException`, rendered by `ApiExceptionRenderer`). A tenant with **no active plan** or a **`null`** limit for that key = unlimited (never blocks). `max_lessons` is still a `LIMIT_KEYS` member and `PackageUsage` **counts/displays** it in the usage snapshot (it counts standalone lessons — `courses` are gone, VD §7), but it is **display-only**: nothing blocks on it at lesson creation yet. `PackageUsage` reports **real** `storage_mb.used` — summed from the per-asset `media_assets.size_bytes` recorded at upload (rounded up to whole MB; assets predating byte-tracking count as `0` until back-filled).
 
 ---
 
@@ -43,7 +43,7 @@ Money is integer minor units (`price_minor`), base currency EGP. Timestamps are 
       "currency": "EGP",
       "interval": "monthly",
       "trial_days": 14,
-      "limits": { "max_students": 2000, "max_courses": 30, "storage_mb": 50000, "max_assistants": 3 },
+      "limits": { "max_students": 2000, "max_lessons": 30, "storage_mb": 50000, "max_assistants": 3 },
       "is_active": true,
       "sort_order": 2,
       "created_at": "2026-07-16T10:00:00+00:00"
@@ -75,7 +75,7 @@ Money is integer minor units (`price_minor`), base currency EGP. Timestamps are 
   "trial_days": 14,
   "is_active": true,
   "sort_order": 2,
-  "limits": { "max_students": 2000, "max_courses": 30 }
+  "limits": { "max_students": 2000, "max_lessons": 30 }
 }
 ```
 
@@ -91,7 +91,7 @@ Money is integer minor units (`price_minor`), base currency EGP. Timestamps are 
 | `is_active` | boolean | no | default `true` |
 | `sort_order` | integer | no | ≥ 0 |
 | `limits` | object | no | keys below; only canonical keys are persisted |
-| `limits.max_students` / `max_courses` / `storage_mb` / `max_assistants` | integer\|null | no | ≥ 0; **omit or `null` = unlimited** |
+| `limits.max_students` / `max_lessons` / `storage_mb` / `max_assistants` | integer\|null | no | ≥ 0; **omit or `null` = unlimited** |
 
 **Response 201** — a single `PackageResource` (same shape as the list rows). `limits` in the response **always** contains all four canonical keys; unset ones are `null`.
 
@@ -208,7 +208,7 @@ Fetch one package by uuid. `404` if not found or retired. → single `PackageRes
     },
     "usage": {
       "max_students":   { "limit": 100,  "used": 1, "remaining": 99 },
-      "max_courses":    { "limit": 10,   "used": 0, "remaining": 10 },
+      "max_lessons":    { "limit": 10,   "used": 0, "remaining": 10 },
       "storage_mb":     { "limit": 5000, "used": 0, "remaining": 5000 },
       "max_assistants": { "limit": 2,    "used": 0, "remaining": 2 }
     }
@@ -249,7 +249,7 @@ Notes:
       "currency": "EGP",
       "interval": "monthly",
       "trial_days": 14,
-      "limits": { "max_students": 500, "max_courses": 10, "storage_mb": 10000, "max_assistants": 1 },
+      "limits": { "max_students": 500, "max_lessons": 10, "storage_mb": 10000, "max_assistants": 1 },
       "is_active": true,
       "sort_order": 1,
       "created_at": "2026-07-16T10:00:00+00:00",

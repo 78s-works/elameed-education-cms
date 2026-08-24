@@ -5,6 +5,7 @@ namespace App\Modules\Reporting\Services;
 use App\Models\User;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
+use App\Modules\Catalog\Services\AcademicYearContext;
 use App\Modules\Centers\Models\ActivationCode;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\OrderStatus;
@@ -12,6 +13,8 @@ use App\Modules\Commerce\Enums\SalesMethod;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Commerce\Models\OrderItem;
 use App\Modules\Commerce\Models\Refund;
+use App\Modules\Identity\Models\StudentProfile;
+use App\Modules\Reporting\Http\Controllers\TeacherReportsController;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Modules\Wallet\Models\PaymentReceipt;
 use Illuminate\Database\Query\Builder as QueryBuilder;
@@ -39,6 +42,12 @@ use Illuminate\Support\Facades\DB;
  * would count it twice. They have their own view, {@see topups}.
  *
  * Money is integer minor units everywhere; nothing here converts to pounds.
+ *
+ * Scoped to the ACTIVE ACADEMIC YEAR when the caller sent one (X-Academic-Year),
+ * the same rule the dashboard uses: a grant is keyed on its own
+ * `academic_year_id`, and an order — which has no year column — counts toward the
+ * year its BUYER is pinned to. Without that, a year-scoped panel would show one
+ * year's catalogue in its filters and every year's money in its totals.
  */
 class SalesLedgerQuery
 {
@@ -56,7 +65,10 @@ class SalesLedgerQuery
         EnrollmentSource::Center->value,
     ];
 
-    public function __construct(private readonly TenantContext $context) {}
+    public function __construct(
+        private readonly TenantContext $context,
+        private readonly AcademicYearContext $year,
+    ) {}
 
     /**
      * One page of ledger rows, newest first, plus the totals for the same filter.
@@ -199,17 +211,34 @@ class SalesLedgerQuery
             return $query;
         };
 
+        // Same year rule as the sales rows: keyed on the student the money belongs to.
+        $yearId = $this->yearId();
+        $yearStudents = fn () => StudentProfile::query()
+            ->where('academic_year_id', $yearId)
+            ->select('user_id');
+
+        $paidOrders = Order::query()->where('status', OrderStatus::Paid->value);
+        if ($yearId !== null) {
+            $paidOrders->whereIn('user_id', $yearStudents());
+        }
+
         $checkout = OrderItem::query()
             ->where('item_type', OrderItem::TYPE_WALLET_TOPUP)
-            ->whereIn('order_id', Order::query()->where('status', OrderStatus::Paid->value)->select('id'));
+            ->whereIn('order_id', $paidOrders->select('id'));
         $window($checkout, 'created_at');
 
         $codes = ActivationCode::query()
             ->where('type', 'wallet')
             ->where('status', 'redeemed');
+        if ($yearId !== null) {
+            $codes->whereIn('redeemed_by', $yearStudents());
+        }
         $window($codes, 'redeemed_at');
 
         $receipts = PaymentReceipt::query()->where('status', 'approved');
+        if ($yearId !== null) {
+            $receipts->whereIn('user_id', $yearStudents());
+        }
         $window($receipts, 'reviewed_at');
 
         $gateway = [
@@ -411,6 +440,8 @@ class SalesLedgerQuery
             ->selectRaw('cast(null as char(16)) as item_type')
             ->selectRaw('cast(null as signed) as item_id');
 
+        $this->scopeToBuyerYear($query, 'orders.user_id');
+
         $this->applyItemFilter($query, $filters, function ($q, string $itemType, int $itemId): void {
             $q->whereExists(function ($sub) use ($itemType, $itemId): void {
                 $sub->from('order_items')
@@ -436,6 +467,7 @@ class SalesLedgerQuery
             ->join('lessons', 'lessons.id', '=', 'enrollments.lesson_id')
             ->where('enrollments.tenant_id', $this->tenantId())
             ->whereIn('enrollments.source', self::GRANT_SOURCES)
+            ->when($this->yearId() !== null, fn ($q) => $q->where('enrollments.academic_year_id', $this->yearId()))
             ->whereNull('enrollments.package_id')
             ->whereNotNull('enrollments.lesson_id')
             ->selectRaw("'grant' as kind")
@@ -478,6 +510,7 @@ class SalesLedgerQuery
             ->join('packages', 'packages.id', '=', 'enrollments.package_id')
             ->where('enrollments.tenant_id', $this->tenantId())
             ->whereIn('enrollments.source', self::GRANT_SOURCES)
+            ->when($this->yearId() !== null, fn ($q) => $q->where('enrollments.academic_year_id', $this->yearId()))
             ->whereNotNull('enrollments.package_id')
             ->groupBy('enrollments.user_id', 'enrollments.package_id', 'enrollments.source', 'packages.price_minor')
             ->selectRaw("'grant' as kind")
@@ -610,7 +643,9 @@ class SalesLedgerQuery
                 'net_minor' => (int) $row->net_minor,
                 'refunded_minor' => (int) $row->refunded_minor,
                 'coupon_code' => $coupons->get((int) $row->row_id)?->coupon?->code,
-                'refundable_minor' => $isOrder
+                // Only a paid order can be refunded — a pending or failed attempt
+                // never took money, so it must not offer a refund at all.
+                'refundable_minor' => $isOrder && $row->status === OrderStatus::Paid->value
                     ? max(0, (int) $row->net_minor - (int) $row->refunded_minor)
                     : 0,
                 'refunds' => $orderRefunds->map(fn ($r): array => [
@@ -639,13 +674,16 @@ class SalesLedgerQuery
         $byType = $grants->groupBy('item_type');
         $titles = [];
 
+        // Titles are looked up WITHOUT the year scope: a row that made it into the
+        // page is a real sale, and it must never render as an em dash just because
+        // the panel is pinned to another year.
         $lessonIds = ($byType[OrderItem::TYPE_LESSON] ?? collect())->pluck('item_id')->unique()->all();
-        foreach (Lesson::query()->whereIn('id', $lessonIds)->pluck('title', 'id') as $id => $title) {
+        foreach (Lesson::withoutGlobalScope('academic_year')->whereIn('id', $lessonIds)->pluck('title', 'id') as $id => $title) {
             $titles[OrderItem::TYPE_LESSON.':'.$id] = (string) $title;
         }
 
         $packageIds = ($byType[OrderItem::TYPE_PACKAGE] ?? collect())->pluck('item_id')->unique()->all();
-        foreach (Package::query()->whereIn('id', $packageIds)->pluck('name', 'id') as $id => $title) {
+        foreach (Package::withoutGlobalScope('academic_year')->whereIn('id', $packageIds)->pluck('name', 'id') as $id => $title) {
             $titles[OrderItem::TYPE_PACKAGE.':'.$id] = (string) $title;
         }
 
@@ -681,6 +719,32 @@ class SalesLedgerQuery
         }
 
         return $map;
+    }
+
+    /** The active academic year id, or null when the caller pinned none. */
+    private function yearId(): ?int
+    {
+        return $this->year->hasYear() ? $this->year->id() : null;
+    }
+
+    /**
+     * Restrict an ORDER leg to buyers pinned to the active year. Orders carry no
+     * year of their own, so the buyer's pinned year is the key — identical to
+     * {@see TeacherReportsController}.
+     */
+    private function scopeToBuyerYear(QueryBuilder $query, string $userColumn): void
+    {
+        $yearId = $this->yearId();
+        if ($yearId === null) {
+            return;
+        }
+
+        $query->whereIn($userColumn, function ($sub) use ($yearId): void {
+            $sub->from('student_profiles')
+                ->select('user_id')
+                ->where('tenant_id', $this->tenantId())
+                ->where('academic_year_id', $yearId);
+        });
     }
 
     private function tenantId(): int

@@ -25,7 +25,7 @@ use Tests\TestCase;
  * PlanLimitGuard: students and media storage are blocked once the plan's quota
  * is exhausted; a tenant with no plan (or an unlimited limit) is never blocked.
  *
- * The old `max_courses` limit was retired with the courses table (VD §7); there
+ * The `max_lessons` limit replaced the old course quota with the courses table (VD §7); there
  * is no lesson/package creation limit in the billing code, so only the student
  * and storage limits are exercised here.
  */

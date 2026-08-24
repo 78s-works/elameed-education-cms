@@ -42,8 +42,8 @@ class PackageUsage
     {
         return match ($key) {
             'max_students' => $this->countMembers($tenantId, TenantUserRole::Student),
-            // `courses` retired (VD §7): the content-quota now counts standalone lessons.
-            'max_courses' => $this->countLessons($tenantId),
+            // The content quota counts standalone lessons (`courses` are gone — VD §7).
+            'max_lessons' => $this->countLessons($tenantId),
             'max_assistants' => $this->countMembers($tenantId, TenantUserRole::Assistant),
             'storage_mb' => $this->storageMb($tenantId),
             default => 0,
