@@ -79,9 +79,51 @@ class ResolveAcademicYear
             throw new AuthorizationException('Academic year not found or not accessible.');
         }
 
+        $this->assertYearIsInScope($request, (int) $year->getKey());
+
         $this->context->set((int) $year->getKey());
 
         return $next($request);
+    }
+
+    /**
+     * Keep a year-scoped member inside their years (M20).
+     *
+     * Authority and scope are two different questions: a role says WHAT a member
+     * may do, the years assigned to their membership say WHICH content they may
+     * do it to. Without this, an assistant hired for the graduating year could
+     * point the header at another year and act there with the same permissions.
+     *
+     * Deliberately kind-agnostic: a membership with NO assigned years is
+     * unscoped (the academy owner), and one with years is confined to them. No
+     * comparison against the membership kind, so authority keeps a single source.
+     */
+    private function assertYearIsInScope(Request $request, int $yearId): void
+    {
+        $user = $request->user();
+        $tenant = app(\App\Modules\Tenancy\Services\TenantContext::class)->tenant();
+
+        if ($user === null || $tenant === null) {
+            return;
+        }
+
+        $membership = $user->membershipFor($tenant);
+
+        if ($membership === null) {
+            return;
+        }
+
+        $assigned = $membership->academicYears()->pluck('academic_years.id')->all();
+
+        if ($assigned === [] || in_array($yearId, array_map('intval', $assigned), true)) {
+            return;
+        }
+
+        throw new DomainException(
+            'academic_year_out_of_scope',
+            __('You are not assigned to this academic year.'),
+            403,
+        );
     }
 
     public function terminate(Request $request, Response $response): void

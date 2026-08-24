@@ -58,6 +58,14 @@ class DatabaseSeeder extends Seeder
     {
         $this->seedPlatformAdmin();
 
+        // Permission catalog (M20) — must run before any tenant is created, since
+        // provisioning a tenant copies role templates that reference these keys.
+        $this->call(PermissionCatalogSeeder::class);
+
+        // Role blueprints every tenant is stamped from (M20). After the catalog:
+        // a template links permission rows.
+        $this->call(RoleTemplateSeeder::class);
+
         // Global notification catalog (types/templates/translations) — needed before
         // any tenant dispatches notifications.
         $this->call(NotificationCatalogSeeder::class);

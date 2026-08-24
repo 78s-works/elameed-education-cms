@@ -5,13 +5,15 @@ namespace App\Modules\Identity\Http\Controllers\Teacher;
 use App\Models\User;
 use App\Modules\Billing\Services\PlanLimitGuard;
 use App\Modules\Identity\Enums\MembershipStatus;
-use App\Modules\Identity\Enums\Permission;
+use App\Modules\Identity\Enums\Permission as PermissionEnum;
+use App\Modules\Identity\Enums\RoleTemplateKey;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Http\Controllers\Teacher\Concerns\ManagesTenantAssistants;
 use App\Modules\Identity\Http\Requests\CreateAssistantRequest;
 use App\Modules\Identity\Http\Requests\UpdateAssistantRequest;
 use App\Modules\Identity\Http\Resources\AssistantResource;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Identity\Support\TeamAuthority;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Services\AcademicYearContext;
 use App\Modules\Tenancy\Services\TenantContext;
@@ -38,12 +40,84 @@ class AssistantController
         private readonly TenantContext $context,
         private readonly AcademicYearContext $years,
         private readonly PlanLimitGuard $limits,
+        private readonly TeamAuthority $authority,
     ) {}
 
     /** The grantable-permission catalog for the teacher UI (GET /teacher/permissions). */
     public function catalog(): JsonResponse
     {
-        return response()->json(['data' => Permission::catalog()]);
+        return response()->json(['data' => PermissionEnum::catalog()]);
+    }
+
+    /**
+     * Resolve the client's role uuids to this academy's roles, and check the
+     * caller is allowed to hand every one of them out.
+     *
+     * The baseline `assistant` role is excluded: the membership observer owns it,
+     * so a client can neither add nor drop it here.
+     *
+     * @param  array<int, string>|null  $uuids
+     * @return \Illuminate\Support\Collection<int, \Spatie\Permission\Models\Role>
+     */
+    private function resolveRoles(Request $request, int $tenantId, ?array $uuids): \Illuminate\Support\Collection
+    {
+        $roles = \Spatie\Permission\Models\Role::query()
+            ->where('tenant_id', $tenantId)
+            ->whereIn('uuid', $uuids ?? [])
+            // The two baseline staff roles are off-limits: `assistant` is the
+            // observer's to manage, and `teacher` is the academy owner's role —
+            // handing it out here would be a one-request promotion to owner.
+            ->where(fn ($q) => $q
+                ->whereNull('template_key')
+                ->orWhereNotIn('template_key', [
+                    RoleTemplateKey::Assistant->value,
+                    RoleTemplateKey::Teacher->value,
+                ]))
+            ->with('permissions')
+            ->get();
+
+        $unknown = array_values(array_diff($uuids ?? [], $roles->pluck('uuid')->all()));
+
+        if ($unknown !== []) {
+            throw ValidationException::withMessages([
+                'role_uuids' => __('Unknown role: :uuid', ['uuid' => $unknown[0]]),
+            ]);
+        }
+
+        $this->authority->assertMayAssignRoles($request, $roles);
+
+        return $roles;
+    }
+
+    /**
+     * Make the assistant hold exactly: their baseline role + the given roles.
+     * Written through the membership so the team id is pinned to this academy.
+     *
+     * @param  \Illuminate\Support\Collection<int, \Spatie\Permission\Models\Role>  $roles
+     */
+    private function syncAssistantRoles(TenantUser $membership, \Illuminate\Support\Collection $roles): void
+    {
+        $baseline = \Spatie\Permission\Models\Role::query()
+            ->where('tenant_id', $membership->tenant_id)
+            ->where('template_key', RoleTemplateKey::Assistant->value)
+            ->first();
+
+        $target = $roles->pluck('name')->all();
+
+        if ($baseline !== null) {
+            $target[] = $baseline->name;
+        }
+
+        $registrar = app(\Spatie\Permission\PermissionRegistrar::class);
+        $previous = $registrar->getPermissionsTeamId();
+        $registrar->setPermissionsTeamId($membership->tenant_id);
+
+        try {
+            $membership->user?->syncRoles($target);
+        } finally {
+            $registrar->setPermissionsTeamId($previous);
+            $registrar->forgetCachedPermissions();
+        }
     }
 
     public function index(Request $request): AnonymousResourceCollection
@@ -97,10 +171,10 @@ class AssistantController
         // Subscription-package ceiling (FR-M03-02).
         $this->limits->ensure($tenantId, 'max_assistants');
 
-        $permissions = Permission::sanitize($data['permissions'] ?? []);
+        $roles = $this->resolveRoles($request, $tenantId, $data['role_uuids'] ?? []);
         $temporaryPassword = null;
 
-        $assistant = DB::transaction(function () use ($existing, $data, $tenantId, $permissions, $yearIds, &$temporaryPassword): User {
+        $assistant = DB::transaction(function () use ($existing, $data, $tenantId, $roles, $yearIds, &$temporaryPassword): User {
             if ($existing !== null) {
                 $user = $existing; // link an existing global identity — don't modify it
             } else {
@@ -122,16 +196,19 @@ class AssistantController
                 'user_id' => $user->id,
                 'role' => TenantUserRole::Assistant->value,
                 'status' => MembershipStatus::Active->value,
-                'permissions' => $permissions,
                 'joined_at' => now(),
             ]);
             $membership->academicYears()->sync($yearIds);
+            // The observer already gave them the baseline role; add the granted ones.
+            $this->syncAssistantRoles($membership->load('user'), $roles);
 
             return $user;
         });
 
         app(AuditLogger::class)->log('assistant.created', [
-            'assistant_id' => $assistant->getKey(), 'permissions' => $permissions, 'academic_year_ids' => $yearIds,
+            'assistant_id' => $assistant->getKey(),
+            'roles' => $roles->pluck('name')->all(),
+            'academic_year_ids' => $yearIds,
         ], $tenantId, 'user', $assistant->getKey());
 
         return response()->json(['data' => array_filter([
@@ -140,7 +217,7 @@ class AssistantController
             'phone' => $assistant->phone,
             'email' => $assistant->email,
             'status' => MembershipStatus::Active->value,
-            'permissions' => $permissions,
+            'roles' => $roles->pluck('name')->all(),
             'temporary_password' => $temporaryPassword, // present only if generated
         ], fn ($v) => $v !== null)], 201);
     }
@@ -150,6 +227,7 @@ class AssistantController
     {
         $tenantId = $this->context->tenantOrFail()->getKey();
         $membership = $this->assistantOrFail($tenantId, $assistant);
+        $this->authority->assertMayActOn($request, $membership);
         $data = $request->validated();
 
         $identity = array_intersect_key($data, array_flip(['name', 'email']));
@@ -159,9 +237,10 @@ class AssistantController
 
         $changes = [];
 
-        if (array_key_exists('permissions', $data)) {
-            $membership->permissions = Permission::sanitize($data['permissions']);
-            $changes['permissions'] = $membership->permissions;
+        if (array_key_exists('role_uuids', $data)) {
+            $roles = $this->resolveRoles($request, $tenantId, $data['role_uuids']);
+            $this->syncAssistantRoles($membership->load('user'), $roles);
+            $changes['roles'] = $roles->pluck('name')->all();
         }
 
         if (array_key_exists('status', $data)) {

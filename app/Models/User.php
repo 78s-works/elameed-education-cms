@@ -15,6 +15,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
+use Spatie\Permission\Traits\HasRoles;
 
 /**
  * Global identity. One user can hold different roles across tenants via
@@ -28,6 +29,13 @@ class User extends Authenticatable
     use HasFactory;
 
     use HasUuids;
+
+    /**
+     * Roles and permissions are per-tenant (M20): the team id comes from
+     * TenantTeamResolver, so every check below answers "in the current academy".
+     */
+    use HasRoles;
+
     use Notifiable;
 
     protected $fillable = [
@@ -79,6 +87,30 @@ class User extends Authenticatable
     public function isPlatformAdmin(): bool
     {
         return (bool) $this->is_platform_admin;
+    }
+
+    /**
+     * The role names this user holds in the CURRENT academy (M20).
+     *
+     * Reads through Spatie, which scopes by the resolved team, so this answers
+     * "here", never "anywhere" — a teacher in one academy and a student in
+     * another must not carry the first academy's authority into the second.
+     *
+     * @return list<string>
+     */
+    public function roleNamesInTenant(): array
+    {
+        return $this->roles()->pluck('name')->values()->all();
+    }
+
+    /**
+     * The union of the permissions granted by those roles.
+     *
+     * @return list<string>
+     */
+    public function permissionNamesInTenant(): array
+    {
+        return $this->getAllPermissions()->pluck('name')->values()->all();
     }
 
     public function hasRoleInTenant(Tenant $tenant, TenantUserRole $role): bool

@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Identity\Observers\TenantUserObserver;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -17,6 +19,10 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->configureRateLimiters();
+
+        // Every membership carries the baseline role of its kind (M20). Central
+        // here rather than at each creation site — see the observer.
+        TenantUser::observe(TenantUserObserver::class);
     }
 
     private function configureRateLimiters(): void

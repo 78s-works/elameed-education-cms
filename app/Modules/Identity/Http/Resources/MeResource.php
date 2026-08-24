@@ -52,9 +52,12 @@ class MeResource extends JsonResource
             'current' => [
                 'tenant' => $currentTenant?->slug,
                 'role' => $currentMembership?->role->value,
-                // Granular permissions (M18): teachers get the full catalog,
-                // assistants their granted subset, everyone else none.
-                'permissions' => $currentMembership?->effectivePermissions() ?? [],
+                // The roles held in THIS academy, and the permissions those roles
+                // add up to (M20). No implicit authority: an owner sees the full
+                // catalog because the owner role carries it, not because of a
+                // special case. A student sees [] — their role is empty today.
+                'roles' => $currentMembership !== null ? $this->roleNamesInTenant() : [],
+                'permissions' => $currentMembership !== null ? $this->permissionNamesInTenant() : [],
             ],
         ];
     }

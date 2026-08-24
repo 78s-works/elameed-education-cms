@@ -2,6 +2,7 @@
 
 namespace App\Modules\Tenancy\Observers;
 
+use App\Modules\Identity\Services\TenantRoleProvisioner;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Services\TenantDomainRegistry;
 
@@ -17,7 +18,20 @@ use App\Modules\Tenancy\Services\TenantDomainRegistry;
  */
 class TenantObserver
 {
-    public function __construct(private readonly TenantDomainRegistry $registry) {}
+    public function __construct(
+        private readonly TenantDomainRegistry $registry,
+        private readonly TenantRoleProvisioner $roles,
+    ) {}
+
+    /**
+     * A new academy is stamped with its own copy of every role template (M20),
+     * so the teacher has roles to assign from the first request — and so no user
+     * anywhere in the system exists without a role to hold.
+     */
+    public function created(Tenant $tenant): void
+    {
+        $this->roles->provision($tenant);
+    }
 
     public function saved(Tenant $tenant): void
     {

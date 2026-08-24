@@ -85,14 +85,16 @@ class LoginAction
     }
 
     /**
-     * Honour the teacher's per-academy "disable sign-in" switch. When it is off,
-     * ONLY the teacher may still sign in (to reach their panel and re-open it);
-     * everyone else — assistants, students, parents — is blocked. No-op on the
-     * platform host.
+     * Honour the academy's "disable sign-in" switch. When it is off, ONLY the
+     * academy OWNER may still sign in — otherwise closing sign-in would lock the
+     * academy permanently, with nobody able to reach the switch that re-opens it.
+     *
+     * The exemption is decided by the owner ROLE, not by the membership kind
+     * column: authority has one source (M20).
      */
     private function assertLoginEnabled(?Tenant $tenant, ?TenantUser $membership): void
     {
-        if ($tenant === null || $membership === null || $membership->role === TenantUserRole::Teacher) {
+        if ($tenant === null || $membership === null || $membership->isOwner()) {
             return;
         }
 

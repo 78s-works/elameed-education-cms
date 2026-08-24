@@ -75,6 +75,8 @@ use App\Modules\Engagement\Models\TicketReply;
 use App\Modules\Engagement\Services\PointsService;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\OtpPurpose;
+use App\Modules\Identity\Enums\RoleTemplateKey;
+use App\Modules\Identity\Support\RbacGuard;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\LoginAttempt;
 use App\Modules\Identity\Models\OtpCode as OtpCodeModel;
@@ -118,6 +120,8 @@ use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Services\LedgerService;
 use App\Modules\Wallet\Services\PaymentReceiptService;
 use Illuminate\Database\Seeder;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -487,29 +491,164 @@ class AhmedTammamAcademySeeder extends Seeder
         $all = array_values($this->years); // 3 years
         $year3 = $this->years['الثالث الثانوي'];
 
-        // Assistant serving ALL years (multi-year pivot).
-        $menna = $this->makeUser('01200000002', 'أ. منة الله (مساعدة)', 'menna.ta@elameed.app');
-        $m1 = TenantUser::create([
-            'tenant_id' => $this->tenant->id,
-            'user_id' => $menna->id,
-            'role' => TenantUserRole::Assistant->value,
-            'status' => MembershipStatus::Active->value,
-            'permissions' => ['students', 'support', 'homework'],
-            'joined_at' => now()->subMonths(4),
+        // A spread of real staff shapes (M20), each holding DIFFERENT roles, so the
+        // panel can be exercised against every interesting combination:
+        //   - two template roles stacked
+        //   - a single template role
+        //   - a custom role authored here, narrower than any template
+        //   - a delegate who may manage roles but holds almost nothing else
+        //   - an assistant with NO extra roles at all (baseline only)
+        $lessonEditor = $this->makeRole('محرر الدروس', 'View content and edit lessons — no create, no delete.', [
+            'content.view',
+            'content.lessons.update',
+            'content.lesson_sections.manage',
         ]);
-        $m1->academicYears()->sync(array_map(fn ($y) => $y->id, $all));
 
-        // Assistant scoped to the graduating year only (single-year pivot).
+        $receptionDesk = $this->makeRole('مكتب الاستقبال', 'Runs the door: attendance only.', [
+            'centers.view',
+            'centers.attendance.view',
+            'centers.attendance.record',
+        ]);
+
+        $teamDelegate = $this->makeRole('مسؤول الفريق', 'Delegated role + assistant management.', [
+            'team.view',
+            'team.roles.manage',
+            'team.assistants.manage',
+            'students.view',
+        ]);
+
+        // Students + support, across every year.
+        $menna = $this->makeUser('01200000002', 'أ. منة الله (مساعدة)', 'menna.ta@elameed.app');
+        $this->assistant($menna, $all, now()->subMonths(4), [
+            RoleTemplateKey::StudentsManager,
+            RoleTemplateKey::SupportAgent,
+        ]);
+
+        // Grading + finance, graduating year only (single-year pivot).
         $ali = $this->makeUser('01200000003', 'أ. علي حسن (مساعد)', 'ali.ta@elameed.app');
-        $m2 = TenantUser::create([
+        $this->assistant($ali, [$year3], now()->subMonths(2), [
+            RoleTemplateKey::HomeworkGrader,
+            RoleTemplateKey::Finance,
+        ]);
+
+        // Content only, and only the parts of it a copy editor needs.
+        $sara = $this->makeUser('01200000004', 'أ. سارة محمود (محررة محتوى)', 'sara.ta@elameed.app');
+        $this->assistant($sara, $all, now()->subMonths(3), [], [$lessonEditor]);
+
+        // The front desk at the physical center.
+        $hoda = $this->makeUser('01200000005', 'أ. هدى عبد الله (استقبال)', 'hoda.ta@elameed.app');
+        $this->assistant($hoda, $all, now()->subMonth(), [], [$receptionDesk]);
+
+        // A delegate: may hand out roles, but cannot grant what he does not hold,
+        // and can never grant team management onward (TeamAuthority).
+        $tarek = $this->makeUser('01200000006', 'أ. طارق فؤاد (مسؤول الفريق)', 'tarek.ta@elameed.app');
+        $this->assistant($tarek, $all, now()->subWeeks(6), [], [$teamDelegate]);
+
+        // Baseline only: a real member of staff who can open the panel and reach
+        // nothing inside it. The proof that no authority is implied by membership.
+        $nour = $this->makeUser('01200000007', 'أ. نور سيد (بلا صلاحيات)', 'nour.ta@elameed.app');
+        $this->assistant($nour, $all, now()->subWeeks(2), []);
+    }
+
+    /**
+     * Create an assistant membership + its year scope, then stack roles on top of
+     * the baseline role the observer assigns.
+     *
+     * @param  list<AcademicYear>  $years
+     * @param  list<RoleTemplateKey>  $templateKeys
+     * @param  list<Role>  $customRoles
+     */
+    private function assistant(User $user, array $years, $joinedAt, array $templateKeys, array $customRoles = []): TenantUser
+    {
+        $membership = TenantUser::create([
             'tenant_id' => $this->tenant->id,
-            'user_id' => $ali->id,
+            'user_id' => $user->id,
             'role' => TenantUserRole::Assistant->value,
             'status' => MembershipStatus::Active->value,
-            'permissions' => ['students', 'finance'],
-            'joined_at' => now()->subMonths(2),
+            'joined_at' => $joinedAt,
         ]);
-        $m2->academicYears()->sync([$year3->id]);
+
+        $membership->academicYears()->sync(array_map(fn ($y) => $y->id, $years));
+
+        if ($templateKeys !== []) {
+            $this->grantRoles($user, $templateKeys);
+        }
+
+        foreach ($customRoles as $role) {
+            $this->assignRole($user, $role->name);
+        }
+
+        return $membership;
+    }
+
+    /**
+     * A role the academy authored itself (no template behind it) — the shape a
+     * teacher gets when they build a role in the panel.
+     *
+     * @param  list<string>  $permissionKeys
+     */
+    private function makeRole(string $name, string $description, array $permissionKeys): Role
+    {
+        $registrar = app(PermissionRegistrar::class);
+        $previous = $registrar->getPermissionsTeamId();
+        $registrar->setPermissionsTeamId($this->tenant->id);
+
+        try {
+            $role = Role::firstOrCreate(
+                ['name' => $name, 'tenant_id' => $this->tenant->id, 'guard_name' => RbacGuard::NAME],
+                ['uuid' => (string) Str::uuid7(), 'description' => $description, 'is_system' => false],
+            );
+
+            $role->syncPermissions($permissionKeys);
+
+            return $role;
+        } finally {
+            $registrar->setPermissionsTeamId($previous);
+            $registrar->forgetCachedPermissions();
+        }
+    }
+
+    /** Assign one role by name, with the team pinned to this academy. */
+    private function assignRole(User $user, string $roleName): void
+    {
+        $registrar = app(PermissionRegistrar::class);
+        $previous = $registrar->getPermissionsTeamId();
+        $registrar->setPermissionsTeamId($this->tenant->id);
+
+        try {
+            $user->assignRole($roleName);
+        } finally {
+            $registrar->setPermissionsTeamId($previous);
+            $registrar->forgetCachedPermissions();
+        }
+    }
+
+    /**
+     * Give a member extra roles on top of the baseline one the observer assigned.
+     * Pins the team so this works from a seeder, where no request tenant exists.
+     *
+     * @param  list<RoleTemplateKey>  $templateKeys
+     */
+    private function grantRoles(User $user, array $templateKeys): void
+    {
+        $registrar = app(PermissionRegistrar::class);
+        $previous = $registrar->getPermissionsTeamId();
+        $registrar->setPermissionsTeamId($this->tenant->id);
+
+        try {
+            $names = Role::query()
+                ->where('tenant_id', $this->tenant->id)
+                ->whereIn('template_key', array_map(fn (RoleTemplateKey $k): string => $k->value, $templateKeys))
+                ->pluck('name')
+                ->all();
+
+            foreach ($names as $name) {
+                $user->assignRole($name);
+            }
+        } finally {
+            $registrar->setPermissionsTeamId($previous);
+            $registrar->forgetCachedPermissions();
+        }
     }
 
     private function seedGlobalCoupons(): void

@@ -22,7 +22,11 @@ class AssistantResource extends JsonResource
             'phone' => $this->user?->phone,
             'email' => $this->user?->email,
             'status' => $this->status->value,
-            'permissions' => $this->effectivePermissions(),
+            // Roles are what the teacher grants; permissions are what those roles
+            // add up to (M20). The panel shows the roles and gates on the keys.
+            'roles' => $this->roleNames(),
+            'role_uuids' => $this->assignableRoleUuids(),
+            'permissions' => $this->holdsPermissionKeys(),
             // The academic years this assistant serves (M18 — year-scoped roster).
             'academic_year_ids' => $this->whenLoaded('academicYears', fn () => $this->academicYears->pluck('uuid')->all()),
             'academic_years' => $this->whenLoaded('academicYears', fn () => $this->academicYears

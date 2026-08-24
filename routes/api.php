@@ -38,6 +38,7 @@ use App\Modules\Commerce\Http\Controllers\CheckoutController;
 use App\Modules\Commerce\Http\Controllers\InvoiceController;
 use App\Modules\Commerce\Http\Controllers\PaymentWebhookController;
 use App\Modules\Commerce\Http\Controllers\Teacher\CouponController;
+use App\Modules\Commerce\Http\Controllers\Teacher\RefundController;
 use App\Modules\Engagement\Http\Controllers\AttachmentController;
 use App\Modules\Engagement\Http\Controllers\CommentController;
 use App\Modules\Engagement\Http\Controllers\FavoriteController;
@@ -55,6 +56,8 @@ use App\Modules\Identity\Http\Controllers\ParentController;
 use App\Modules\Identity\Http\Controllers\Teacher\AssistantController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentActivityController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentContentOverrideController;
+use App\Modules\Identity\Http\Controllers\Admin\RoleTemplateController;
+use App\Modules\Identity\Http\Controllers\Teacher\RoleController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentEnrollmentController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentFinanceController;
@@ -78,6 +81,7 @@ use App\Modules\PlatformAdmin\Http\Controllers\AdminReportController;
 use App\Modules\PlatformAdmin\Http\Controllers\AdminTenantController;
 use App\Modules\Reporting\Http\Controllers\AuditLogController;
 use App\Modules\Reporting\Http\Controllers\StudentCoursesController;
+use App\Modules\Reporting\Http\Controllers\Teacher\SalesLedgerController;
 use App\Modules\Reporting\Http\Controllers\TeacherReportsController;
 use App\Modules\Tenancy\Http\Controllers\Teacher\DomainController;
 use App\Modules\Tenancy\Http\Controllers\TeacherCustomLandingController;
@@ -143,6 +147,14 @@ Route::prefix('v1')->middleware(['central', 'auth:sanctum', 'admin'])->group(fun
     Route::post('/admin/tenants', [AdminTenantController::class, 'store']);
     Route::get('/admin/tenants/{tenant:uuid}', [AdminTenantController::class, 'show']);
     Route::put('/admin/tenants/{tenant:uuid}', [AdminTenantController::class, 'update']);
+    // Role templates (M20) — the blueprints tenants are stamped from. Editing one
+    // affects only academies created afterwards; `resync` is the explicit, and
+    // destructive, way to push a change onto the copies that already exist.
+    Route::get('/admin/role-templates', [RoleTemplateController::class, 'index']);
+    Route::get('/admin/role-templates/permissions', [RoleTemplateController::class, 'permissions']);
+    Route::put('/admin/role-templates/{roleTemplate}', [RoleTemplateController::class, 'update']);
+    Route::post('/admin/role-templates/{roleTemplate}/resync', [RoleTemplateController::class, 'resync']);
+
     Route::get('/admin/reports/overview', [AdminReportController::class, 'overview']);
     Route::get('/admin/audit-logs', [AuditLogController::class, 'admin']);
 
@@ -370,373 +382,555 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
 
         // Teacher site & identity (M02) — teacher role in the current tenant
         Route::middleware('role:teacher')->group(function (): void {
-            Route::get('/teacher/profile', [TeacherProfileController::class, 'show']);
-            Route::put('/teacher/profile', [TeacherProfileController::class, 'update']);
+            // The academy's public-facing teacher profile (bio, photo, socials) —
+            // site content, so it rides with the landing page key.
+            Route::middleware('can:settings.landing.manage')->group(function (): void {
+                Route::get('/teacher/profile', [TeacherProfileController::class, 'show']);
+                Route::put('/teacher/profile', [TeacherProfileController::class, 'update']);
+            });
 
             // Access switches (M02) — open/close sign-in + self-registration for
             // this academy. Enforced at /auth/login + /auth/register (M11).
-            Route::get('/teacher/access', [TenantAccessController::class, 'show']);
-            Route::put('/teacher/access', [TenantAccessController::class, 'update']);
+            // Closing sign-in locks every member out of the academy, so it is its
+            // own key rather than a corner of the landing settings.
+            Route::middleware('can:settings.access.manage')->group(function (): void {
+                Route::get('/teacher/access', [TenantAccessController::class, 'show']);
+                Route::put('/teacher/access', [TenantAccessController::class, 'update']);
+            });
 
             // Custom-landing switch (M02) — ON = SPA renders its own bundled
             // custom/<slug>/ page; OFF (default) = the CMS landing sections.
             // Mirrored in GET /tenant/context → data.landing.custom_enabled.
-            Route::get('/teacher/custom-landing', [TeacherCustomLandingController::class, 'show']);
-            Route::put('/teacher/custom-landing', [TeacherCustomLandingController::class, 'update']);
+            Route::middleware('can:settings.landing.manage')->group(function (): void {
+                Route::get('/teacher/custom-landing', [TeacherCustomLandingController::class, 'show']);
+                Route::put('/teacher/custom-landing', [TeacherCustomLandingController::class, 'update']);
+            });
 
             // SMS settings (M10) — teacher stores his own WE Business SMS
             // (Connekio) credentials; SMS only works for the tenant once set +
             // enabled. Password is write-only; stored encrypted per tenant.
-            Route::get('/teacher/sms-settings', [SmsSettingsController::class, 'show']);
-            Route::put('/teacher/sms-settings', [SmsSettingsController::class, 'update']);
+            Route::middleware('can:settings.sms.manage')->group(function (): void {
+                Route::get('/teacher/sms-settings', [SmsSettingsController::class, 'show']);
+                Route::put('/teacher/sms-settings', [SmsSettingsController::class, 'update']);
+            });
 
             // Custom domains (M02) — attach the academy's own domain. The host
             // resolves to this tenant once the DNS record is set; the auto
             // subdomain stays read-only. {domain} is a uuid, scoped in-controller.
-            Route::get('/teacher/domains', [DomainController::class, 'index']);
-            Route::post('/teacher/domains', [DomainController::class, 'store']);
-            Route::post('/teacher/domains/{domain}/primary', [DomainController::class, 'setPrimary']);
-            Route::delete('/teacher/domains/{domain}', [DomainController::class, 'destroy']);
+            Route::middleware('can:settings.domains.manage')->group(function (): void {
+                Route::get('/teacher/domains', [DomainController::class, 'index']);
+                Route::post('/teacher/domains', [DomainController::class, 'store']);
+                Route::post('/teacher/domains/{domain}/primary', [DomainController::class, 'setPrimary']);
+                Route::delete('/teacher/domains/{domain}', [DomainController::class, 'destroy']);
+            });
 
             // Teacher subscription (M03) — read-only view of the tenant's plan,
             // limits, and usage. The plan is managed by the platform admin.
-            Route::get('/teacher/subscription', [SubscriptionController::class, 'show']);
+
             // Available plans to compare (each flagged is_current). Read-only —
             // switching is admin-driven (see docs/api/billing.md).
-            Route::get('/teacher/packages', [TeacherPackageController::class, 'index']);
-            Route::get('/teacher/landing', [TeacherLandingController::class, 'show']);
-            Route::put('/teacher/landing', [TeacherLandingController::class, 'update']);
-            Route::post('/teacher/landing/media', [TeacherLandingController::class, 'media']);
+
+            Route::middleware('can:settings.landing.manage')->group(function (): void {
+                Route::get('/teacher/landing', [TeacherLandingController::class, 'show']);
+                Route::put('/teacher/landing', [TeacherLandingController::class, 'update']);
+                Route::post('/teacher/landing/media', [TeacherLandingController::class, 'media']);
+            });
 
             // Site metadata (M02) — teacher-managed key/value entries (SEO tags,
             // custom head data, …), namespaced by `group`. Separate from the
             // landing/profile config; bound by id and tenant-scoped.
-            Route::get('/teacher/meta', [TeacherMetaController::class, 'index']);
-            Route::post('/teacher/meta', [TeacherMetaController::class, 'store']);
-            Route::get('/teacher/meta/{meta}', [TeacherMetaController::class, 'show']);
-            Route::put('/teacher/meta/{meta}', [TeacherMetaController::class, 'update']);
-            Route::delete('/teacher/meta/{meta}', [TeacherMetaController::class, 'destroy']);
+            Route::middleware('can:settings.meta.manage')->group(function (): void {
+                Route::get('/teacher/meta', [TeacherMetaController::class, 'index']);
+                Route::post('/teacher/meta', [TeacherMetaController::class, 'store']);
+                Route::get('/teacher/meta/{meta}', [TeacherMetaController::class, 'show']);
+                Route::put('/teacher/meta/{meta}', [TeacherMetaController::class, 'update']);
+                Route::delete('/teacher/meta/{meta}', [TeacherMetaController::class, 'destroy']);
+            });
 
             // Reviews & landing testimonials (M20) — teacher-panel CRUD: moderate
             // student reviews (hide/show/edit/delete) + author curated testimonials.
-            Route::get('/teacher/reviews', [TeacherReviewController::class, 'index']);
-            Route::post('/teacher/reviews', [TeacherReviewController::class, 'store']);
-            Route::get('/teacher/reviews/{review}', [TeacherReviewController::class, 'show']);
-            Route::put('/teacher/reviews/{review}', [TeacherReviewController::class, 'update']);
-            Route::delete('/teacher/reviews/{review}', [TeacherReviewController::class, 'destroy']);
-
-            // Academic years (VD change set) — top-level content containers.
-            // Bind by uuid; NOT behind the `academic-year` middleware (this is
-            // where years are managed, so no year context is needed).
-            Route::get('/teacher/academic-years', [AcademicYearController::class, 'index']);
-            Route::post('/teacher/academic-years', [AcademicYearController::class, 'store']);
-            Route::get('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'show']);
-            Route::put('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'update']);
-            Route::delete('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'destroy']);
-
-
-            // Standalone lessons + their parts (VD change set §7/§8, doc 13 Phase
-            // 3). Year-scoped: every request carries X-Academic-Year (academic-year
-            // middleware); {lesson}/{section} bind by id within the active year, so
-            // a lesson from another year (or tenant) 404s.
-            Route::middleware('academic-year')->group(function (): void {
-                Route::get('/teacher/lessons', [LessonController::class, 'index']);
-                Route::post('/teacher/lessons', [LessonController::class, 'store']);
-                Route::get('/teacher/lessons/{lesson}', [LessonController::class, 'show']);
-                Route::put('/teacher/lessons/{lesson}', [LessonController::class, 'update']);
-                Route::delete('/teacher/lessons/{lesson}', [LessonController::class, 'destroy']);
-
-                // Parts (reuse lesson_sections). `reorder` is registered before the
-                // `{section}` route so the literal path isn't captured as an id.
-                Route::get('/teacher/lessons/{lesson}/sections', [LessonSectionController::class, 'index']);
-                Route::post('/teacher/lessons/{lesson}/sections', [LessonSectionController::class, 'store']);
-                Route::put('/teacher/lessons/{lesson}/sections/reorder', [LessonSectionController::class, 'reorder']);
-                Route::put('/teacher/lessons/{lesson}/sections/{section}', [LessonSectionController::class, 'update']);
-                Route::delete('/teacher/lessons/{lesson}/sections/{section}', [LessonSectionController::class, 'destroy']);
-
-                // Recursive content packages (VD change set §8.4, doc 13 Phase 5).
-                // Base path `content-packages` — `/teacher/packages` is Billing's
-                // subscription plans (D13-1). {package}/{item} bind by id within
-                // the active year. `items/reorder` is registered before the
-                // `{item}` route so the literal path isn't captured as an id.
-                Route::get('/teacher/content-packages', [ContentPackageController::class, 'index']);
-                Route::post('/teacher/content-packages', [ContentPackageController::class, 'store']);
-                Route::get('/teacher/content-packages/{package}', [ContentPackageController::class, 'show']);
-                Route::put('/teacher/content-packages/{package}', [ContentPackageController::class, 'update']);
-                Route::delete('/teacher/content-packages/{package}', [ContentPackageController::class, 'destroy']);
-
-                Route::post('/teacher/content-packages/{package}/items', [ContentPackageController::class, 'storeItem']);
-                Route::put('/teacher/content-packages/{package}/items/reorder', [ContentPackageController::class, 'reorderItems']);
-                Route::delete('/teacher/content-packages/{package}/items/{item}', [ContentPackageController::class, 'destroyItem']);
-
-                // Package types (B27) — teacher-managed content-package categories,
-                // scoped to the active year. Bind by uuid within that year (a type
-                // from another year/tenant 404s). Packages link one via
-                // package_type_id on create/update.
-                Route::get('/teacher/package-types', [PackageTypeController::class, 'index']);
-                Route::post('/teacher/package-types', [PackageTypeController::class, 'store']);
-                Route::get('/teacher/package-types/{packageType:uuid}', [PackageTypeController::class, 'show']);
-                Route::put('/teacher/package-types/{packageType:uuid}', [PackageTypeController::class, 'update']);
-                Route::delete('/teacher/package-types/{packageType:uuid}', [PackageTypeController::class, 'destroy']);
+            Route::middleware('can:community.reviews.manage')->group(function (): void {
+                Route::get('/teacher/reviews', [TeacherReviewController::class, 'index']);
+                Route::post('/teacher/reviews', [TeacherReviewController::class, 'store']);
+                Route::get('/teacher/reviews/{review}', [TeacherReviewController::class, 'show']);
+                Route::put('/teacher/reviews/{review}', [TeacherReviewController::class, 'update']);
+                Route::delete('/teacher/reviews/{review}', [TeacherReviewController::class, 'destroy']);
             });
-
-            Route::get('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'index']);
-            Route::post('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'store']);
-            Route::delete('/teacher/lessons/{lesson}/attachments/{attachment:uuid}', [LessonAttachmentController::class, 'destroy']);
-
-            // Lesson time-box config (availability window + extension allowance).
-            Route::get('/teacher/lessons/{lesson}/availability', [LessonAvailabilityController::class, 'show']);
-            Route::put('/teacher/lessons/{lesson}/availability', [LessonAvailabilityController::class, 'update']);
-            // Open a lesson for one student for a custom number of hours (doc 11 R4).
-            Route::post('/teacher/lessons/{lesson}/reopen', [LessonAvailabilityController::class, 'reopen']);
-
-            // Student extension requests — staff review + grant/deny.
-            Route::get('/teacher/extension-requests', [ExtensionRequestController::class, 'index']);
-            Route::post('/teacher/extension-requests/{extensionRequest}/grant', [ExtensionRequestController::class, 'grant']);
-            Route::post('/teacher/extension-requests/{extensionRequest}/deny', [ExtensionRequestController::class, 'deny']);
-
-            // Coupons & promo codes (M21) — teacher-managed discounts at checkout.
-            Route::get('/teacher/coupons', [CouponController::class, 'index']);
-            Route::post('/teacher/coupons', [CouponController::class, 'store']);
-            Route::get('/teacher/coupons/{coupon:uuid}', [CouponController::class, 'show']);
-            Route::put('/teacher/coupons/{coupon:uuid}', [CouponController::class, 'update']);
-            Route::delete('/teacher/coupons/{coupon:uuid}', [CouponController::class, 'destroy']);
 
             // Q&A forum + moderation (M09) — aggregate of lesson questions across
             // the academy's courses. Teachers reply via /comments/{comment}/replies.
-            Route::get('/teacher/forum', [ForumController::class, 'index']);
-            Route::patch('/teacher/comments/{comment}', [ForumController::class, 'update']);
-            Route::delete('/teacher/comments/{comment}', [ForumController::class, 'destroy']);
-
-            // Self-hosted video (M04) — upload → transcode → status.
-            Route::post('/teacher/media/uploads', [TeacherMediaController::class, 'startUpload']);
-            Route::post('/teacher/media/uploads/{media:uuid}/complete', [TeacherMediaController::class, 'completeUpload']);
-            Route::get('/teacher/media/{media:uuid}', [TeacherMediaController::class, 'show']);
-            // Teacher self-preview → same encrypted-HLS flow (returns manifest_url + key_url).
-            Route::post('/teacher/media/{media:uuid}/preview', [TeacherMediaController::class, 'preview']);
-
-            // Remote (OVH Media Host) video lifecycle — active when MEDIA_PROVIDER=remote.
-            // Bound models are tenant-scoped, so cross-tenant ids resolve to 404.
-            Route::post('/teacher/remote-videos/uploads', [RemoteVideoController::class, 'startUpload']);
-            Route::post('/teacher/remote-videos/uploads/{session}/complete', [RemoteVideoController::class, 'complete']);
-            Route::get('/teacher/remote-videos/{media:uuid}', [RemoteVideoController::class, 'show']);
-            Route::post('/teacher/remote-videos/{media:uuid}/replace', [RemoteVideoController::class, 'replace']);
-            Route::post('/teacher/remote-videos/versions/{version}/retry', [RemoteVideoController::class, 'retry']);
-            Route::post('/teacher/remote-videos/versions/{version}/quarantine', [RemoteVideoController::class, 'quarantine']);
-            Route::post('/teacher/remote-videos/versions/{version}/restore', [RemoteVideoController::class, 'restore']);
-            Route::delete('/teacher/remote-videos/versions/{version}', [RemoteVideoController::class, 'purge']);
-
-            // Exams — teacher authoring + grading (M08). Managed from the sidebar
-            // (top-level). `type` drives the link + auto-fill; filter the index by
-            // ?type=&lesson_id= (`courses`/units retired — VD §7).
-            Route::get('/teacher/exams', [ExamController::class, 'index']);
-            Route::post('/teacher/exams', [ExamController::class, 'store']);
-            // Link-target dropdown for the exam editor (lesson picker).
-            Route::get('/teacher/exam-link/lessons', [ExamLinkController::class, 'lessons']);
-            Route::get('/teacher/exams/{exam:uuid}', [ExamController::class, 'show']);
-            Route::put('/teacher/exams/{exam:uuid}', [ExamController::class, 'update']);
-            Route::delete('/teacher/exams/{exam:uuid}', [ExamController::class, 'destroy']);
-
-            Route::get('/teacher/exams/{exam:uuid}/questions', [QuestionController::class, 'index']);
-            Route::post('/teacher/exams/{exam:uuid}/questions', [QuestionController::class, 'store']);
-            Route::put('/teacher/exams/{exam:uuid}/questions/{question}', [QuestionController::class, 'update']);
-            Route::delete('/teacher/exams/{exam:uuid}/questions/{question}', [QuestionController::class, 'destroy']);
-
-            // On-site bubble-sheet MCQ builder (doc 13 Phase 7) — read/replace the
-            // whole answer sheet at once. Year-scoped (X-Academic-Year) like the rest
-            // of lesson/part authoring; the answer key is teacher-only.
-            Route::middleware('academic-year')->group(function (): void {
-                Route::get('/teacher/exams/{exam:uuid}/bubble-sheet', [BubbleSheetController::class, 'show']);
-                Route::put('/teacher/exams/{exam:uuid}/bubble-sheet', [BubbleSheetController::class, 'update']);
+            // Reading the question feed and moderating it are separate powers.
+            Route::get('/teacher/forum', [ForumController::class, 'index'])->middleware('can:community.forum.view');
+            Route::middleware('can:community.forum.moderate')->group(function (): void {
+                Route::patch('/teacher/comments/{comment}', [ForumController::class, 'update']);
+                Route::delete('/teacher/comments/{comment}', [ForumController::class, 'destroy']);
             });
 
-            // Exam/quiz time-extension requests — staff review (doc 11 R6).
-            Route::get('/teacher/exam-extension-requests', [ExamExtensionRequestController::class, 'index']);
-            Route::post('/teacher/exam-extension-requests/{examExtension}/grant', [ExamExtensionRequestController::class, 'grant']);
-            Route::post('/teacher/exam-extension-requests/{examExtension}/deny', [ExamExtensionRequestController::class, 'deny']);
-
             // Gamification (M19) — badges + ranking toggle
-            Route::get('/teacher/badges', [BadgeController::class, 'index']);
-            Route::post('/teacher/badges', [BadgeController::class, 'store']);
-            Route::delete('/teacher/badges/{badge}', [BadgeController::class, 'destroy']);
-            Route::get('/teacher/gamification', [BadgeController::class, 'settings']);
-            Route::put('/teacher/gamification', [BadgeController::class, 'updateSettings']);
+            Route::middleware('can:community.badges.manage')->group(function (): void {
+                Route::get('/teacher/badges', [BadgeController::class, 'index']);
+                Route::post('/teacher/badges', [BadgeController::class, 'store']);
+                Route::delete('/teacher/badges/{badge}', [BadgeController::class, 'destroy']);
+            });
+
+            // The ranking/points switches affect what every student sees.
+            Route::middleware('can:community.gamification.manage')->group(function (): void {
+                Route::get('/teacher/gamification', [BadgeController::class, 'settings']);
+                Route::put('/teacher/gamification', [BadgeController::class, 'updateSettings']);
+            });
 
             // Teacher reports (M17, basic)
-            Route::get('/teacher/reports/sales', [TeacherReportsController::class, 'sales']);
-            Route::get('/teacher/reports/students', [TeacherReportsController::class, 'students']);
-            Route::get('/teacher/reports/overview', [TeacherReportsController::class, 'overview']);
+
 
             // Audit log (M18)
-            Route::get('/teacher/audit-logs', [AuditLogController::class, 'teacher']);
+
+
+            // Roles & permissions (M20) — the academy's own copies of the platform
+            // templates, plus whatever the teacher created. Read side for now;
+            // authoring moves in behind `can:team.roles.manage`.
 
             // Assistants + granular permissions (M18) — teacher-only management.
-            Route::get('/teacher/permissions', [AssistantController::class, 'catalog']);
-            Route::get('/teacher/assistants', [AssistantController::class, 'index']);
-            Route::post('/teacher/assistants', [AssistantController::class, 'store']);
-            Route::get('/teacher/assistants/{assistant:uuid}', [AssistantController::class, 'show']);
-            Route::patch('/teacher/assistants/{assistant:uuid}', [AssistantController::class, 'update']);
-            Route::delete('/teacher/assistants/{assistant:uuid}', [AssistantController::class, 'destroy']);
 
             // Notification engine (doc 10 §9.2) — tenant override surface for
             // `ready` system notifications. First edit materializes a copy-on-write
             // tenant template; teachers can't author types/templates from scratch.
-            Route::get('/teacher/notifications', [TeacherNotificationController::class, 'index']);
-            Route::get('/teacher/notifications/{type:key}', [TeacherNotificationController::class, 'show']);
-            Route::put('/teacher/notifications/{type:key}/channels', [TeacherNotificationController::class, 'overrideChannel']);
-            Route::put('/teacher/notifications/{type:key}/channels/{channel}/translations', [TeacherNotificationController::class, 'upsertTranslation']);
-            Route::delete('/teacher/notifications/{type:key}/channels/{channel}', [TeacherNotificationController::class, 'reset']);
+            Route::middleware('can:settings.notifications.manage')->group(function (): void {
+                Route::get('/teacher/notifications', [TeacherNotificationController::class, 'index']);
+                Route::get('/teacher/notifications/{type:key}', [TeacherNotificationController::class, 'show']);
+                Route::put('/teacher/notifications/{type:key}/channels', [TeacherNotificationController::class, 'overrideChannel']);
+                Route::put('/teacher/notifications/{type:key}/channels/{channel}/translations', [TeacherNotificationController::class, 'upsertTranslation']);
+                Route::delete('/teacher/notifications/{type:key}/channels/{channel}', [TeacherNotificationController::class, 'reset']);
+            });
         });
 
         // Shared teacher + assistant surface (M18): an assistant reaches these
         // only for the permissions the teacher granted; a teacher passes every
         // permission check implicitly.
-        Route::middleware('role:teacher,assistant')->group(function (): void {
+        // Authority on this surface comes from PERMISSIONS, not from the kind of
+        // membership (M20). There is deliberately no `role:teacher,assistant` gate
+        // here: a student holding a granted key would otherwise be refused by a
+        // check that has nothing to do with what they may do — which is exactly
+        // the implicit authority this milestone removed. Every route below carries
+        // its own `can:`, and a member with no keys reaches none of them.
+        Route::group([], function (): void {
 
-            // Centers (M12) — branches, activation codes, attendance, offline sync
-            Route::middleware('permission:centers')->group(function (): void {
-                Route::get('/teacher/centers', [CenterController::class, 'index']);
-                Route::post('/teacher/centers', [CenterController::class, 'store']);
-                Route::put('/teacher/centers/{center:uuid}', [CenterController::class, 'update']);
-                Route::delete('/teacher/centers/{center:uuid}', [CenterController::class, 'destroy']);
-                Route::post('/teacher/centers/sync', CenterSyncController::class);
-                Route::get('/teacher/centers/{center:uuid}/attendance', [AttendanceController::class, 'index']);
-                Route::post('/teacher/centers/{center:uuid}/attendance', [AttendanceController::class, 'store']);
-                Route::get('/teacher/codes', [ActivationCodeController::class, 'index']);
-                Route::post('/teacher/codes/batch', [ActivationCodeController::class, 'batch']);
-                Route::post('/teacher/codes/{code:uuid}/disable', [ActivationCodeController::class, 'disable']);
+            // ── Team (M20) ───────────────────────────────────────────────
+            // The owner may delegate team management, but the delegation cannot
+            // propagate: TeamAuthority refuses to let anyone but the owner grant a
+            // `team.*` key, or grant a permission they do not hold themselves. So
+            // these routes are reachable by a delegate, and still not a ladder.
+            Route::middleware('can:team.view')->group(function (): void {
+                Route::get('/teacher/roles', [RoleController::class, 'index']);
+                Route::get('/teacher/permissions', [RoleController::class, 'permissions']);
+                Route::get('/teacher/assistants', [AssistantController::class, 'index']);
+                Route::get('/teacher/assistants/{assistant:uuid}', [AssistantController::class, 'show']);
+            });
 
-                // Center ID-codes (B20) — sequential, grade-encoded student-identity
-                // codes minted per center; a sibling of /codes, NOT the recharge codes.
-                // Year-scoped (X-Academic-Year): the panel's year selector filters
-                // the list, and a batch is stamped with the active academic year.
-                Route::middleware('academic-year')->group(function (): void {
-                    Route::get('/teacher/center-id-codes', [CenterIdCodeController::class, 'index']);
-                    Route::post('/teacher/center-id-codes/batch', [CenterIdCodeController::class, 'batch']);
+            // Authoring roles. System roles are refused by the writer, not just by
+            // the controller, so the lock holds for every caller.
+            Route::middleware('can:team.roles.manage')->group(function (): void {
+                Route::post('/teacher/roles', [RoleController::class, 'store']);
+                Route::put('/teacher/roles/{uuid}', [RoleController::class, 'update']);
+                Route::delete('/teacher/roles/{uuid}', [RoleController::class, 'destroy']);
+            });
+
+            Route::middleware('can:team.assistants.manage')->group(function (): void {
+                Route::post('/teacher/assistants', [AssistantController::class, 'store']);
+                Route::patch('/teacher/assistants/{assistant:uuid}', [AssistantController::class, 'update']);
+                Route::delete('/teacher/assistants/{assistant:uuid}', [AssistantController::class, 'destroy']);
+            });
+
+            // ── Content (M20) ────────────────────────────────────────────
+            // Gated per ACTION with `can:`, not per screen: an assistant may be
+            // able to edit a lesson without being able to delete one. The owner
+            // passes because the owner role carries every key, not by exception.
+            //
+            // `content.view` is the read floor for the domain; each write carries
+            // its own key on top of it.
+
+            // Academic years — WRITE side. Bind by uuid; NOT behind the
+            // `academic-year` middleware (this is where years are managed).
+            Route::middleware('can:content.academic_years.manage')->group(function (): void {
+                Route::post('/teacher/academic-years', [AcademicYearController::class, 'store']);
+                Route::put('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'update']);
+                Route::delete('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'destroy']);
+            });
+
+            // Standalone lessons + their parts. Year-scoped: every request carries
+            // X-Academic-Year; {lesson}/{section} bind by id within the active
+            // year, so a lesson from another year (or tenant) 404s.
+            Route::middleware('academic-year')->group(function (): void {
+                Route::middleware('can:content.view')->group(function (): void {
+                    Route::get('/teacher/lessons', [LessonController::class, 'index']);
+                    Route::get('/teacher/lessons/{lesson}', [LessonController::class, 'show']);
+                    Route::get('/teacher/lessons/{lesson}/sections', [LessonSectionController::class, 'index']);
+                    Route::get('/teacher/content-packages', [ContentPackageController::class, 'index']);
+                    Route::get('/teacher/content-packages/{package}', [ContentPackageController::class, 'show']);
+                    Route::get('/teacher/package-types', [PackageTypeController::class, 'index']);
+                    Route::get('/teacher/package-types/{packageType:uuid}', [PackageTypeController::class, 'show']);
                 });
 
-                // Center sessions (a session bundles 0+ lessons) + session-based
-                // attendance: a check-in opens all the session's lessons online.
-                // Year-scoped: sessions/lessons/enrollments live under a year.
-                Route::middleware('academic-year')->group(function (): void {
+                Route::post('/teacher/lessons', [LessonController::class, 'store'])->middleware('can:content.lessons.create');
+                Route::put('/teacher/lessons/{lesson}', [LessonController::class, 'update'])->middleware('can:content.lessons.update');
+                Route::delete('/teacher/lessons/{lesson}', [LessonController::class, 'destroy'])->middleware('can:content.lessons.delete');
+
+                // Parts (reuse lesson_sections). `reorder` is registered before the
+                // `{section}` route so the literal path isn't captured as an id.
+                Route::middleware('can:content.lesson_sections.manage')->group(function (): void {
+                    Route::post('/teacher/lessons/{lesson}/sections', [LessonSectionController::class, 'store']);
+                    Route::put('/teacher/lessons/{lesson}/sections/reorder', [LessonSectionController::class, 'reorder']);
+                    Route::put('/teacher/lessons/{lesson}/sections/{section}', [LessonSectionController::class, 'update']);
+                    Route::delete('/teacher/lessons/{lesson}/sections/{section}', [LessonSectionController::class, 'destroy']);
+                });
+
+                // Recursive content packages. Base path `content-packages` —
+                // `/teacher/packages` is Billing's subscription plans (D13-1).
+                Route::middleware('can:content.packages.manage')->group(function (): void {
+                    Route::post('/teacher/content-packages', [ContentPackageController::class, 'store']);
+                    Route::put('/teacher/content-packages/{package}', [ContentPackageController::class, 'update']);
+                    Route::delete('/teacher/content-packages/{package}', [ContentPackageController::class, 'destroy']);
+                    Route::post('/teacher/content-packages/{package}/items', [ContentPackageController::class, 'storeItem']);
+                    Route::put('/teacher/content-packages/{package}/items/reorder', [ContentPackageController::class, 'reorderItems']);
+                    Route::delete('/teacher/content-packages/{package}/items/{item}', [ContentPackageController::class, 'destroyItem']);
+                });
+
+                // Package types (B27) — content-package categories, scoped to the
+                // active year (a type from another year/tenant 404s).
+                Route::middleware('can:content.package_types.manage')->group(function (): void {
+                    Route::post('/teacher/package-types', [PackageTypeController::class, 'store']);
+                    Route::put('/teacher/package-types/{packageType:uuid}', [PackageTypeController::class, 'update']);
+                    Route::delete('/teacher/package-types/{packageType:uuid}', [PackageTypeController::class, 'destroy']);
+                });
+            });
+
+            Route::get('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'index'])->middleware('can:content.view');
+            Route::middleware('can:content.lesson_attachments.manage')->group(function (): void {
+                Route::post('/teacher/lessons/{lesson}/attachments', [LessonAttachmentController::class, 'store']);
+                Route::delete('/teacher/lessons/{lesson}/attachments/{attachment:uuid}', [LessonAttachmentController::class, 'destroy']);
+            });
+
+            // Lesson time-box config (availability window + extension allowance).
+            Route::get('/teacher/lessons/{lesson}/availability', [LessonAvailabilityController::class, 'show'])->middleware('can:content.view');
+            Route::put('/teacher/lessons/{lesson}/availability', [LessonAvailabilityController::class, 'update'])->middleware('can:content.lesson_availability.manage');
+            // Open a lesson for one student for a custom number of hours (doc 11 R4).
+            // Its own key: reopening touches one student's access, not the lesson.
+            Route::post('/teacher/lessons/{lesson}/reopen', [LessonAvailabilityController::class, 'reopen'])->middleware('can:content.lessons.reopen');
+
+            // Student extension requests — staff review + grant/deny.
+            Route::middleware('can:content.extension_requests.review')->group(function (): void {
+                Route::get('/teacher/extension-requests', [ExtensionRequestController::class, 'index']);
+                Route::post('/teacher/extension-requests/{extensionRequest}/grant', [ExtensionRequestController::class, 'grant']);
+                Route::post('/teacher/extension-requests/{extensionRequest}/deny', [ExtensionRequestController::class, 'deny']);
+            });
+
+            // Self-hosted video (M04) — upload, transcode, status.
+            Route::post('/teacher/media/uploads', [TeacherMediaController::class, 'startUpload'])->middleware('can:content.media.upload');
+            Route::post('/teacher/media/uploads/{media:uuid}/complete', [TeacherMediaController::class, 'completeUpload'])->middleware('can:content.media.upload');
+            Route::get('/teacher/media/{media:uuid}', [TeacherMediaController::class, 'show'])->middleware('can:content.view');
+            // Teacher self-preview: same encrypted-HLS flow (manifest_url + key_url).
+            Route::post('/teacher/media/{media:uuid}/preview', [TeacherMediaController::class, 'preview'])->middleware('can:content.view');
+
+            // Remote (OVH Media Host) video lifecycle — active when MEDIA_PROVIDER=remote.
+            // Bound models are tenant-scoped, so cross-tenant ids resolve to 404.
+            Route::post('/teacher/remote-videos/uploads', [RemoteVideoController::class, 'startUpload'])->middleware('can:content.media.upload');
+            Route::post('/teacher/remote-videos/uploads/{session}/complete', [RemoteVideoController::class, 'complete'])->middleware('can:content.media.upload');
+            Route::get('/teacher/remote-videos/{media:uuid}', [RemoteVideoController::class, 'show'])->middleware('can:content.view');
+            Route::middleware('can:content.media.manage')->group(function (): void {
+                Route::post('/teacher/remote-videos/{media:uuid}/replace', [RemoteVideoController::class, 'replace']);
+                Route::post('/teacher/remote-videos/versions/{version}/retry', [RemoteVideoController::class, 'retry']);
+                Route::post('/teacher/remote-videos/versions/{version}/quarantine', [RemoteVideoController::class, 'quarantine']);
+                Route::post('/teacher/remote-videos/versions/{version}/restore', [RemoteVideoController::class, 'restore']);
+                Route::delete('/teacher/remote-videos/versions/{version}', [RemoteVideoController::class, 'purge']);
+            });
+
+            // Academic years — READ side. The one route on this surface gated by
+            // membership kind rather than a permission: the year selector is
+            // request CONTEXT that every panel screen needs (year-scoped routes
+            // 422 without X-Academic-Year), so a staff member who cannot list the
+            // years cannot use any screen at all. What it exposes is only the
+            // grade names the academy already publishes on its landing page.
+            Route::middleware('role:teacher,assistant')->group(function (): void {
+                Route::get('/teacher/academic-years', [AcademicYearController::class, 'index']);
+                Route::get('/teacher/academic-years/{academicYear:uuid}', [AcademicYearController::class, 'show']);
+            });
+
+            // ── Finance (M20) ────────────────────────────────────────────
+            // Coupons & promo codes (M21) — discounts applied at checkout, so
+            // authoring one is a money power, kept apart from reading reports.
+            Route::middleware('can:finance.coupons.manage')->group(function (): void {
+                Route::get('/teacher/coupons', [CouponController::class, 'index']);
+                Route::post('/teacher/coupons', [CouponController::class, 'store']);
+                Route::get('/teacher/coupons/{coupon:uuid}', [CouponController::class, 'show']);
+                Route::put('/teacher/coupons/{coupon:uuid}', [CouponController::class, 'update']);
+                Route::delete('/teacher/coupons/{coupon:uuid}', [CouponController::class, 'destroy']);
+            });
+
+            // The academy's own plan + the plans it could switch to. Read-only:
+            // changing a plan is admin-driven (docs/api/billing.md).
+            Route::middleware('can:finance.subscription.view')->group(function (): void {
+                Route::get('/teacher/subscription', [SubscriptionController::class, 'show']);
+                Route::get('/teacher/packages', [TeacherPackageController::class, 'index']);
+            });
+
+            // ── Reports (M20) ────────────────────────────────────────────
+            // Revenue and roster numbers are the academy's business figures; the
+            // activity log is who-did-what. Different keys because they answer to
+            // different jobs — a bookkeeper is not an auditor.
+            Route::middleware('can:reports.view')->group(function (): void {
+                Route::get('/teacher/reports/students', [TeacherReportsController::class, 'students']);
+                Route::get('/teacher/reports/overview', [TeacherReportsController::class, 'overview']);
+            });
+
+            // The sales ledger names the student and the amount on every line, so
+            // it is a money read rather than a headline figure: its own key.
+            Route::middleware('can:finance.sales.view')->group(function (): void {
+                // The dashboard's revenue widget (headline figures only).
+                Route::get('/teacher/reports/sales', [TeacherReportsController::class, 'sales']);
+
+                // The ledger proper: one row per transaction, filters, totals for
+                // the active filter, and the same slice as a spreadsheet. Wallet
+                // top-ups are reported by /topups and never inside the sales total.
+                Route::get('/teacher/sales', [SalesLedgerController::class, 'index']);
+                Route::get('/teacher/sales/filters', [SalesLedgerController::class, 'filters']);
+                Route::get('/teacher/sales/topups', [SalesLedgerController::class, 'topups']);
+                Route::get('/teacher/sales/export', [SalesLedgerController::class, 'export']);
+                Route::get('/teacher/orders/{order:uuid}/refunds', [RefundController::class, 'index']);
+            });
+
+            // Moving money back — and taking back the access it bought — is a
+            // heavier power than reading the books, so it answers to its own key.
+            Route::post('/teacher/orders/{order:uuid}/refunds', [RefundController::class, 'store'])
+                ->middleware('can:finance.refunds.manage');
+
+            Route::get('/teacher/audit-logs', [AuditLogController::class, 'teacher'])->middleware('can:reports.audit_log.view');
+
+            // ── Centers (M20) ────────────────────────────────────────────
+            // Branches, attendance, codes. The split that matters here is between
+            // running the door and running the branch: a reception desk records
+            // check-ins all day and must not be able to delete a center or mint
+            // recharge codes.
+            Route::middleware('can:centers.view')->group(function (): void {
+                Route::get('/teacher/centers', [CenterController::class, 'index']);
+            });
+
+            Route::post('/teacher/centers', [CenterController::class, 'store'])->middleware('can:centers.create');
+            Route::put('/teacher/centers/{center:uuid}', [CenterController::class, 'update'])->middleware('can:centers.update');
+            Route::delete('/teacher/centers/{center:uuid}', [CenterController::class, 'destroy'])->middleware('can:centers.delete');
+            // Offline sync pushes a batch of edits made on a branch device.
+            Route::post('/teacher/centers/sync', CenterSyncController::class)->middleware('can:centers.update');
+
+            Route::get('/teacher/centers/{center:uuid}/attendance', [AttendanceController::class, 'index'])->middleware('can:centers.attendance.view');
+            Route::post('/teacher/centers/{center:uuid}/attendance', [AttendanceController::class, 'store'])->middleware('can:centers.attendance.record');
+
+            // Activation/recharge codes — a batch is worth real money, so issuing
+            // is its own key, apart from reading the list or disabling one.
+            Route::get('/teacher/codes', [ActivationCodeController::class, 'index'])->middleware('can:centers.activation_codes.view');
+            Route::post('/teacher/codes/batch', [ActivationCodeController::class, 'batch'])->middleware('can:centers.activation_codes.issue');
+            Route::post('/teacher/codes/{code:uuid}/disable', [ActivationCodeController::class, 'disable'])->middleware('can:centers.activation_codes.disable');
+
+            // Center ID-codes (B20) — sequential, grade-encoded student-identity
+            // codes minted per center; a sibling of /codes, NOT the recharge codes.
+            // Year-scoped (X-Academic-Year): the panel's year selector filters the
+            // list, and a batch is stamped with the active academic year.
+            Route::middleware(['academic-year', 'can:centers.id_codes.manage'])->group(function (): void {
+                Route::get('/teacher/center-id-codes', [CenterIdCodeController::class, 'index']);
+                Route::post('/teacher/center-id-codes/batch', [CenterIdCodeController::class, 'batch']);
+            });
+
+            // Center sessions (a session bundles 0+ lessons) + session-based
+            // attendance: a check-in opens all the session's lessons online.
+            // Year-scoped: sessions/lessons/enrollments live under a year.
+            Route::middleware('academic-year')->group(function (): void {
+                Route::middleware('can:centers.sessions.manage')->group(function (): void {
                     Route::get('/teacher/center-sessions', [CenterSessionController::class, 'index']);
                     Route::post('/teacher/center-sessions', [CenterSessionController::class, 'store']);
                     Route::put('/teacher/center-sessions/{session}', [CenterSessionController::class, 'update']);
                     Route::delete('/teacher/center-sessions/{session}', [CenterSessionController::class, 'destroy']);
+                });
 
+                // The check-in desk: reading the roster is the view key, marking a
+                // student present is the record key, and undoing a check-in — which
+                // closes the lessons it opened — is a third.
+                Route::middleware('can:centers.attendance.view')->group(function (): void {
                     Route::get('/teacher/attendance/active', [SessionAttendanceController::class, 'active']);
                     Route::get('/teacher/attendance/roster', [SessionAttendanceController::class, 'roster']);
-                    Route::post('/teacher/attendance/checkin', [SessionAttendanceController::class, 'checkin']);
-                    Route::delete('/teacher/attendance/active/{record}', [SessionAttendanceController::class, 'revoke']);
                 });
+                Route::post('/teacher/attendance/checkin', [SessionAttendanceController::class, 'checkin'])->middleware('can:centers.attendance.record');
+                Route::delete('/teacher/attendance/active/{record}', [SessionAttendanceController::class, 'revoke'])->middleware('can:centers.attendance.revoke');
+            });
 
-                // Center paper-exam grade entry (VD R12, doc 13 Phase 15). A grade
-                // belongs to an academic year, so these are year-scoped
-                // (X-Academic-Year); {grade} binds by uuid within the active year.
-                Route::middleware('academic-year')->group(function (): void {
-                    Route::get('/teacher/center-exam-grades', [CenterExamGradeController::class, 'index']);
-                    Route::post('/teacher/center-exam-grades', [CenterExamGradeController::class, 'store']);
-                    Route::put('/teacher/center-exam-grades/{grade:uuid}', [CenterExamGradeController::class, 'update']);
-                    Route::delete('/teacher/center-exam-grades/{grade:uuid}', [CenterExamGradeController::class, 'destroy']);
+            // Center paper-exam grade entry (VD R12, doc 13 Phase 15). A grade
+            // belongs to an academic year, so these are year-scoped; {grade} binds
+            // by uuid within the active year.
+            Route::middleware(['academic-year', 'can:centers.exam_grades.manage'])->group(function (): void {
+                Route::get('/teacher/center-exam-grades', [CenterExamGradeController::class, 'index']);
+                Route::post('/teacher/center-exam-grades', [CenterExamGradeController::class, 'store']);
+                Route::put('/teacher/center-exam-grades/{grade:uuid}', [CenterExamGradeController::class, 'update']);
+                Route::delete('/teacher/center-exam-grades/{grade:uuid}', [CenterExamGradeController::class, 'destroy']);
+            });
+
+            // ── Exams (M20) ──────────────────────────────────────────────
+            // Authoring and grading are different jobs and now different keys: a
+            // grader reads submissions and scores them without being able to
+            // rewrite the paper, and an author writes the paper without seeing
+            // who failed it. `exams.view` is the read floor.
+            Route::middleware('can:exams.view')->group(function (): void {
+                // `type` drives the link + auto-fill; filter the index by
+                // ?type=&lesson_id= (`courses`/units retired — VD §7).
+                Route::get('/teacher/exams', [ExamController::class, 'index']);
+                Route::get('/teacher/exams/{exam:uuid}', [ExamController::class, 'show']);
+                Route::get('/teacher/exams/{exam:uuid}/questions', [QuestionController::class, 'index']);
+                // Link-target dropdown for the exam editor (lesson picker).
+                Route::get('/teacher/exam-link/lessons', [ExamLinkController::class, 'lessons']);
+            });
+
+            Route::post('/teacher/exams', [ExamController::class, 'store'])->middleware('can:exams.create');
+            Route::put('/teacher/exams/{exam:uuid}', [ExamController::class, 'update'])->middleware('can:exams.update');
+            Route::delete('/teacher/exams/{exam:uuid}', [ExamController::class, 'destroy'])->middleware('can:exams.delete');
+
+            Route::middleware('can:exams.questions.manage')->group(function (): void {
+                Route::post('/teacher/exams/{exam:uuid}/questions', [QuestionController::class, 'store']);
+                Route::put('/teacher/exams/{exam:uuid}/questions/{question}', [QuestionController::class, 'update']);
+                Route::delete('/teacher/exams/{exam:uuid}/questions/{question}', [QuestionController::class, 'destroy']);
+            });
+
+            // On-site bubble-sheet MCQ builder (doc 13 Phase 7) — read/replace the
+            // whole answer sheet at once. Year-scoped, like lesson/part authoring.
+            // The sheet IS the answer key, so reading it needs the same key as
+            // writing it — `exams.view` is not enough.
+            Route::middleware('academic-year')->group(function (): void {
+                Route::middleware('can:exams.bubble_sheet.manage')->group(function (): void {
+                    Route::get('/teacher/exams/{exam:uuid}/bubble-sheet', [BubbleSheetController::class, 'show']);
+                    Route::put('/teacher/exams/{exam:uuid}/bubble-sheet', [BubbleSheetController::class, 'update']);
                 });
-            }); // permission:centers
+            });
 
-            // Homework grading (doc 11 R3.4) — teacher, or an assistant granted the
-            // `homework` permission, reviews/corrects student assignment submissions.
-            Route::middleware('permission:homework')->group(function (): void {
+            // Exam/quiz time-extension requests — staff review (doc 11 R6).
+            Route::middleware('can:exams.extensions.review')->group(function (): void {
+                Route::get('/teacher/exam-extension-requests', [ExamExtensionRequestController::class, 'index']);
+                Route::post('/teacher/exam-extension-requests/{examExtension}/grant', [ExamExtensionRequestController::class, 'grant']);
+                Route::post('/teacher/exam-extension-requests/{examExtension}/deny', [ExamExtensionRequestController::class, 'deny']);
+            });
+
+            // Grading (doc 11 R3.4) — reviewing what students submitted, and
+            // scoring it. A submission carries the student's own work, so reading
+            // one is its own key, separate from seeing the exam.
+            Route::middleware('can:exams.submissions.view')->group(function (): void {
                 Route::get('/teacher/exams/{exam:uuid}/submissions', [ExamGradingController::class, 'submissions']);
                 Route::get('/teacher/exams/{exam:uuid}/attempts/{attempt}/files/{question}', [ExamGradingController::class, 'downloadFile']);
-                Route::post('/teacher/exams/{exam:uuid}/attempts/{attempt}/grade', [ExamGradingController::class, 'grade']);
+            });
 
-                // Manual pass-override on a must_pass part (VD change set §7 LP-D3).
-                // Year-scoped like the rest of lesson authoring.
-                Route::middleware('academic-year')->group(function (): void {
-                    Route::post('/teacher/lessons/{lesson}/sections/{section}/pass-override', [LessonSectionController::class, 'storePassOverride']);
-                    // {user} is resolved independently of {section} — the controller
-                    // scopes the delete by (section, user). Without this, Laravel
-                    // auto-scopes the child and tries LessonSection::users() → 500.
-                    Route::delete('/teacher/lessons/{lesson}/sections/{section}/pass-override/{user:uuid}', [LessonSectionController::class, 'destroyPassOverride'])
-                        ->withoutScopedBindings();
-                });
-            }); // permission:homework
+            Route::post('/teacher/exams/{exam:uuid}/attempts/{attempt}/grade', [ExamGradingController::class, 'grade'])->middleware('can:exams.grade');
 
-            // Students (M17) — teacher, or an assistant granted the `students` permission.
-            Route::middleware('permission:students')->group(function (): void {
+            // Manual pass-override on a must_pass part (VD change set §7 LP-D3).
+            // Year-scoped like the rest of lesson authoring.
+            Route::middleware(['academic-year', 'can:exams.pass_override'])->group(function (): void {
+                Route::post('/teacher/lessons/{lesson}/sections/{section}/pass-override', [LessonSectionController::class, 'storePassOverride']);
+                // {user} is resolved independently of {section} — the controller
+                // scopes the delete by (section, user). Without this, Laravel
+                // auto-scopes the child and tries LessonSection::users() → 500.
+                Route::delete('/teacher/lessons/{lesson}/sections/{section}/pass-override/{user:uuid}', [LessonSectionController::class, 'destroyPassOverride'])
+                    ->withoutScopedBindings();
+            });
+
+            // ── Students (M20) ───────────────────────────────────────────
+            // One key per action. Reading a roster, moving money in a wallet and
+            // deleting a student are different powers and are granted separately;
+            // `students.view` is the read floor the rest sit on.
+            Route::middleware('can:students.view')->group(function (): void {
                 Route::get('/teacher/students', [StudentController::class, 'index']);
-                Route::post('/teacher/students', [StudentController::class, 'store']);
-                // Bulk student-history import (.xlsx/.csv) — matched by phone/email.
-                Route::post('/teacher/students/import', StudentImportController::class);
                 Route::get('/teacher/students/{student:uuid}', [StudentController::class, 'show']);
-                Route::patch('/teacher/students/{student:uuid}', [StudentController::class, 'update']);
-                Route::delete('/teacher/students/{student:uuid}', [StudentController::class, 'destroy']);
-                Route::post('/teacher/students/{student:uuid}/reset-password', [StudentController::class, 'resetPassword']);
-                Route::get('/teacher/students/{student:uuid}/export', [StudentController::class, 'export']);
-
-                // Manual content-access overrides — grant/revoke a student direct
-                // access to a locked lesson/section/unit, bypassing dependencies.
+                Route::get('/teacher/students/{student:uuid}/enrollments', [StudentEnrollmentController::class, 'index']);
                 Route::get('/teacher/students/{student:uuid}/content-overrides', [StudentContentOverrideController::class, 'index']);
+                Route::get('/teacher/students/{student:uuid}/parents', [StudentParentController::class, 'index']);
+            });
+
+            Route::post('/teacher/students', [StudentController::class, 'store'])->middleware('can:students.create');
+            Route::patch('/teacher/students/{student:uuid}', [StudentController::class, 'update'])->middleware('can:students.update');
+            Route::delete('/teacher/students/{student:uuid}', [StudentController::class, 'destroy'])->middleware('can:students.delete');
+
+            // Bulk student-history import (.xlsx/.csv) — matched by phone/email.
+            // Its own key: an import writes hundreds of rows in one call.
+            Route::post('/teacher/students/import', StudentImportController::class)->middleware('can:students.import');
+            Route::get('/teacher/students/{student:uuid}/export', [StudentController::class, 'export'])->middleware('can:students.export');
+            Route::post('/teacher/students/{student:uuid}/reset-password', [StudentController::class, 'resetPassword'])->middleware('can:students.reset_password');
+
+            // Manual content-access overrides — grant/revoke a student direct
+            // access to a locked lesson/section/unit, bypassing dependencies.
+            Route::middleware('can:students.content_overrides.manage')->group(function (): void {
                 Route::post('/teacher/students/{student:uuid}/content-overrides', [StudentContentOverrideController::class, 'store']);
                 Route::delete('/teacher/students/{student:uuid}/content-overrides/{override}', [StudentContentOverrideController::class, 'destroy']);
+            });
 
-                // Access (enrollments)
-                Route::get('/teacher/students/{student:uuid}/enrollments', [StudentEnrollmentController::class, 'index']);
+            // Access (enrollments)
+            Route::middleware('can:students.enrollments.manage')->group(function (): void {
                 Route::post('/teacher/students/{student:uuid}/enrollments', [StudentEnrollmentController::class, 'store']);
                 Route::delete('/teacher/students/{student:uuid}/enrollments/{enrollment}', [StudentEnrollmentController::class, 'destroy']);
+            });
 
-                // Money
+            // Money — reading a balance and changing one are deliberately split.
+            Route::middleware('can:students.wallet.view')->group(function (): void {
                 Route::get('/teacher/students/{student:uuid}/wallet', [StudentFinanceController::class, 'wallet']);
                 Route::get('/teacher/students/{student:uuid}/wallet/ledger', [StudentFinanceController::class, 'ledger']);
+                Route::get('/teacher/students/{student:uuid}/orders', [StudentFinanceController::class, 'orders']);
+            });
+            Route::middleware('can:students.wallet.adjust')->group(function (): void {
                 Route::post('/teacher/students/{student:uuid}/wallet/adjust', [StudentFinanceController::class, 'adjust']);
                 Route::post('/teacher/students/{student:uuid}/wallet/set', [StudentFinanceController::class, 'setBalance']);
-                Route::get('/teacher/students/{student:uuid}/orders', [StudentFinanceController::class, 'orders']);
+            });
 
-                // Activity
+            // Activity
+            Route::middleware('can:students.activity.view')->group(function (): void {
                 Route::get('/teacher/students/{student:uuid}/progress', [StudentActivityController::class, 'progress']);
                 Route::get('/teacher/students/{student:uuid}/activity', [StudentActivityController::class, 'history']);
-                Route::post('/teacher/students/{student:uuid}/notify', [StudentActivityController::class, 'notify']);
+            });
+            Route::post('/teacher/students/{student:uuid}/notify', [StudentActivityController::class, 'notify'])->middleware('can:students.notify');
 
-                // Parents (M13)
-                Route::get('/teacher/students/{student:uuid}/parents', [StudentParentController::class, 'index']);
+            // Parents (M13). `parent` is resolved independently of `student` — the
+            // controller already scopes by (student, parent). Without this, Laravel
+            // auto-enables scoped binding for the custom-key child and tries to
+            // resolve it via a nonexistent User::parents() relationship (500).
+            Route::middleware('can:students.parents.manage')->group(function (): void {
                 Route::post('/teacher/students/{student:uuid}/parents', [StudentParentController::class, 'store']);
-                // `parent` is resolved independently of `student` — the controller already
-                // scopes the ParentLink delete by (student, parent). Without this, Laravel
-                // auto-enables scoped binding for the custom-key child and tries to resolve
-                // it via a nonexistent User::parents() relationship → 500. (Bug fix.)
                 Route::delete('/teacher/students/{student:uuid}/parents/{parent:uuid}', [StudentParentController::class, 'destroy'])
                     ->withoutScopedBindings();
-                // Re-issue a linked parent's password. `parent` resolved independently
-                // of `student` (same reason as destroy above); controller scopes by link.
+                // Re-issue a linked parent's password.
                 Route::post('/teacher/students/{student:uuid}/parents/{parent:uuid}/reset-password', [StudentParentController::class, 'resetPassword'])
                     ->withoutScopedBindings();
-                // Passwordless magic link (VD R11): issue (rotates) / revoke. `parent`
-                // resolved independently of `student` (same reason as reset-password).
+                // Passwordless magic link (VD R11): issue (rotates) / revoke.
                 Route::post('/teacher/students/{student:uuid}/parents/{parent:uuid}/magic-link', [StudentParentController::class, 'magicLink'])
                     ->withoutScopedBindings();
                 Route::delete('/teacher/students/{student:uuid}/parents/{parent:uuid}/magic-link', [StudentParentController::class, 'revokeMagicLink'])
                     ->withoutScopedBindings();
-            }); // permission:students
+            });
 
             // Manual payment-receipt verification (VD R9/R10) — teacher, or an
             // assistant granted `finance`, reviews manual wallet top-ups. Tenant-level,
             // NOT year-scoped (no X-Academic-Year).
-            Route::middleware('permission:finance')->group(function (): void {
+            // Reading a receipt and deciding it are the same job (someone who can
+            // see the proof of payment is the one who accepts or refuses it), so
+            // all four share `finance.receipts.review`.
+            Route::middleware('can:finance.receipts.review')->group(function (): void {
                 Route::get('/teacher/payment-receipts', [PaymentReceiptController::class, 'index']);
                 Route::get('/teacher/payment-receipts/{receipt:uuid}', [PaymentReceiptController::class, 'show']);
                 Route::post('/teacher/payment-receipts/{receipt:uuid}/approve', [PaymentReceiptController::class, 'approve']);
                 Route::post('/teacher/payment-receipts/{receipt:uuid}/reject', [PaymentReceiptController::class, 'reject']);
-            }); // permission:finance
+            });
 
             // Support tickets — staff side (M09, B25 / VD Item 11). Teacher, or an
             // assistant granted `support`, lists every ticket (filter ?status=
             // &priority=), reads a thread, replies (notifies the student), and
             // moves the status. {ticket} binds by uuid, tenant-scoped (no owner
             // check — staff see the whole tenant). Student side: /support/tickets.
-            Route::middleware('permission:support')->group(function (): void {
+            Route::middleware('can:support.view')->group(function (): void {
                 Route::get('/teacher/support/tickets', [TeacherSupportTicketController::class, 'index']);
                 Route::get('/teacher/support/tickets/{ticket}', [TeacherSupportTicketController::class, 'show']);
-                Route::post('/teacher/support/tickets/{ticket}/replies', [TeacherSupportTicketController::class, 'reply']);
-                Route::patch('/teacher/support/tickets/{ticket}/status', [TeacherSupportTicketController::class, 'updateStatus']);
-            }); // permission:support
-        }); // role:teacher,assistant
+            });
+
+            // Replying speaks to the student in the academy's name, and closing a
+            // ticket ends the conversation — separate powers from reading one.
+            Route::post('/teacher/support/tickets/{ticket}/replies', [TeacherSupportTicketController::class, 'reply'])->middleware('can:support.reply');
+            Route::patch('/teacher/support/tickets/{ticket}/status', [TeacherSupportTicketController::class, 'updateStatus'])->middleware('can:support.status.change');
+        }); // permission-gated shared surface
     });
 });

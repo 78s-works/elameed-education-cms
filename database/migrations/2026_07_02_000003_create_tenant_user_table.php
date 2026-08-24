@@ -6,7 +6,8 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * `tenant_user` — membership pivot (a user's role within a tenant). Squashed
- * create (folds the later per-membership permissions json).
+ * create. Authority is NOT stored here: roles carry it (M20), so the membership
+ * row says what KIND of member this is and nothing about what they may do.
  */
 return new class extends Migration
 {
@@ -18,7 +19,6 @@ return new class extends Migration
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->string('role');
             $table->string('status')->default('pending');
-            $table->json('permissions')->nullable();
             $table->timestamp('joined_at')->nullable();
             $table->timestamps();
 

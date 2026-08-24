@@ -26,8 +26,13 @@ class TicketRecipients
         return TenantUser::query()
             ->where('tenant_id', $tenantId)
             ->whereIn('role', [TenantUserRole::Teacher->value, TenantUserRole::Assistant->value])
-            ->get(['user_id', 'role', 'status', 'permissions'])
-            ->filter(fn (TenantUser $m): bool => $m->isActive() && $m->hasPermission(Permission::Support->value))
+            ->with('user')
+            ->get()
+            // Who hears about a ticket is a permission question, so it reads the
+            // same source the support routes gate on (M20) — not the membership
+            // kind. A teacher without the key is not notified; an assistant with
+            // it is, whichever roles carry it.
+            ->filter(fn (TenantUser $m): bool => $m->isActive() && $m->holdsPermission(Permission::SupportView->value))
             ->pluck('user_id')
             ->map(static fn ($id): int => (int) $id)
             ->unique()

@@ -27,6 +27,14 @@ class EnsureActiveMembership
         $user = $request->user();
 
         if ($tenant !== null && $user !== null) {
+            // Start every request from a clean authorization slate (M20). Spatie
+            // answers `can` from the user's LOADED role/permission relations; if
+            // this object survived a previous request for a DIFFERENT academy —
+            // Octane, a queue worker, a test hitting two tenants — those relations
+            // would still describe the other academy. Forgetting them here means
+            // the roles are always re-read for the tenant of THIS request.
+            $user->unsetRelation('roles')->unsetRelation('permissions');
+
             $membership = $user->membershipFor($tenant);
 
             if ($membership === null || ! $membership->isActive()) {

@@ -15,6 +15,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Route;
 use Laravel\Sanctum\Sanctum;
+use Tests\Support\GrantsTenantRoles;
 use Tests\TestCase;
 
 /**
@@ -24,6 +25,7 @@ use Tests\TestCase;
 class AssistantManagementTest extends TestCase
 {
     use RefreshDatabase;
+    use GrantsTenantRoles;
 
     private Tenant $tenant;
 
@@ -42,12 +44,11 @@ class AssistantManagementTest extends TestCase
         $this->year->tenant_id = $this->tenant->id; // no request context in tests
         $this->year->save();
 
-        // A stand-in route on the shared teacher/assistant surface gated by the
-        // new `finance` permission — mirrors the real stack (tenant → auth →
-        // active → role → permission) so we prove the middleware treats `finance`
-        // like every other permission before a real finance feature lands.
+        // A stand-in route on the shared teacher/assistant surface, gated the way
+        // every real route is now gated (M20): `can:<action key>` through the Gate,
+        // behind the same stack (tenant → auth → active → role).
         Route::prefix('api/v1')
-            ->middleware(['tenant', 'auth:sanctum', 'active', 'role:teacher,assistant', 'permission:finance'])
+            ->middleware(['tenant', 'auth:sanctum', 'active', 'role:teacher,assistant', 'can:finance.receipts.review'])
             ->get('__test_finance', fn () => response()->json(['ok' => true]));
     }
 
@@ -58,23 +59,28 @@ class AssistantManagementTest extends TestCase
         TenantUser::create([
             'tenant_id' => $tenant->id, 'user_id' => $user->id,
             'role' => $role->value, 'status' => MembershipStatus::Active->value,
-            'permissions' => $permissions !== [] ? $permissions : null,
             'joined_at' => now(),
         ]);
+
+        // Authority comes from a role, never from the membership row (M20).
+        if ($permissions !== []) {
+            $this->grantPermissions($user, $tenant, $this->expandPermissions($permissions));
+        }
 
         return $user;
     }
 
-    public function test_teacher_creates_an_assistant_with_permissions_and_gets_a_temp_password(): void
+    public function test_teacher_creates_an_assistant_with_roles_and_gets_a_temp_password(): void
     {
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+        $role = $this->tenantRole($this->tenant, 'students_manager');
 
         $res = $this->withHeaders(['X-Tenant' => 'demo'])->postJson('/api/v1/teacher/assistants', [
-            'name' => 'Omar', 'phone' => '01099999999', 'permissions' => ['students'],
+            'name' => 'Omar', 'phone' => '01099999999', 'role_uuids' => [$role->uuid],
             'academic_year_ids' => [$this->year->uuid],
         ])->assertStatus(201)
             ->assertJsonPath('data.name', 'Omar')
-            ->assertJsonPath('data.permissions', ['students'])
+            ->assertJsonPath('data.roles', [$role->name])
             ->assertJsonPath('data.status', 'active');
 
         $this->assertNotEmpty($res->json('data.temporary_password'));
@@ -102,42 +108,55 @@ class AssistantManagementTest extends TestCase
         $this->withHeaders($h)->getJson('/api/v1/teacher/centers')->assertStatus(403);
     }
 
-    public function test_assistant_cannot_manage_other_assistants(): void
+    public function test_assistant_without_team_keys_cannot_manage_other_assistants(): void
     {
         Sanctum::actingAs($this->member(TenantUserRole::Assistant, ['students']));
 
-        // Assistant management is teacher-only (role:teacher).
+        // Team management is delegatable now, but only to someone holding the key.
         $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/teacher/assistants')->assertStatus(403);
     }
 
-    public function test_me_exposes_effective_permissions(): void
+    public function test_me_exposes_the_roles_held_here_and_the_keys_they_add_up_to(): void
     {
-        $assistant = $this->member(TenantUserRole::Assistant, ['students']);
+        $assistant = $this->member(TenantUserRole::Assistant, ['support']);
         Sanctum::actingAs($assistant);
-        $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/me')
+
+        $current = $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/me')
             ->assertOk()
             ->assertJsonPath('data.current.role', 'assistant')
-            ->assertJsonPath('data.current.permissions', ['students']);
+            ->json('data.current');
 
-        // A teacher implicitly holds the full catalog.
+        $this->assertContains('Assistant', $current['roles']);
+        $this->assertContains('support.reply', $current['permissions']);
+        $this->assertNotContains('students.view', $current['permissions']);
+
+        // The owner holds everything because the OWNER ROLE carries everything —
+        // not because the code makes an exception for teachers.
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
-        $perms = $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/me')->json('data.current.permissions');
-        $this->assertContains('students', $perms);
-        $this->assertContains('centers', $perms);
+        $current = $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/me')->json('data.current');
+
+        $this->assertSame(['Academy owner'], $current['roles']);
+        $this->assertContains('students.view', $current['permissions']);
+        $this->assertContains('centers.view', $current['permissions']);
     }
 
-    public function test_teacher_can_rescope_permissions_and_suspend(): void
+    public function test_teacher_can_rescope_roles_and_suspend(): void
     {
         $teacher = $this->member(TenantUserRole::Teacher);
         $assistant = $this->member(TenantUserRole::Assistant, ['students']);
+        $finance = $this->tenantRole($this->tenant, 'finance');
         Sanctum::actingAs($teacher);
         $h = ['X-Tenant' => 'demo'];
 
-        $this->withHeaders($h)->patchJson("/api/v1/teacher/assistants/{$assistant->uuid}", [
-            'permissions' => ['students', 'centers'], 'status' => 'suspended',
+        $roles = $this->withHeaders($h)->patchJson("/api/v1/teacher/assistants/{$assistant->uuid}", [
+            'role_uuids' => [$finance->uuid], 'status' => 'suspended',
         ])->assertOk()
-            ->assertJsonPath('data.permissions', ['students', 'centers'])
-            ->assertJsonPath('data.status', 'suspended');
+            ->assertJsonPath('data.status', 'suspended')
+            ->json('data.roles');
+
+        // Re-scoping REPLACES the granted roles; the baseline one always stays.
+        $this->assertContains('Assistant', $roles);
+        $this->assertContains($finance->name, $roles);
 
         // Suspended → the assistant's access is cut immediately (active middleware).
         Sanctum::actingAs($assistant);
@@ -183,9 +202,9 @@ class AssistantManagementTest extends TestCase
         $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/teacher/assistants')->assertStatus(403);
     }
 
-    public function test_assistant_with_finance_permission_reaches_a_finance_gated_route(): void
+    public function test_assistant_with_the_receipts_key_reaches_a_finance_gated_route(): void
     {
-        Sanctum::actingAs($this->member(TenantUserRole::Assistant, ['finance']));
+        Sanctum::actingAs($this->member(TenantUserRole::Assistant, ['finance.receipts.review']));
 
         $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/__test_finance')
             ->assertOk()
@@ -199,14 +218,14 @@ class AssistantManagementTest extends TestCase
         $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/__test_finance')->assertStatus(403);
     }
 
-    public function test_teacher_owner_passes_the_finance_gate_implicitly(): void
+    public function test_the_owner_passes_the_finance_gate_through_their_role(): void
     {
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
 
         $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/__test_finance')->assertOk();
     }
 
-    public function test_finance_is_a_grantable_permission_in_the_catalog(): void
+    public function test_the_catalog_lists_grantable_action_keys(): void
     {
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
 
@@ -215,29 +234,34 @@ class AssistantManagementTest extends TestCase
             ->assertOk()
             ->json('data.*.key');
 
-        $this->assertContains('finance', $keys);
+        $this->assertContains('finance.receipts.review', $keys);
+        $this->assertContains('students.wallet.adjust', $keys);
+        // Screen-level keys are gone: every entry is an action.
+        $this->assertNotContains('finance', $keys);
     }
 
-    public function test_create_and_update_persist_the_finance_permission(): void
+    public function test_create_and_update_persist_the_granted_roles(): void
     {
         $teacher = $this->member(TenantUserRole::Teacher);
         Sanctum::actingAs($teacher);
         $h = ['X-Tenant' => 'demo'];
 
-        // Create with finance.
+        $finance = $this->tenantRole($this->tenant, 'finance');
+        $support = $this->tenantRole($this->tenant, 'support_agent');
+
         $uuid = $this->withHeaders($h)->postJson('/api/v1/teacher/assistants', [
-            'name' => 'Finance Aide', 'phone' => '01055555555', 'permissions' => ['finance'],
+            'name' => 'Finance Aide', 'phone' => '01055555555', 'role_uuids' => [$finance->uuid],
             'academic_year_ids' => [$this->year->uuid],
         ])->assertStatus(201)
-            ->assertJsonPath('data.permissions', ['finance'])
+            ->assertJsonPath('data.roles', [$finance->name])
             ->json('data.uuid');
 
-        // Update to re-scope onto finance + students. sanitize() normalises to
-        // enum-declaration order, so students precedes finance.
-        $this->withHeaders($h)->patchJson("/api/v1/teacher/assistants/{$uuid}", [
-            'permissions' => ['finance', 'students'],
-        ])->assertOk()
-            ->assertJsonPath('data.permissions', ['students', 'finance']);
+        $roles = $this->withHeaders($h)->patchJson("/api/v1/teacher/assistants/{$uuid}", [
+            'role_uuids' => [$finance->uuid, $support->uuid],
+        ])->assertOk()->json('data.roles');
+
+        $this->assertContains($finance->name, $roles);
+        $this->assertContains($support->name, $roles);
     }
 
     public function test_creating_an_assistant_without_any_academic_year_is_rejected(): void
@@ -260,5 +284,49 @@ class AssistantManagementTest extends TestCase
         $this->withHeaders(['X-Tenant' => 'demo', 'X-Academic-Year' => $this->year->uuid])
             ->postJson('/api/v1/teacher/assistants', ['name' => 'Header Aide', 'phone' => '01077777777'])
             ->assertStatus(201);
+    }
+
+    /**
+     * The tests were written against screen-level permissions ('students'); the
+     * catalog is per-action now, so a coarse name expands to the keys that screen
+     * actually needs. Fine keys pass through untouched.
+     *
+     * @param  list<string>  $names
+     * @return list<string>
+     */
+    private function expandPermissions(array $names): array
+    {
+        $map = [
+            'students' => ['students.view', 'students.create', 'students.update', 'students.delete',
+                'students.import', 'students.export', 'students.reset_password',
+                'students.enrollments.manage', 'students.content_overrides.manage',
+                'students.wallet.view', 'students.wallet.adjust', 'students.activity.view',
+                'students.notify', 'students.parents.manage'],
+            'centers' => ['centers.view', 'centers.create', 'centers.update', 'centers.delete',
+                'centers.sessions.manage', 'centers.attendance.view', 'centers.attendance.record',
+                'centers.attendance.revoke', 'centers.activation_codes.view',
+                'centers.activation_codes.issue', 'centers.activation_codes.disable',
+                'centers.id_codes.manage', 'centers.exam_grades.manage'],
+            'finance' => ['finance.receipts.review', 'finance.coupons.manage',
+                'finance.subscription.view'],
+            'support' => ['support.view', 'support.reply', 'support.status.change'],
+            'homework' => ['exams.view', 'exams.submissions.view', 'exams.grade',
+                'exams.pass_override'],
+            'content' => ['content.view', 'content.lessons.create', 'content.lessons.update',
+                'content.lessons.delete', 'content.lesson_sections.manage',
+                'content.lesson_attachments.manage', 'content.lesson_availability.manage',
+                'content.packages.manage', 'content.package_types.manage',
+                'content.academic_years.manage', 'content.media.upload', 'content.media.manage'],
+        ];
+
+        $keys = [];
+
+        foreach ($names as $name) {
+            foreach ($map[$name] ?? [$name] as $key) {
+                $keys[] = $key;
+            }
+        }
+
+        return array_values(array_unique($keys));
     }
 }

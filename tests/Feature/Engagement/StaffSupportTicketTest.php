@@ -16,6 +16,7 @@ use App\Modules\Tenancy\Models\Tenant;
 use Database\Seeders\NotificationCatalogSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
+use Tests\Support\GrantsTenantRoles;
 use Tests\TestCase;
 
 /**
@@ -26,6 +27,7 @@ use Tests\TestCase;
 class StaffSupportTicketTest extends TestCase
 {
     use RefreshDatabase;
+    use GrantsTenantRoles;
 
     private Tenant $tenant;
 
@@ -44,8 +46,13 @@ class StaffSupportTicketTest extends TestCase
         TenantUser::create([
             'tenant_id' => $this->tenant->id, 'user_id' => $user->id,
             'role' => $role->value, 'status' => MembershipStatus::Active->value,
-            'permissions' => $permissions, 'joined_at' => now(),
+            'joined_at' => now(),
         ]);
+
+        // Authority comes from a role, never from the membership row (M20).
+        if ($permissions !== []) {
+            $this->grantPermissions($user, $this->tenant, $this->expandPermissions($permissions));
+        }
 
         return $user;
     }
@@ -182,5 +189,49 @@ class StaffSupportTicketTest extends TestCase
         $this->assertFalse($notified($otherAssistant), 'non-support assistant must not be notified');
         $this->assertFalse($notified($bystander), 'other students must not be notified');
         $this->assertFalse($notified($student), 'the author must not be notified');
+    }
+
+    /**
+     * The tests were written against screen-level permissions ('students'); the
+     * catalog is per-action now, so a coarse name expands to the keys that screen
+     * actually needs. Fine keys pass through untouched.
+     *
+     * @param  list<string>  $names
+     * @return list<string>
+     */
+    private function expandPermissions(array $names): array
+    {
+        $map = [
+            'students' => ['students.view', 'students.create', 'students.update', 'students.delete',
+                'students.import', 'students.export', 'students.reset_password',
+                'students.enrollments.manage', 'students.content_overrides.manage',
+                'students.wallet.view', 'students.wallet.adjust', 'students.activity.view',
+                'students.notify', 'students.parents.manage'],
+            'centers' => ['centers.view', 'centers.create', 'centers.update', 'centers.delete',
+                'centers.sessions.manage', 'centers.attendance.view', 'centers.attendance.record',
+                'centers.attendance.revoke', 'centers.activation_codes.view',
+                'centers.activation_codes.issue', 'centers.activation_codes.disable',
+                'centers.id_codes.manage', 'centers.exam_grades.manage'],
+            'finance' => ['finance.receipts.review', 'finance.coupons.manage',
+                'finance.subscription.view'],
+            'support' => ['support.view', 'support.reply', 'support.status.change'],
+            'homework' => ['exams.view', 'exams.submissions.view', 'exams.grade',
+                'exams.pass_override'],
+            'content' => ['content.view', 'content.lessons.create', 'content.lessons.update',
+                'content.lessons.delete', 'content.lesson_sections.manage',
+                'content.lesson_attachments.manage', 'content.lesson_availability.manage',
+                'content.packages.manage', 'content.package_types.manage',
+                'content.academic_years.manage', 'content.media.upload', 'content.media.manage'],
+        ];
+
+        $keys = [];
+
+        foreach ($names as $name) {
+            foreach ($map[$name] ?? [$name] as $key) {
+                $keys[] = $key;
+            }
+        }
+
+        return array_values(array_unique($keys));
     }
 }

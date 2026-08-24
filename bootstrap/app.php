@@ -2,7 +2,6 @@
 
 use App\Http\Middleware\ResolveAcademicYear;
 use App\Modules\Identity\Http\Middleware\EnsureActiveMembership;
-use App\Modules\Identity\Http\Middleware\EnsurePermission;
 use App\Modules\Identity\Http\Middleware\EnsureTenantRole;
 use App\Modules\PlatformAdmin\Http\Middleware\EnsureCentralHost;
 use App\Modules\PlatformAdmin\Http\Middleware\EnsurePlatformAdmin;
@@ -32,9 +31,6 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => EnsureTenantRole::class,
             'admin' => EnsurePlatformAdmin::class,
             'active' => EnsureActiveMembership::class,
-            // Granular assistant permission gate (M18) — used inside
-            // role:teacher,assistant groups; teachers pass implicitly.
-            'permission' => EnsurePermission::class,
             // Pins the platform-admin console to a central/admin host — /admin/*
             // must never answer on a teacher academy's domain.
             'central' => EnsureCentralHost::class,
