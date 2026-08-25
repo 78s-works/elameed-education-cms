@@ -111,7 +111,7 @@ class StudentFinanceController
         $orders = Order::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('user_id', $student->getKey())
-            ->with('items')
+            ->with(['items', 'payments'])
             ->latest('id')
             ->get();
 

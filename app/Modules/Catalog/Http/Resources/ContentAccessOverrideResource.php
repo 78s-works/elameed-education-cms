@@ -21,6 +21,10 @@ class ContentAccessOverrideResource extends JsonResource
             'student_uuid' => $this->whenLoaded('user', fn () => $this->user?->uuid),
             'target_type' => $targetType,
             'target_id' => $targetId,
+            // Human names, when the caller resolved them (index does). The id
+            // stays in the payload — it is what the write endpoints take.
+            'target_label' => $this->target_label,
+            'target_parent_label' => $this->target_parent_label,
             'note' => $this->note,
             'granted_at' => $this->granted_at?->toIso8601String(),
             'revoked_at' => $this->revoked_at?->toIso8601String(),

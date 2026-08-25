@@ -4,22 +4,23 @@ namespace App\Modules\Identity\Http\Controllers\Teacher;
 
 use App\Models\User;
 use App\Modules\Billing\Services\PlanLimitGuard;
+use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Catalog\Services\AcademicYearContext;
+use App\Modules\Centers\Models\CenterIdCode;
+use App\Modules\Centers\Services\CenterIdCodeRedemptionService;
 use App\Modules\Commerce\Enums\EnrollmentStatus;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Engagement\Models\LessonProgress;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
+use App\Modules\Identity\Http\Controllers\Teacher\Concerns\BuildsStudentOverview;
 use App\Modules\Identity\Http\Controllers\Teacher\Concerns\ManagesTenantStudents;
 use App\Modules\Identity\Http\Requests\CreateStudentRequest;
 use App\Modules\Identity\Http\Requests\UpdateStudentRequest;
 use App\Modules\Identity\Http\Resources\StudentResource;
 use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
-use App\Modules\Catalog\Models\AcademicYear;
-use App\Modules\Catalog\Services\AcademicYearContext;
-use App\Modules\Centers\Models\CenterIdCode;
-use App\Modules\Centers\Services\CenterIdCodeRedemptionService;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Modules\Wallet\Services\LedgerService;
 use App\Support\Audit\AuditLogger;
@@ -28,6 +29,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -38,6 +40,7 @@ use Illuminate\Validation\ValidationException;
  */
 class StudentController
 {
+    use BuildsStudentOverview;
     use ManagesTenantStudents;
 
     public function __construct(
@@ -54,16 +57,20 @@ class StudentController
         $term = $request->query('q');
         $yearId = $this->years->id();
 
+        // Year-scoped roster: the active year when the panel sent one, else the
+        // years the CALLER is confined to — a year-scoped assistant that omits the
+        // header must still never see a roster beyond their own years. An unscoped
+        // member with no header sees every year (tenant-only, as before).
+        $yearIds = $yearId !== null ? [(int) $yearId] : $this->assignedYearIds($tenantId);
+
         $page = TenantUser::query()
             ->where('tenant_id', $tenantId)
             ->where('role', TenantUserRole::Student->value)
-            // Year-scoped roster: when a year is active, only students pinned to it
-            // (StudentProfile.academic_year_id) show — like lessons/packages.
-            ->when($yearId, fn ($q, $y) => $q->whereIn(
+            ->when($yearIds !== [], fn ($q) => $q->whereIn(
                 'user_id',
                 StudentProfile::withoutGlobalScopes()
                     ->where('tenant_id', $tenantId)
-                    ->where('academic_year_id', $y)
+                    ->whereIn('academic_year_id', $yearIds)
                     ->select('user_id'),
             ))
             ->when($request->input('filter.status'), fn ($q, $status) => $q->where('status', $status))
@@ -87,7 +94,37 @@ class StudentController
         $tenantId = $this->context->tenantOrFail()->getKey();
         $membership = $this->membershipOrFail($tenantId, $student);
 
-        $wallet = $this->ledger->walletFor($tenantId, $student->getKey());
+        // The summary is a digest of several gated surfaces, so each slice carries
+        // the permission its own endpoint enforces: money only with
+        // `students.wallet.view`, learning/attendance/score figures only with
+        // `students.activity.view`. Otherwise the overview tab would hand an
+        // assistant the very numbers their role withholds.
+        $summary = [
+            'enrolled_courses' => Enrollment::withoutGlobalScopes()
+                ->where('tenant_id', $tenantId)->where('user_id', $student->getKey())
+                ->where('status', EnrollmentStatus::Active->value)->count(),
+            'orders' => Order::withoutGlobalScopes()
+                ->where('tenant_id', $tenantId)->where('user_id', $student->getKey())->count(),
+            'subscription' => $this->subscriptionState($tenantId, (int) $student->getKey()),
+        ];
+
+        if (Gate::allows('students.wallet.view')) {
+            $summary['wallet_balance_minor'] = $this->ledger->balance(
+                $this->ledger->walletFor($tenantId, $student->getKey()),
+            );
+        }
+
+        if (Gate::allows('students.activity.view')) {
+            $summary = [
+                ...$summary,
+                'lessons_completed' => LessonProgress::withoutGlobalScopes()
+                    ->where('tenant_id', $tenantId)->where('user_id', $student->getKey())
+                    ->whereNotNull('completed_at')->count(),
+                // Overview-tab health numbers (completion / attendance / scores /
+                // last seen / devices), all derived from real rows.
+                ...$this->overviewMetrics($tenantId, (int) $student->getKey()),
+            ];
+        }
 
         return response()->json(['data' => [
             'uuid' => $student->uuid,
@@ -97,17 +134,7 @@ class StudentController
             'status' => $membership->status->value,
             'joined_at' => $membership->joined_at?->toIso8601String(),
             ...$this->profileArray($this->profileFor($tenantId, $student->getKey())),
-            'summary' => [
-                'enrolled_courses' => Enrollment::withoutGlobalScopes()
-                    ->where('tenant_id', $tenantId)->where('user_id', $student->getKey())
-                    ->where('status', EnrollmentStatus::Active->value)->count(),
-                'wallet_balance_minor' => $this->ledger->balance($wallet),
-                'orders' => Order::withoutGlobalScopes()
-                    ->where('tenant_id', $tenantId)->where('user_id', $student->getKey())->count(),
-                'lessons_completed' => LessonProgress::withoutGlobalScopes()
-                    ->where('tenant_id', $tenantId)->where('user_id', $student->getKey())
-                    ->whereNotNull('completed_at')->count(),
-            ],
+            'summary' => $summary,
         ]]);
     }
 

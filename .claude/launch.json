@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "elameed-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "D:/work/elameed-web", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}

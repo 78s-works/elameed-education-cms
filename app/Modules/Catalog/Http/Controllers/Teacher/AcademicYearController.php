@@ -6,6 +6,7 @@ use App\Modules\Catalog\Http\Requests\AcademicYearRequest;
 use App\Modules\Catalog\Http\Resources\AcademicYearResource;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Identity\Models\StudentProfile;
+use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -21,11 +22,46 @@ use Illuminate\Validation\ValidationException;
  */
 class AcademicYearController
 {
-    public function index(): AnonymousResourceCollection
+    /**
+     * The years the CALLER may work in. A year-scoped member (an assistant hired
+     * for specific years) must not even be OFFERED another year: the panel builds
+     * its year picker from this list, and pointing the X-Academic-Year header at an
+     * unassigned year is rejected 403 `academic_year_out_of_scope` — which used to
+     * surface as a silently empty page. An unscoped member (the academy owner) has
+     * no assigned years and sees them all.
+     */
+    public function index(Request $request): AnonymousResourceCollection
     {
-        $years = AcademicYear::query()->orderBy('sort_order')->orderBy('id')->paginate(20);
+        $assigned = $this->assignedYearIds($request);
+
+        $years = AcademicYear::query()
+            ->when($assigned !== [], fn ($q) => $q->whereIn('id', $assigned))
+            ->orderBy('sort_order')->orderBy('id')
+            ->paginate(20);
 
         return AcademicYearResource::collection($years);
+    }
+
+    /** @return array<int, int> the caller's assigned year ids, [] when unscoped */
+    private function assignedYearIds(Request $request): array
+    {
+        $user = $request->user();
+        $tenant = app(TenantContext::class)->tenant();
+
+        if ($user === null || $tenant === null) {
+            return [];
+        }
+
+        $membership = $user->membershipFor($tenant);
+
+        if ($membership === null) {
+            return [];
+        }
+
+        return $membership->academicYears()
+            ->pluck('academic_years.id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
     }
 
     public function store(AcademicYearRequest $request): JsonResponse

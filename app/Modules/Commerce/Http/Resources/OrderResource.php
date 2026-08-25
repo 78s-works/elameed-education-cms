@@ -21,6 +21,13 @@ class OrderResource extends JsonResource
             'total_minor' => $this->total_minor,
             'currency' => $this->currency,
             'coupon' => $this->whenLoaded('coupon', fn () => $this->coupon?->code),
+            'created_at' => $this->created_at?->toIso8601String(),
+            // How it was paid, when the caller asked for payments. `gateway` is the
+            // channel (paymob|fawry|wallet…); the newest attempt wins.
+            'payment_method' => $this->whenLoaded(
+                'payments',
+                fn () => $this->payments->sortByDesc('id')->first()?->gateway,
+            ),
             'items' => $this->whenLoaded('items', fn () => $this->items->map(fn ($i) => [
                 'type' => $i->item_type,
                 'title' => $i->title,

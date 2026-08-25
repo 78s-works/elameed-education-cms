@@ -31,8 +31,8 @@ use App\Modules\Centers\Http\Controllers\Teacher\AttendanceController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterExamGradeController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterIdCodeController;
-use App\Modules\Centers\Http\Controllers\Teacher\CenterSyncController;
 use App\Modules\Centers\Http\Controllers\Teacher\CenterSessionController;
+use App\Modules\Centers\Http\Controllers\Teacher\CenterSyncController;
 use App\Modules\Centers\Http\Controllers\Teacher\SessionAttendanceController;
 use App\Modules\Commerce\Http\Controllers\CheckoutController;
 use App\Modules\Commerce\Http\Controllers\InvoiceController;
@@ -48,16 +48,16 @@ use App\Modules\Engagement\Http\Controllers\ReviewController;
 use App\Modules\Engagement\Http\Controllers\SupportTicketController;
 use App\Modules\Engagement\Http\Controllers\Teacher\BadgeController;
 use App\Modules\Engagement\Http\Controllers\Teacher\ForumController;
-use App\Modules\Engagement\Http\Controllers\Teacher\SupportTicketController as TeacherSupportTicketController;
 use App\Modules\Engagement\Http\Controllers\Teacher\ReviewController as TeacherReviewController;
+use App\Modules\Engagement\Http\Controllers\Teacher\SupportTicketController as TeacherSupportTicketController;
+use App\Modules\Identity\Http\Controllers\Admin\RoleTemplateController;
 use App\Modules\Identity\Http\Controllers\AuthController;
 use App\Modules\Identity\Http\Controllers\MeController;
 use App\Modules\Identity\Http\Controllers\ParentController;
 use App\Modules\Identity\Http\Controllers\Teacher\AssistantController;
+use App\Modules\Identity\Http\Controllers\Teacher\RoleController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentActivityController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentContentOverrideController;
-use App\Modules\Identity\Http\Controllers\Admin\RoleTemplateController;
-use App\Modules\Identity\Http\Controllers\Teacher\RoleController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentEnrollmentController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentFinanceController;
@@ -481,9 +481,7 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
 
             // Teacher reports (M17, basic)
 
-
             // Audit log (M18)
-
 
             // Roles & permissions (M20) — the academy's own copies of the platform
             // templates, plus whatever the teacher created. Read side for now;
@@ -883,6 +881,10 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::middleware('can:students.activity.view')->group(function (): void {
                 Route::get('/teacher/students/{student:uuid}/progress', [StudentActivityController::class, 'progress']);
                 Route::get('/teacher/students/{student:uuid}/activity', [StudentActivityController::class, 'history']);
+                // Study & performance tab: this student's center attendance and
+                // every score they hold (online attempts + paper center grades).
+                Route::get('/teacher/students/{student:uuid}/attendance', [StudentActivityController::class, 'attendance']);
+                Route::get('/teacher/students/{student:uuid}/exam-results', [StudentActivityController::class, 'examResults']);
             });
             Route::post('/teacher/students/{student:uuid}/notify', [StudentActivityController::class, 'notify'])->middleware('can:students.notify');
 

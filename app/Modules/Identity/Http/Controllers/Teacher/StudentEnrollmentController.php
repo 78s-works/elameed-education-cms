@@ -39,23 +39,45 @@ class StudentEnrollmentController
         $tenantId = $this->context->tenantOrFail()->getKey();
         $this->membershipOrFail($tenantId, $student);
 
-        $rows = Enrollment::withoutGlobalScopes()
+        $enrollments = Enrollment::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('user_id', $student->getKey())
-            ->with('lesson:id,title')
             ->latest('id')
-            ->get()
-            ->map(fn (Enrollment $e) => [
-                'id' => $e->id,
-                'lesson_id' => $e->lesson_id,
-                'lesson_title' => $e->lesson?->title,
-                'exam_id' => $e->exam_id,
-                'package_id' => $e->package_id,
-                'source' => $e->source->value,
-                'status' => $e->status->value,
-                'starts_at' => $e->starts_at?->toIso8601String(),
-                'expires_at' => $e->expires_at?->toIso8601String(),
-            ]);
+            ->get();
+
+        // Titles are looked up WITHOUT the year scope on purpose: a student's own
+        // grants must read correctly no matter which year the panel has selected,
+        // otherwise the eager-loaded relation comes back null and every row prints
+        // as a bare id.
+        $lessonTitles = Lesson::withoutGlobalScopes()
+            ->whereIn('id', $enrollments->pluck('lesson_id')->filter()->unique())
+            ->pluck('title', 'id');
+        $packageNames = Package::withoutGlobalScopes()
+            ->whereIn('id', $enrollments->pluck('package_id')->filter()->unique())
+            ->pluck('name', 'id');
+        $examTitles = Exam::withoutGlobalScopes()
+            ->whereIn('id', $enrollments->pluck('exam_id')->filter()->unique())
+            ->pluck('title', 'id');
+
+        $rows = $enrollments->map(fn (Enrollment $e) => [
+            'id' => $e->id,
+            'lesson_id' => $e->lesson_id,
+            'lesson_title' => $lessonTitles[$e->lesson_id] ?? null,
+            'exam_id' => $e->exam_id,
+            'package_id' => $e->package_id,
+            // What the row actually grants, ready to print: the panel shows one
+            // subscriptions table and shouldn't have to guess which id is set.
+            'target_type' => $e->lesson_id !== null ? 'lesson'
+                : ($e->package_id !== null ? 'package' : ($e->exam_id !== null ? 'exam' : null)),
+            'title' => $lessonTitles[$e->lesson_id]
+                ?? $packageNames[$e->package_id]
+                ?? $examTitles[$e->exam_id]
+                ?? null,
+            'source' => $e->source->value,
+            'status' => $e->status->value,
+            'starts_at' => $e->starts_at?->toIso8601String(),
+            'expires_at' => $e->expires_at?->toIso8601String(),
+        ]);
 
         return response()->json(['data' => $rows]);
     }
