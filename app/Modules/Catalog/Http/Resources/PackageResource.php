@@ -3,6 +3,8 @@
 namespace App\Modules\Catalog\Http\Resources;
 
 use App\Modules\Catalog\Models\Package;
+use App\Modules\Catalog\Services\PackageItemService;
+use App\Modules\Catalog\Support\AccessTerms;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -40,6 +42,19 @@ class PackageResource extends JsonResource
             ]),
             'academic_year_id' => $this->whenLoaded('academicYear', fn () => $this->academicYear?->uuid),
             'items_count' => $this->whenCounted('items'),
+            // Access terms folded over the package's descendant lessons — the SAME
+            // recursive builder the checkout package line uses, so the detail page
+            // and the buy screen cannot quote different windows. Clients used to
+            // fold this themselves from the direct `items` rows, which silently
+            // ignored lessons nested in sub-packages.
+            //
+            // Gated on `items` being loaded: only the detail route eager-loads them,
+            // and the fold walks the tree (one query per node), which would be an
+            // N+1 on the 20-per-page catalogue listing.
+            'access_terms' => $this->whenLoaded(
+                'items',
+                fn () => AccessTerms::forPackage($this->resource, app(PackageItemService::class)),
+            ),
             'items' => PackageItemResource::collection($this->whenLoaded('items')),
             'created_at' => $this->created_at?->toIso8601String(),
         ];

@@ -199,6 +199,92 @@ class CheckoutAccessTermsTest extends TestCase
             ->assertJsonPath('data.lines.0.access_terms', null);
     }
 
+    public function test_the_package_resource_folds_lessons_nested_in_sub_packages(): void
+    {
+        // The package detail page used to fold this client-side from the DIRECT
+        // item rows only, so a structural package whose lessons live in
+        // sub-packages showed a blank buy card and a mixed one quoted too narrow
+        // a range. The server fold is recursive (descendantLessonIds), which is
+        // also what the checkout line and SequentialUnlockService walk.
+        $year = $this->year();
+        $mkLesson = function (?int $days) use ($year): Lesson {
+            $lesson = new Lesson(['title' => 'L', 'access_mode' => 'both', 'availability_days' => $days]);
+            $lesson->tenant_id = $this->tenant->id;
+            $lesson->academic_year_id = $year->id;
+            $lesson->save();
+
+            return $lesson;
+        };
+        $mkPackage = function (?int $price) use ($year): Package {
+            $pkg = new Package([
+                'name' => 'P', 'access_mode' => 'both',
+                'price_minor' => $price, 'currency' => 'EGP', 'is_purchasable' => $price !== null,
+            ]);
+            $pkg->tenant_id = $this->tenant->id;
+            $pkg->academic_year_id = $year->id;
+            $pkg->save();
+
+            return $pkg;
+        };
+        $attach = function (Package $pkg, string $type, int $id, int $order = 0): void {
+            $item = new PackageItem([
+                'package_id' => $pkg->id, 'item_type' => $type, 'item_id' => $id, 'sort_order' => $order,
+            ]);
+            $item->tenant_id = $this->tenant->id;
+            $item->save();
+        };
+
+        // parent -> [ 7-day lesson, child -> [ 30-day lesson, unlimited lesson ] ]
+        $parent = $mkPackage(50000);
+        $child = $mkPackage(null);
+        $attach($parent, PackageItem::TYPE_LESSON, $mkLesson(7)->id, 0);
+        $attach($parent, PackageItem::TYPE_PACKAGE, $child->id, 1);
+        $attach($child, PackageItem::TYPE_LESSON, $mkLesson(30)->id, 0);
+        $attach($child, PackageItem::TYPE_LESSON, $mkLesson(null)->id, 1);
+
+        $this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson("/api/v1/packages/{$parent->uuid}")
+            ->assertOk()
+            // 3 descendant lessons, not the 1 direct row a client-side fold saw.
+            ->assertJsonPath('data.access_terms.lessons_count', 3)
+            ->assertJsonPath('data.access_terms.windowed_lessons', 2)
+            ->assertJsonPath('data.access_terms.unlimited_lessons', 1)
+            ->assertJsonPath('data.access_terms.min_days', 7)
+            ->assertJsonPath('data.access_terms.max_days', 30);
+    }
+
+    public function test_a_structural_package_with_no_direct_lessons_still_states_its_terms(): void
+    {
+        $year = $this->year();
+        $lesson = new Lesson(['title' => 'L', 'access_mode' => 'both', 'availability_days' => 21]);
+        $lesson->tenant_id = $this->tenant->id;
+        $lesson->academic_year_id = $year->id;
+        $lesson->save();
+
+        $parent = new Package(['name' => 'Structural', 'access_mode' => 'both', 'price_minor' => 9000, 'currency' => 'EGP', 'is_purchasable' => true]);
+        $parent->tenant_id = $this->tenant->id;
+        $parent->academic_year_id = $year->id;
+        $parent->save();
+        $child = new Package(['name' => 'Chapter', 'access_mode' => 'both', 'price_minor' => null, 'currency' => 'EGP', 'is_purchasable' => false]);
+        $child->tenant_id = $this->tenant->id;
+        $child->academic_year_id = $year->id;
+        $child->save();
+
+        foreach ([[$parent, PackageItem::TYPE_PACKAGE, $child->id], [$child, PackageItem::TYPE_LESSON, $lesson->id]] as [$owner, $type, $id]) {
+            $item = new PackageItem(['package_id' => $owner->id, 'item_type' => $type, 'item_id' => $id, 'sort_order' => 0]);
+            $item->tenant_id = $this->tenant->id;
+            $item->save();
+        }
+
+        // Every lesson sits one level down; the buy card must NOT come back blank.
+        $this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson("/api/v1/packages/{$parent->uuid}")
+            ->assertOk()
+            ->assertJsonPath('data.access_terms.lessons_count', 1)
+            ->assertJsonPath('data.access_terms.min_days', 21)
+            ->assertJsonPath('data.access_terms.max_days', 21);
+    }
+
     public function test_the_public_package_tree_states_each_lessons_window(): void
     {
         $year = $this->year();
