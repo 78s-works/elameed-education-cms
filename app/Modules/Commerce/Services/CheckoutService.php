@@ -6,6 +6,7 @@ use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Services\PackageItemService;
 use App\Modules\Catalog\Services\StudentPartVisibility;
+use App\Modules\Catalog\Support\AccessTerms;
 use App\Modules\Commerce\Models\Coupon;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Order;
@@ -194,6 +195,10 @@ class CheckoutService
             'item_id' => $lesson->id,
             'price_minor' => (int) $lesson->price_minor,
             'title' => $lesson->title,
+            // The access window is a material term of sale, so it travels WITH the
+            // priced line: the buy screen shows the student the same numbers this
+            // lesson's enforcement reads (AccessTerms), not a client-side guess.
+            'access_terms' => AccessTerms::forLesson($lesson),
         ];
     }
 
@@ -217,6 +222,9 @@ class CheckoutService
             'item_id' => $package->id,
             'price_minor' => (int) $package->price_minor,
             'title' => $package->name,
+            // A package has no window of its own — access is enforced per lesson
+            // and opened in sequence, so the line carries that spread instead.
+            'access_terms' => AccessTerms::forPackage($package, $this->packageItems),
         ];
     }
 

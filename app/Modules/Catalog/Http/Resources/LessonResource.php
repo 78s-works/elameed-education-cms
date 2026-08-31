@@ -3,6 +3,7 @@
 namespace App\Modules\Catalog\Http\Resources;
 
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Support\AccessTerms;
 use App\Modules\Media\Http\Resources\MediaAssetResource;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -38,6 +39,11 @@ class LessonResource extends JsonResource
             'visibility' => $this->visibility?->value,
             'publish_at' => $this->publish_at?->toIso8601String(),
             // Time-boxed access config (null availability_days = unlimited).
+            // The raw columns stay for the teacher's authoring form; `access_terms`
+            // is the same information pre-composed for the STUDENT-facing buy
+            // surfaces, built by the one shared builder so the terms shown on a
+            // card, in a package tree and at checkout can never disagree.
+            'access_terms' => AccessTerms::forLesson($this->resource),
             'availability_days' => $this->availability_days,
             'max_extensions' => $this->max_extensions,
             'extension_hours' => $this->extension_hours,

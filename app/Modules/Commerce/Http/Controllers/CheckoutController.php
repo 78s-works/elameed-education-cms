@@ -43,6 +43,9 @@ class CheckoutController
             'coupon' => $quote['coupon']?->code,
             'lines' => array_map(fn ($l) => [
                 'type' => $l['item_type'], 'title' => $l['title'], 'price_minor' => $l['price_minor'],
+                // Access window of THIS line, so the buy screen can state the terms
+                // of sale before the student pays. Absent on a wallet top-up.
+                'access_terms' => $l['access_terms'] ?? null,
             ], $quote['lines']),
         ]]);
     }

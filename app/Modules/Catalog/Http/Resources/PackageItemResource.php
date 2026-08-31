@@ -5,6 +5,7 @@ namespace App\Modules\Catalog\Http\Resources;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Models\PackageItem;
+use App\Modules\Catalog\Support\AccessTerms;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -44,6 +45,9 @@ class PackageItemResource extends JsonResource
                 'price_minor' => $lesson->price_minor,
                 'currency' => $lesson->currency,
                 'is_purchasable' => (bool) $lesson->is_purchasable,
+                // How long access lasts once opened — a material term of sale, so
+                // the student reads it in the package tree, before buying.
+                'access_terms' => AccessTerms::forLesson($lesson),
             ];
         }
 
