@@ -9,6 +9,7 @@ use App\Modules\Notifications\Http\Resources\NotificationTypeResource;
 use App\Modules\Notifications\Models\NotificationType;
 use App\Support\Audit\AuditLogger;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 
@@ -20,11 +21,19 @@ use Illuminate\Http\Response;
  */
 class TypeController
 {
-    public function index(): AnonymousResourceCollection
+    public function index(Request $request): AnonymousResourceCollection
     {
-        return NotificationTypeResource::collection(
-            NotificationType::query()->orderBy('module')->orderBy('key')->get()
-        );
+        $types = NotificationType::query()
+            ->when($request->query('module'), fn ($q, $module) => $q->where('module', $module))
+            ->when($request->query('q'), function ($q, $term): void {
+                $like = '%'.$term.'%';
+                $q->where(fn ($inner) => $inner->where('key', 'like', $like)->orWhere('module', 'like', $like));
+            })
+            ->orderBy('module')
+            ->orderBy('key')
+            ->get();
+
+        return NotificationTypeResource::collection($types);
     }
 
     public function store(StoreNotificationTypeRequest $request): JsonResponse

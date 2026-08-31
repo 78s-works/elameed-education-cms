@@ -81,6 +81,17 @@ class TenantRoleProvisioner
                         $role->syncPermissions($template->permissions);
                         $synced++;
                     }
+
+                    // System roles carry the platform's own naming: nobody can
+                    // rename them from the academy panel, so a copy stamped
+                    // before the Arabic labels landed would keep showing an
+                    // English name the teacher cannot fix.
+                    if ($key->isSystem() && $role->name !== $template->name) {
+                        $role->forceFill([
+                            'name' => $template->name,
+                            'description' => $template->description,
+                        ])->save();
+                    }
                 }
             });
         } finally {
@@ -96,12 +107,83 @@ class TenantRoleProvisioner
      * Deliberately explicit — the platform admin runs this knowing it overwrites
      * whatever each teacher had configured on that role.
      */
-    public function resyncTemplateEverywhere(RoleTemplate $template): int
+    /**
+     * What a resync WOULD do, per academy, without doing any of it.
+     *
+     * The push button overwrites permission sets teachers customised, so the
+     * admin has to see three things before pressing it: which academies are
+     * affected (by name), what each one gains and loses, and which of them
+     * customised their copy — those are the ones with something to lose.
+     *
+     * @return list<array{
+     *   tenant_uuid:?string, tenant_name:?string, role_id:int,
+     *   adds:list<string>, removes:list<string>, customised:bool
+     * }>
+     */
+    public function previewTemplateResync(RoleTemplate $template): array
+    {
+        /** @var RoleTemplateKey $key */
+        $key = $template->key;
+
+        $target = $template->permissions->pluck('name')->sort()->values()->all();
+        $roles = Role::query()->where('template_key', $key->value)->with('permissions')->get();
+        // withTrashed: a closed academy still holds its copy of the role, and a
+        // row that renders as "—" because its academy was archived is worse
+        // than one that says so.
+        $tenants = Tenant::withTrashed()
+            ->whereIn('id', $roles->pluck('tenant_id')->filter()->unique())
+            ->get(['id', 'uuid', 'name', 'deleted_at'])
+            ->keyBy('id');
+
+        return $roles->map(function (Role $role) use ($target, $tenants): array {
+            $current = $role->permissions->pluck('name')->sort()->values()->all();
+            $tenant = $tenants->get($role->tenant_id);
+
+            return [
+                'tenant_uuid' => $tenant?->uuid,
+                'tenant_name' => $tenant?->name,
+                'tenant_deleted' => $tenant?->deleted_at !== null,
+                'role_id' => (int) $role->getKey(),
+                'adds' => array_values(array_diff($target, $current)),
+                'removes' => array_values(array_diff($current, $target)),
+                // "Customised" means this copy no longer matches the template —
+                // exactly the academies whose local changes a push destroys.
+                'customised' => $current !== $target,
+            ];
+        })->values()->all();
+    }
+
+    /**
+     * Overwrite academies' copies of this template with its current set.
+     *
+     * `$tenantUuids` scopes the push to a chosen subset; null means every
+     * academy holding a copy. Returns the roles touched, keyed by tenant, so
+     * the caller can write one audit entry per affected academy.
+     *
+     * @param  list<string>|null  $tenantUuids
+     * @return list<array{tenant_id:?int, tenant_uuid:?string, tenant_name:?string, role_id:int}>
+     */
+    public function resyncTemplateEverywhere(RoleTemplate $template, ?array $tenantUuids = null): array
     {
         /** @var RoleTemplateKey $key */
         $key = $template->key;
 
         $roles = Role::query()->where('template_key', $key->value)->get();
+
+        // withTrashed: a closed academy still holds its copy of the role, and a
+        // row that renders as "—" because its academy was archived is worse
+        // than one that says so.
+        $tenants = Tenant::withTrashed()
+            ->whereIn('id', $roles->pluck('tenant_id')->filter()->unique())
+            ->get(['id', 'uuid', 'name', 'deleted_at'])
+            ->keyBy('id');
+
+        if ($tenantUuids !== null) {
+            $allowed = $tenants->whereIn('uuid', $tenantUuids)->keys()->all();
+            $roles = $roles->whereIn('tenant_id', $allowed);
+        }
+
+        $touched = [];
 
         foreach ($roles as $role) {
             $previousTeam = $this->registrar->getPermissionsTeamId();
@@ -112,10 +194,18 @@ class TenantRoleProvisioner
             } finally {
                 $this->registrar->setPermissionsTeamId($previousTeam);
             }
+
+            $tenant = $tenants->get($role->tenant_id);
+            $touched[] = [
+                'tenant_id' => $role->tenant_id,
+                'tenant_uuid' => $tenant?->uuid,
+                'tenant_name' => $tenant?->name,
+                'role_id' => (int) $role->getKey(),
+            ];
         }
 
         $this->registrar->forgetCachedPermissions();
 
-        return $roles->count();
+        return $touched;
     }
 }

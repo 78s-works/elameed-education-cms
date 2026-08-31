@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\BlockImpersonatedWrites;
 use App\Http\Middleware\ResolveAcademicYear;
 use App\Modules\Identity\Http\Middleware\EnsureActiveMembership;
 use App\Modules\Identity\Http\Middleware\EnsureTenantRole;
@@ -26,6 +27,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // Runs before Laravel's HandleCors so a registered tenant origin (custom
         // domain or subdomain) is trusted for CORS, not just the static list.
         $middleware->prepend(DynamicTenantCors::class);
+
+        // Impersonation (ADM-17) is read-only by construction: appended to every
+        // API request rather than mounted per-route, so no future write endpoint
+        // can be reachable from a supervised session by forgetting to opt in.
+        $middleware->appendToGroup('api', BlockImpersonatedWrites::class);
 
         $middleware->alias([
             'role' => EnsureTenantRole::class,

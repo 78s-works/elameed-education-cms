@@ -58,33 +58,42 @@ enum RoleTemplateKey: string
         };
     }
 
+    /**
+     * Display name. Arabic: these strings are shown as-is in the admin console
+     * and stamped onto every academy's copy of the role, and the panel they
+     * appear in is Arabic-only.
+     */
     public function label(): string
     {
         return match ($this) {
-            self::Teacher => 'Academy owner',
-            self::Assistant => 'Assistant',
-            self::Student => 'Student',
-            self::ParentGuardian => 'Parent',
-            self::StudentsManager => 'Students manager',
-            self::Finance => 'Finance',
-            self::HomeworkGrader => 'Homework grader',
-            self::SupportAgent => 'Support agent',
-            self::ContentEditor => 'Content editor',
+            self::Teacher => 'مالك الأكاديمية',
+            self::Assistant => 'مساعد',
+            self::Student => 'طالب',
+            self::ParentGuardian => 'ولي أمر',
+            self::StudentsManager => 'مسؤول الطلاب',
+            self::Finance => 'المالية',
+            self::HomeworkGrader => 'مصحّح الواجبات',
+            self::SupportAgent => 'موظف الدعم',
+            self::ContentEditor => 'محرّر المحتوى',
         };
     }
 
+    /**
+     * What the role can do AND what it cannot — a teacher picks an assistant's
+     * role from this sentence alone, so the limit matters as much as the grant.
+     */
     public function description(): string
     {
         return match ($this) {
-            self::Teacher => 'Holds every permission in the academy. Kept in sync with the catalog automatically.',
-            self::Assistant => 'Baseline staff membership. Carries no permission on its own — stack roles on top.',
-            self::Student => 'Baseline student membership. Carries no permission in the academy panel.',
-            self::ParentGuardian => 'Baseline parent membership. Carries no permission in the academy panel.',
-            self::StudentsManager => 'Students, enrollments, centers and attendance.',
-            self::Finance => 'Receipts, coupons and financial reports.',
-            self::HomeworkGrader => 'Review and grade student submissions.',
-            self::SupportAgent => 'Answer and resolve student support tickets.',
-            self::ContentEditor => 'Author lessons, parts, packages and media.',
+            self::Teacher => 'يملك كل الصلاحيات في الأكاديمية. يُحدَّث تلقائيًا مع كتالوج الصلاحيات.',
+            self::Assistant => 'عضوية أساسية لفريق العمل. لا تمنح أي صلاحية بمفردها — تُضاف فوقها الأدوار الأخرى.',
+            self::Student => 'عضوية أساسية للطالب. لا تمنح أي صلاحية في لوحة الأكاديمية.',
+            self::ParentGuardian => 'عضوية أساسية لولي الأمر. لا تمنح أي صلاحية في لوحة الأكاديمية.',
+            self::StudentsManager => 'يدير الطلاب والاشتراكات والسناتر والحضور. لا يرى الإيرادات ولا يعدّل المحتوى.',
+            self::Finance => 'يراجع الإيصالات والكوبونات والتقارير المالية. لا يعدّل المحتوى ولا يدير الطلاب.',
+            self::HomeworkGrader => 'يراجع ويصحّح تسليمات الطلاب. لا يعدّل الاختبارات ولا يرى الإيرادات.',
+            self::SupportAgent => 'يرد على تذاكر الدعم ويغلقها. لا يعدّل المحتوى ولا يرى الإيرادات.',
+            self::ContentEditor => 'ينشئ الدروس والأجزاء والباقات والوسائط. لا يرى الطلاب ولا الإيرادات.',
         };
     }
 }

@@ -71,10 +71,10 @@ class RoleBasedAccessTest extends TestCase
     public function test_every_membership_kind_is_given_its_baseline_role(): void
     {
         foreach ([
-            [TenantUserRole::Teacher, 'Academy owner'],
-            [TenantUserRole::Assistant, 'Assistant'],
-            [TenantUserRole::Student, 'Student'],
-            [TenantUserRole::Parent, 'Parent'],
+            [TenantUserRole::Teacher, RoleTemplateKey::Teacher->label()],
+            [TenantUserRole::Assistant, RoleTemplateKey::Assistant->label()],
+            [TenantUserRole::Student, RoleTemplateKey::Student->label()],
+            [TenantUserRole::Parent, RoleTemplateKey::ParentGuardian->label()],
         ] as [$kind, $expected]) {
             $user = $this->member($kind);
             $membership = TenantUser::where('user_id', $user->id)->with('user')->firstOrFail();
@@ -88,7 +88,7 @@ class RoleBasedAccessTest extends TestCase
         $student = $this->member(TenantUserRole::Student);
         $membership = TenantUser::where('user_id', $student->id)->with('user')->firstOrFail();
 
-        $this->assertSame(['Student'], $membership->roleNames());
+        $this->assertSame([RoleTemplateKey::Student->label()], $membership->roleNames());
         $this->assertSame([], $membership->holdsPermissionKeys());
     }
 
@@ -165,8 +165,8 @@ class RoleBasedAccessTest extends TestCase
     {
         $other = Tenant::create(['slug' => 'other', 'name' => 'Other', 'status' => TenantStatus::Active]);
 
-        $mine = Role::query()->where('tenant_id', $this->tenant->id)->where('name', 'Finance')->firstOrFail();
-        $theirs = Role::query()->where('tenant_id', $other->id)->where('name', 'Finance')->firstOrFail();
+        $mine = Role::query()->where('tenant_id', $this->tenant->id)->where('name', RoleTemplateKey::Finance->label())->firstOrFail();
+        $theirs = Role::query()->where('tenant_id', $other->id)->where('name', RoleTemplateKey::Finance->label())->firstOrFail();
 
         $this->assertNotSame($mine->getKey(), $theirs->getKey());
 
@@ -200,7 +200,7 @@ class RoleBasedAccessTest extends TestCase
 
         $membership->update(['role' => TenantUserRole::Assistant->value]);
 
-        $this->assertSame(['Assistant'], $membership->fresh()->load('user')->roleNames());
+        $this->assertSame([RoleTemplateKey::Assistant->label()], $membership->fresh()->load('user')->roleNames());
     }
 
     public function test_removing_a_membership_removes_every_role_in_that_academy(): void

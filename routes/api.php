@@ -8,6 +8,7 @@ use App\Modules\Assessment\Http\Controllers\Teacher\ExamGradingController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamLinkController;
 use App\Modules\Assessment\Http\Controllers\Teacher\QuestionController;
 use App\Modules\Billing\Http\Controllers\Admin\PackageController;
+use App\Modules\Billing\Http\Controllers\Admin\TenantBillingController;
 use App\Modules\Billing\Http\Controllers\Admin\TenantSubscriptionController;
 use App\Modules\Billing\Http\Controllers\Teacher\PackageController as TeacherPackageController;
 use App\Modules\Billing\Http\Controllers\Teacher\SubscriptionController;
@@ -79,6 +80,7 @@ use App\Modules\Notifications\Http\Controllers\Teacher\SmsSettingsController;
 use App\Modules\Notifications\Http\Controllers\Teacher\TeacherNotificationController;
 use App\Modules\PlatformAdmin\Http\Controllers\AdminReportController;
 use App\Modules\PlatformAdmin\Http\Controllers\AdminTenantController;
+use App\Modules\PlatformAdmin\Http\Controllers\ImpersonationController;
 use App\Modules\Reporting\Http\Controllers\AuditLogController;
 use App\Modules\Reporting\Http\Controllers\StudentCoursesController;
 use App\Modules\Reporting\Http\Controllers\Teacher\SalesLedgerController;
@@ -153,10 +155,14 @@ Route::prefix('v1')->middleware(['central', 'auth:sanctum', 'admin'])->group(fun
     Route::get('/admin/role-templates', [RoleTemplateController::class, 'index']);
     Route::get('/admin/role-templates/permissions', [RoleTemplateController::class, 'permissions']);
     Route::put('/admin/role-templates/{roleTemplate}', [RoleTemplateController::class, 'update']);
+    Route::get('/admin/role-templates/{roleTemplate}/resync-preview', [RoleTemplateController::class, 'resyncPreview']);
     Route::post('/admin/role-templates/{roleTemplate}/resync', [RoleTemplateController::class, 'resync']);
 
     Route::get('/admin/reports/overview', [AdminReportController::class, 'overview']);
+    Route::get('/admin/reports/platform-business', [AdminReportController::class, 'platformBusiness']);
     Route::get('/admin/audit-logs', [AuditLogController::class, 'admin']);
+    Route::get('/admin/audit-logs/actions', [AuditLogController::class, 'actions']);
+    Route::get('/admin/audit-logs/export', [AuditLogController::class, 'export']);
 
     // Teacher subscription packages (M03) — define plans + assign them to tenants.
     Route::get('/admin/packages', [PackageController::class, 'index']);
@@ -167,6 +173,14 @@ Route::prefix('v1')->middleware(['central', 'auth:sanctum', 'admin'])->group(fun
 
     Route::get('/admin/tenants/{tenant:uuid}/subscription', [TenantSubscriptionController::class, 'show']);
     Route::post('/admin/tenants/{tenant:uuid}/subscription', [TenantSubscriptionController::class, 'store']);
+
+    // Supervised, read-only impersonation of the academy owner (ADM-17). The
+    // exit route sits outside this group: it is called WITH the impersonation
+    // token, which is not a platform-admin one.
+    Route::post('/admin/tenants/{tenant:uuid}/impersonate', [ImpersonationController::class, 'start']);
+    // What the academy has actually paid us, and the ability to record it.
+    Route::get('/admin/tenants/{tenant:uuid}/billing', [TenantBillingController::class, 'index']);
+    Route::post('/admin/tenants/{tenant:uuid}/billing', [TenantBillingController::class, 'store']);
 
     // Notification engine (doc 10 §9.1) — system scope: author the type catalog,
     // system templates, and translations; audit dispatched events. Types bind by
@@ -185,6 +199,17 @@ Route::prefix('v1')->middleware(['central', 'auth:sanctum', 'admin'])->group(fun
 
     Route::get('/admin/notifications/events', [AdminNotificationEventController::class, 'index']);
     Route::get('/admin/notifications/events/{event}', [AdminNotificationEventController::class, 'show']);
+    Route::get('/admin/notifications/events/{event}/failures', [AdminNotificationEventController::class, 'failures']);
+});
+
+/*
+| Ending an impersonation session. Authenticated with the IMPERSONATION token
+| (which belongs to the academy owner, not to the admin), so it cannot live in
+| the platform-admin group above — and it must always be reachable, or an admin
+| could not get out of a supervised session.
+*/
+Route::prefix('v1')->middleware('auth:sanctum')->group(function (): void {
+    Route::post('/impersonation/stop', [ImpersonationController::class, 'stop']);
 });
 
 /*

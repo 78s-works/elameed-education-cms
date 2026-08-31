@@ -130,13 +130,17 @@ class RefundService
             'full' => $isFull,
         ]);
 
+        // A refund is the most financially sensitive action in the system, so
+        // the actor is passed explicitly rather than left to Auth::id() — this
+        // runs from queued and webhook contexts where no user is authenticated
+        // but the caller knows who ordered it.
         $this->audit->log('order.refunded', [
             'order_uuid' => $order->uuid,
             'amount_minor' => $amount,
             'destination' => $destination,
             'full' => $isFull,
             'reason' => $reason,
-        ], $tenantId, 'order', (int) $order->id);
+        ], $tenantId, 'order', (int) $order->id, $actorId);
 
         return $refund;
     }

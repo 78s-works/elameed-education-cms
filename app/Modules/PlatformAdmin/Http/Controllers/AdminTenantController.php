@@ -16,6 +16,7 @@ use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Models\TenantDomain;
 use App\Support\Audit\AuditLogger;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
 
@@ -27,11 +28,36 @@ class AdminTenantController
 {
     public function __construct(private readonly TenantInsights $insights) {}
 
-    public function index(): AnonymousResourceCollection
+    /**
+     * Status chips alone stop working the moment there are more academies than
+     * fit on a screen, so the list also searches the four things an admin
+     * actually knows about an academy: its name, its subdomain slug, its
+     * owner's name, and any domain pointed at it.
+     */
+    public function index(Request $request): AnonymousResourceCollection
     {
-        return AdminTenantResource::collection(
-            Tenant::query()->with('domains')->latest()->paginate(30)
-        );
+        $tenants = Tenant::query()
+            ->with(['domains', 'owner:id,name'])
+            ->when($request->query('status'), fn ($q, $status) => $q->where('status', $status))
+            // Subscription state, so the platform-business figures on /admin can
+            // link straight to "the academies behind this number".
+            ->when($request->query('subscription'), function ($q, $state): void {
+                $q->whereHas('subscriptions', fn ($s) => $s->where('status', $state));
+            })
+            ->when($request->query('q'), function ($q, $term): void {
+                $like = '%'.$term.'%';
+                $q->where(function ($inner) use ($like): void {
+                    $inner->where('name', 'like', $like)
+                        ->orWhere('slug', 'like', $like)
+                        ->orWhereHas('owner', fn ($o) => $o->where('name', 'like', $like))
+                        ->orWhereHas('domains', fn ($d) => $d->where('host', 'like', $like));
+                });
+            })
+            ->latest()
+            ->paginate(min(100, max(10, (int) $request->query('per_page', 30))))
+            ->withQueryString();
+
+        return AdminTenantResource::collection($tenants);
     }
 
     public function store(StoreTenantRequest $request): JsonResponse

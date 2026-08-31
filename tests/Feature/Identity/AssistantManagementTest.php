@@ -7,6 +7,7 @@ use App\Modules\Billing\Models\SubscriptionPackage;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Billing\Services\SubscriptionService;
 use App\Modules\Identity\Enums\MembershipStatus;
+use App\Modules\Identity\Enums\RoleTemplateKey;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Enums\TenantStatus;
@@ -126,7 +127,7 @@ class AssistantManagementTest extends TestCase
             ->assertJsonPath('data.current.role', 'assistant')
             ->json('data.current');
 
-        $this->assertContains('Assistant', $current['roles']);
+        $this->assertContains(RoleTemplateKey::Assistant->label(), $current['roles']);
         $this->assertContains('support.reply', $current['permissions']);
         $this->assertNotContains('students.view', $current['permissions']);
 
@@ -135,7 +136,7 @@ class AssistantManagementTest extends TestCase
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
         $current = $this->withHeaders(['X-Tenant' => 'demo'])->getJson('/api/v1/me')->json('data.current');
 
-        $this->assertSame(['Academy owner'], $current['roles']);
+        $this->assertSame([RoleTemplateKey::Teacher->label()], $current['roles']);
         $this->assertContains('students.view', $current['permissions']);
         $this->assertContains('centers.view', $current['permissions']);
     }
@@ -155,7 +156,7 @@ class AssistantManagementTest extends TestCase
             ->json('data.roles');
 
         // Re-scoping REPLACES the granted roles; the baseline one always stays.
-        $this->assertContains('Assistant', $roles);
+        $this->assertContains(RoleTemplateKey::Assistant->label(), $roles);
         $this->assertContains($finance->name, $roles);
 
         // Suspended → the assistant's access is cut immediately (active middleware).

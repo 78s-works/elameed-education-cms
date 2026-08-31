@@ -20,6 +20,7 @@ class AdminTenantResource extends JsonResource
             'name' => $this->name,
             'status' => TenantStatus::present($this->getRawOriginal('status')),
             'owner_user_id' => $this->owner_user_id,
+            'owner_name' => $this->whenLoaded('owner', fn () => $this->owner?->name),
             'primary_host' => $this->whenLoaded('domains', fn () => $this->domains->firstWhere('is_primary', true)?->host),
             'created_at' => $this->created_at?->toIso8601String(),
         ];

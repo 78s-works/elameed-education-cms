@@ -6,9 +6,11 @@ use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\PlatformAdmin\Services\PlatformBusinessReport;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Wallet\Models\LedgerEntry;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 /**
  * GET /admin/reports/overview (FR-M17-01) — cross-tenant totals. Trivial in the
@@ -16,6 +18,19 @@ use Illuminate\Http\JsonResponse;
  */
 class AdminReportController
 {
+    /**
+     * GET /admin/reports/platform-business (ADM-19) — the platform's OWN
+     * commercial position, kept separate from the academies' sales figures on
+     * the overview so the two can never be read as the same money.
+     */
+    public function platformBusiness(Request $request, PlatformBusinessReport $report): JsonResponse
+    {
+        $period = (int) $request->query('period_days', 30);
+        $period = max(7, min(365, $period));
+
+        return response()->json(['data' => $report->build($period)]);
+    }
+
     public function overview(): JsonResponse
     {
         $students = TenantUser::query()

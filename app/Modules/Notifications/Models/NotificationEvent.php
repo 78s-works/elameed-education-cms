@@ -2,6 +2,8 @@
 
 namespace App\Modules\Notifications\Models;
 
+use App\Models\User;
+use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -33,6 +35,18 @@ class NotificationEvent extends Model
     public function type(): BelongsTo
     {
         return $this->belongsTo(NotificationType::class, 'notification_type_id');
+    }
+
+    /** Whoever set the event off, when a person did. Null for system events. */
+    public function trigger(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'triggered_by');
+    }
+
+    /** The academy the event fired in. Null for platform-level dispatches. */
+    public function tenant(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class, 'tenant_id');
     }
 
     public function notifications(): HasMany

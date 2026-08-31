@@ -9,8 +9,10 @@ use App\Modules\Identity\Http\Requests\UpdateRoleTemplateRequest;
 use App\Modules\Identity\Http\Resources\RoleTemplateResource;
 use App\Modules\Identity\Models\RoleTemplate;
 use App\Modules\Identity\Services\TenantRoleProvisioner;
+use App\Support\Audit\AuditLogger;
 use App\Support\Exceptions\DomainException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Spatie\Permission\Models\Permission;
 
 /**
@@ -75,13 +77,64 @@ class RoleTemplateController extends Controller
     }
 
     /**
-     * Overwrite every academy's copy of this template with its current set.
-     * Destructive on purpose: teachers who tuned that role lose their changes.
+     * What pressing "push" would change, per academy — named, itemised, and
+     * flagged where the academy customised its copy. Read-only.
      */
-    public function resync(RoleTemplate $roleTemplate, TenantRoleProvisioner $provisioner): JsonResponse
+    public function resyncPreview(RoleTemplate $roleTemplate, TenantRoleProvisioner $provisioner): JsonResponse
     {
-        $count = $provisioner->resyncTemplateEverywhere($roleTemplate->load('permissions'));
+        $academies = $provisioner->previewTemplateResync($roleTemplate->load('permissions'));
 
-        return response()->json(['data' => ['roles_updated' => $count]]);
+        // An archived academy still holds a copy, but it is not what an admin is
+        // deciding about — it is listed and flagged, and kept out of the totals
+        // so the headline count matches what a push would actually reach.
+        $live = array_values(array_filter($academies, fn ($a) => ! $a['tenant_deleted']));
+
+        return response()->json(['data' => [
+            'template' => ['name' => $roleTemplate->name, 'key' => $roleTemplate->key->value],
+            'academies' => $academies,
+            'total' => count($live),
+            'archived_total' => count($academies) - count($live),
+            'customised_total' => count(array_filter($live, fn ($a) => $a['customised'])),
+            // Stated rather than implied: the push replaces the copy outright.
+            'overwrites_local_changes' => true,
+        ]]);
+    }
+
+    /**
+     * Overwrite academies' copies of this template with its current set.
+     * Destructive on purpose: teachers who tuned that role lose their changes,
+     * so the caller may scope it to the academies they confirmed, and every
+     * academy touched gets its own audit entry.
+     */
+    public function resync(Request $request, RoleTemplate $roleTemplate, TenantRoleProvisioner $provisioner): JsonResponse
+    {
+        $data = $request->validate([
+            'tenants' => ['nullable', 'array'],
+            'tenants.*' => ['string', 'uuid'],
+        ]);
+
+        $touched = $provisioner->resyncTemplateEverywhere(
+            $roleTemplate->load('permissions'),
+            $data['tenants'] ?? null,
+        );
+
+        foreach ($touched as $row) {
+            app(AuditLogger::class)->log(
+                'role_template.pushed',
+                [
+                    'template' => $roleTemplate->key->value,
+                    'academy' => $row['tenant_name'],
+                    'role_id' => $row['role_id'],
+                ],
+                $row['tenant_id'],
+                'role_template',
+                (int) $roleTemplate->getKey(),
+            );
+        }
+
+        return response()->json(['data' => [
+            'roles_updated' => count($touched),
+            'academies' => array_values(array_map(fn ($r) => $r['tenant_name'], $touched)),
+        ]]);
     }
 }

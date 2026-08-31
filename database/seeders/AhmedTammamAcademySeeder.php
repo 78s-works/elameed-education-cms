@@ -17,6 +17,7 @@ use App\Modules\Billing\Enums\BillingInterval;
 use App\Modules\Billing\Enums\SubscriptionStatus;
 use App\Modules\Billing\Models\SubscriptionPackage;
 use App\Modules\Billing\Models\TenantSubscription;
+use App\Modules\Billing\Models\TenantSubscriptionCharge;
 use App\Modules\Catalog\Enums\AccessMode;
 use App\Modules\Catalog\Enums\AssignmentKind;
 use App\Modules\Catalog\Enums\ContentAccessTarget;
@@ -464,17 +465,45 @@ class AhmedTammamAcademySeeder extends Seeder
             ],
         );
 
-        TenantSubscription::create([
+        $subscription = TenantSubscription::create([
             'tenant_id' => $this->tenant->id,
             'package_id' => $pro->id,
             'status' => SubscriptionStatus::Active->value,
             'price_minor' => $pro->price_minor,
             'currency' => self::CURRENCY,
             'started_at' => now()->subMonths(9),
+            'trial_ends_at' => now()->subMonths(9)->addDays(14),
             'renews_at' => now()->addMonth(),
+            'meta' => ['discount_reason' => 'خصم الإطلاق للمدرّسين الأوائل'],
         ]);
 
         $this->tenant->forceFill(['package_id' => $pro->id])->save();
+
+        // What the academy has actually PAID the platform. `tenant_subscriptions`
+        // only says which plan they are on; without these rows the console cannot
+        // answer "have they paid us?" — so the demo academy carries a real
+        // payment history, including one charge that did not settle.
+        foreach (range(6, 1) as $monthsAgo) {
+            // Anchor to the 1st: subtracting months from a 31st lands on uneven
+            // days and produces two charges inside the same billing month.
+            $chargedAt = now()->startOfMonth()->subMonths($monthsAgo);
+
+            TenantSubscriptionCharge::create([
+                'tenant_id' => $this->tenant->id,
+                'tenant_subscription_id' => $subscription->id,
+                'amount_minor' => $pro->price_minor,
+                'currency' => self::CURRENCY,
+                // The most recent month is still outstanding — the console has to
+                // show an unsettled charge differently, and a seed of nothing but
+                // successes never exercises that.
+                'status' => $monthsAgo === 1 ? 'pending' : 'paid',
+                'method' => $monthsAgo % 2 === 0 ? 'instapay' : 'bank_transfer',
+                'period_start' => $chargedAt->copy(),
+                'period_end' => $chargedAt->copy()->addMonth(),
+                'charged_at' => $chargedAt,
+                'reference' => 'TRF-'.$chargedAt->format('Ym'),
+            ]);
+        }
     }
 
     private function seedCenters(): void

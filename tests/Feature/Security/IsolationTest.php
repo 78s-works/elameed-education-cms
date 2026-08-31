@@ -185,7 +185,7 @@ class IsolationTest extends TestCase
             ->putJson("/api/v1/teacher/roles/{$foreign->uuid}", ['name' => 'Hijacked'])
             ->assertStatus(404);
 
-        $this->assertSame('Finance', $foreign->fresh()->name);
+        $this->assertSame(RoleTemplateKey::Finance->label(), $foreign->fresh()->name);
     }
 
     public function test_tenant_isolation_content_of_another_academy_is_invisible(): void

@@ -14,6 +14,7 @@ use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Wallet\Models\LedgerEntry;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Aggregates the full cross-tenant view of one academy for the platform admin:
@@ -114,6 +115,12 @@ class TenantInsights
             'students' => (int) ($members[TenantUserRole::Student->value] ?? 0),
             'assistants' => (int) ($members[TenantUserRole::Assistant->value] ?? 0),
             'parents' => (int) ($members[TenantUserRole::Parent->value] ?? 0),
+            // Content volume. `courses` is retired (VD §7) — the tenant page
+            // used to read a `courses` key that was never sent, so every
+            // academy reported zero while /admin reported a platform total.
+            // Both surfaces now count the same two things by name.
+            'lessons' => (int) DB::table('lessons')->where('tenant_id', $tenantId)->count(),
+            'packages' => (int) DB::table('packages')->where('tenant_id', $tenantId)->count(),
             'enrollments' => (int) Enrollment::withoutGlobalScopes()->where('tenant_id', $tenantId)->count(),
             'gross_earnings_minor' => (int) LedgerEntry::withoutGlobalScopes()
                 ->where('tenant_id', $tenantId)
