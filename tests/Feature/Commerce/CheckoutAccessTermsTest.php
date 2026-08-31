@@ -6,14 +6,16 @@ use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Models\LessonAccessWindow;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Models\PackageItem;
-use App\Modules\Catalog\Services\LessonAvailabilityService;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
+use App\Modules\Wallet\Models\LedgerEntry;
+use App\Modules\Wallet\Services\LedgerService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Laravel\Sanctum\Sanctum;
@@ -74,6 +76,17 @@ class CheckoutAccessTermsTest extends TestCase
         return $lesson;
     }
 
+    /** Simulate a completed top-up so the student can pay from the wallet. */
+    private function creditWallet(User $user, int $amount): void
+    {
+        $ledger = app(LedgerService::class);
+        $wallet = $ledger->walletFor($this->tenant->id, $user->id);
+        $ledger->post($this->tenant->id, "test-topup:{$user->id}", [
+            ['account' => LedgerEntry::GATEWAY_CLEARING, 'direction' => LedgerEntry::DEBIT, 'amount_minor' => $amount],
+            ['account' => LedgerEntry::STUDENT_WALLET, 'direction' => LedgerEntry::CREDIT, 'amount_minor' => $amount, 'wallet_id' => $wallet->id],
+        ]);
+    }
+
     public function test_quote_states_the_lessons_window_before_payment(): void
     {
         $lesson = $this->lesson([
@@ -95,32 +108,53 @@ class CheckoutAccessTermsTest extends TestCase
             ->assertJsonPath('data.lines.0.access_terms.extension_hours', 24)
             ->assertJsonPath('data.lines.0.access_terms.max_extensions', 2)
             ->assertJsonPath('data.lines.0.access_terms.self_reopen_limit', 1)
-            // The clock starts on first open — NOT at purchase. A buy screen that
-            // promises "30 days from purchase" would be disclosing terms the
-            // server never enforces.
-            ->assertJsonPath('data.lines.0.access_terms.starts_on', 'first_open');
+            // The clock starts AT PURCHASE: FulfillOrderService -> grantLesson ->
+            // LessonAvailabilityService::start. A buy screen that promised "starts
+            // when you first open it" would be disclosing terms the server does not
+            // enforce — see the paid end-to-end test below, which proves it.
+            ->assertJsonPath('data.lines.0.access_terms.starts_on', 'purchase');
     }
 
-    public function test_the_quoted_window_is_the_window_actually_enforced(): void
+    /**
+     * The one test that actually protects the acceptance criterion: quote, then PAY,
+     * then read the window fulfilment created. An earlier version called
+     * LessonAvailabilityService::start() directly on an unbought lesson, which only
+     * re-checked addDays arithmetic — and that is exactly why a wrong `starts_on`
+     * ("first open") survived a green suite.
+     */
+    public function test_the_quoted_window_is_the_window_the_purchase_actually_grants(): void
     {
         $lesson = $this->lesson(['availability_days' => 30]);
         $student = $this->student();
+        $this->creditWallet($student, 20000);
         Sanctum::actingAs($student);
+        $h = ['X-Tenant' => 'demo'];
+        $cart = ['items' => [['type' => 'lesson', 'lesson' => $lesson->id]]];
 
-        $quotedDays = $this->withHeaders(['X-Tenant' => 'demo'])
-            ->postJson('/api/v1/checkout/quote', [
-                'items' => [['type' => 'lesson', 'lesson' => $lesson->id]],
-            ])
-            ->assertOk()
-            ->json('data.lines.0.access_terms.days');
+        $quoted = $this->withHeaders($h)->postJson('/api/v1/checkout/quote', $cart)
+            ->assertOk()->json('data.lines.0.access_terms');
 
-        // What enforcement does when the student later opens the lesson.
-        $window = app(LessonAvailabilityService::class)
-            ->start($this->tenant->id, $student->id, $lesson);
+        // No window before the sale.
+        $this->assertNull(
+            LessonAccessWindow::withoutGlobalScopes()
+                ->where('user_id', $student->id)->where('lesson_id', $lesson->id)->first(),
+        );
 
-        $this->assertNotNull($window);
+        $orderUuid = $this->withHeaders($h)->postJson('/api/v1/checkout/order', $cart)
+            ->assertStatus(201)->json('data.uuid');
+        $this->withHeaders($h)->postJson('/api/v1/checkout/pay', [
+            'order' => $orderUuid, 'method' => 'wallet',
+        ])->assertOk()->assertJsonPath('data.status', 'paid');
+
+        // PAYMENT opened it — nobody opened the lesson. This is what makes
+        // starts_on = 'purchase' the honest value.
+        $window = LessonAccessWindow::withoutGlobalScopes()
+            ->where('user_id', $student->id)->where('lesson_id', $lesson->id)->first();
+
+        $this->assertNotNull($window, 'Paying for a windowed lesson must open its window.');
+        $this->assertSame('purchase', $quoted['starts_on']);
         $this->assertSame(
-            $quotedDays,
+            $quoted['days'],
             (int) $window->started_at->diffInDays($window->expires_at),
             'The window granted must be exactly the one quoted on the buy screen.',
         );
@@ -185,6 +219,110 @@ class CheckoutAccessTermsTest extends TestCase
             // A package has no clock of its own: the first lesson opens at
             // purchase, the rest as the student completes the one before.
             ->assertJsonPath('data.lines.0.access_terms.starts_on', 'purchase_then_sequential');
+    }
+
+    /**
+     * The null-safety of the package fold, which the mixed-case test alone did not
+     * cover: an empty package, an all-unlimited one, and an all-windowed one that
+     * shares a single duration.
+     */
+    public function test_package_terms_are_null_safe_for_the_degenerate_shapes(): void
+    {
+        $year = $this->year();
+        $mkPackage = function () use ($year): Package {
+            $pkg = new Package([
+                'name' => 'P', 'access_mode' => 'both',
+                'price_minor' => 1000, 'currency' => 'EGP', 'is_purchasable' => true,
+            ]);
+            $pkg->tenant_id = $this->tenant->id;
+            $pkg->academic_year_id = $year->id;
+            $pkg->save();
+
+            return $pkg;
+        };
+        $addLesson = function (Package $pkg, ?int $days, int $order): void {
+            $lesson = new Lesson(['title' => 'L', 'access_mode' => 'both', 'availability_days' => $days]);
+            $lesson->tenant_id = $this->tenant->id;
+            $lesson->academic_year_id = $pkg->academic_year_id;
+            $lesson->save();
+            $item = new PackageItem([
+                'package_id' => $pkg->id, 'item_type' => PackageItem::TYPE_LESSON,
+                'item_id' => $lesson->id, 'sort_order' => $order,
+            ]);
+            $item->tenant_id = $this->tenant->id;
+            $item->save();
+        };
+
+        $empty = $mkPackage();
+        $allUnlimited = $mkPackage();
+        $addLesson($allUnlimited, null, 0);
+        $addLesson($allUnlimited, null, 1);
+        $sameWindow = $mkPackage();
+        $addLesson($sameWindow, 7, 0);
+        $addLesson($sameWindow, 7, 1);
+
+        Sanctum::actingAs($this->student());
+        $h = ['X-Tenant' => 'demo'];
+        $quote = fn (Package $p) => $this->withHeaders($h)
+            ->postJson('/api/v1/checkout/quote', ['items' => [['type' => 'package', 'package' => $p->uuid]]])
+            ->assertOk()->json('data.lines.0.access_terms');
+
+        $e = $quote($empty);
+        $this->assertSame(0, $e['lessons_count']);
+        $this->assertNull($e['min_days'], 'An empty package must not invent a duration.');
+        $this->assertNull($e['max_days']);
+
+        $u = $quote($allUnlimited);
+        $this->assertSame(2, $u['lessons_count']);
+        $this->assertSame(0, $u['windowed_lessons']);
+        $this->assertSame(2, $u['unlimited_lessons']);
+        $this->assertNull($u['min_days']);
+        $this->assertNull($u['max_days']);
+
+        $w = $quote($sameWindow);
+        $this->assertSame(2, $w['windowed_lessons']);
+        $this->assertSame(0, $w['unlimited_lessons']);
+        // Equal bounds — the client prints one number instead of a range.
+        $this->assertSame(7, $w['min_days']);
+        $this->assertSame(7, $w['max_days']);
+    }
+
+    public function test_a_sub_package_row_states_its_own_terms(): void
+    {
+        $year = $this->year();
+        $lesson = new Lesson(['title' => 'L', 'access_mode' => 'both', 'availability_days' => 9]);
+        $lesson->tenant_id = $this->tenant->id;
+        $lesson->academic_year_id = $year->id;
+        $lesson->save();
+
+        $mk = function (?int $price) use ($year): Package {
+            $pkg = new Package([
+                'name' => 'P', 'access_mode' => 'both',
+                'price_minor' => $price, 'currency' => 'EGP', 'is_purchasable' => $price !== null,
+            ]);
+            $pkg->tenant_id = $this->tenant->id;
+            $pkg->academic_year_id = $year->id;
+            $pkg->save();
+
+            return $pkg;
+        };
+        $parent = $mk(50000);
+        $child = $mk(null);
+        foreach ([[$parent, PackageItem::TYPE_PACKAGE, $child->id], [$child, PackageItem::TYPE_LESSON, $lesson->id]] as [$owner, $type, $id]) {
+            $item = new PackageItem(['package_id' => $owner->id, 'item_type' => $type, 'item_id' => $id, 'sort_order' => 0]);
+            $item->tenant_id = $this->tenant->id;
+            $item->save();
+        }
+
+        // A nested package row used to come back with no terms at all, so the buy
+        // tree showed a blank beside every sub-package.
+        $this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson("/api/v1/packages/{$parent->uuid}")
+            ->assertOk()
+            ->assertJsonPath('data.items.0.item.type', 'package')
+            ->assertJsonPath('data.items.0.item.access_terms.kind', 'package')
+            ->assertJsonPath('data.items.0.item.access_terms.lessons_count', 1)
+            ->assertJsonPath('data.items.0.item.access_terms.min_days', 9);
     }
 
     public function test_a_wallet_topup_carries_no_access_terms(): void
@@ -310,6 +448,6 @@ class CheckoutAccessTermsTest extends TestCase
             ->getJson("/api/v1/packages/{$package->uuid}")
             ->assertOk()
             ->assertJsonPath('data.items.0.item.access_terms.days', 21)
-            ->assertJsonPath('data.items.0.item.access_terms.starts_on', 'first_open');
+            ->assertJsonPath('data.items.0.item.access_terms.starts_on', 'purchase');
     }
 }

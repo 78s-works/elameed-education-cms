@@ -5,6 +5,7 @@ namespace App\Modules\Catalog\Http\Resources;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Models\PackageItem;
+use App\Modules\Catalog\Services\PackageItemService;
 use App\Modules\Catalog\Support\AccessTerms;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -64,6 +65,11 @@ class PackageItemResource extends JsonResource
             'currency' => $package->currency,
             'is_purchasable' => (bool) $package->is_purchasable,
             'items_count' => $package->items()->count(),
+            // A sub-package row is a browsable node in the buy tree, so it states
+            // its own terms too — folded recursively over ITS descendants. Without
+            // this the tree showed windows on lesson rows and a blank on every
+            // nested package.
+            'access_terms' => AccessTerms::forPackage($package, app(PackageItemService::class)),
         ];
     }
 }
