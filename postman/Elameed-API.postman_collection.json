@@ -2,7 +2,7 @@
   "info": {
     "name": "Elameed Education API (v1)",
     "_postman_id": "00000000-0000-4000-8000-elameedapi01",
-    "description": "# Elameed Education API — v1\n\nMulti-tenant teaching-platform API (Laravel). Generated from `routes/api.php`.\n\n## Quick start\n1. Select this collection's variables (or import the matching **Environment**).\n2. Set `{{tenant}}` to a tenant slug — dev resolves the tenant from the `X-Tenant` header (non-production only). In prod the tenant comes from the host `<slug>.elameed.app`, so set `{{base_url}}` accordingly and the header is ignored.\n3. Run **04 · Auth → Login** (or **Verify OTP**). The token is auto-saved into `{{token}}`; all authenticated requests inherit it as a Bearer token.\n4. Fill in id/uuid path variables (e.g. `{{course_uuid}}`) as you go.\n\n## Conventions\n- Success envelope: `{ \"data\": ... }`. Error envelope: `{ \"error\": { \"code\", \"message\", \"details\" } }`.\n- `{{token}}` = student/teacher/parent token; `{{admin_token}}` = platform-admin token (folder 01, no tenant).\n- Request bodies are realistic examples derived from the FormRequest validation rules — trim optional fields as needed.",
+    "description": "# Elameed Education API — v1\n\nMulti-tenant teaching-platform API (Laravel). Generated from `routes/api.php`.\n\n## Quick start\n1. Select this collection's variables (or import the matching **Environment**).\n2. Set `{{tenant}}` to a tenant slug — dev resolves the tenant from the `X-Tenant` header (non-production only). In prod the tenant comes from the host `<slug>.edu.raqeem-tech.com`, so set `{{base_url}}` accordingly and the header is ignored.\n3. Run **04 · Auth → Login** (or **Verify OTP**). The token is auto-saved into `{{token}}`; all authenticated requests inherit it as a Bearer token.\n4. Fill in id/uuid path variables (e.g. `{{course_uuid}}`) as you go.\n\n## Conventions\n- Success envelope: `{ \"data\": ... }`. Error envelope: `{ \"error\": { \"code\", \"message\", \"details\" } }`.\n- `{{token}}` = student/teacher/parent token; `{{admin_token}}` = platform-admin token (folder 01, no tenant).\n- Request bodies are realistic examples derived from the FormRequest validation rules — trim optional fields as needed.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -4844,7 +4844,7 @@
     {
       "key": "base_url",
       "value": "http://localhost/api",
-      "description": "API root incl. /api prefix. Prod: https://<slug>.elameed.app/api"
+      "description": "API root incl. /api prefix. Prod: https://<slug>.edu.raqeem-tech.com/api"
     },
     {
       "key": "tenant",

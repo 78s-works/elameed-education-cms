@@ -47,7 +47,7 @@ All routes sit under the `/api/v1` prefix and the `tenant` middleware group (hos
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | dev override only | `mrkhaled` |
 | Accept | yes | `application/json` |
 | Authorization | yes | `Bearer <token>` |

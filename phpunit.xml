@@ -34,6 +34,11 @@
         <env name="DB_USERNAME" value="elameed_app"/>
         <env name="DB_PASSWORD" value="elameed_app_secret"/>
         <env name="DB_URL" value=""/>
+        <!-- Tenancy hosts are pinned here so the suite's hard-coded example
+             hosts stay valid even if the deployment default moves again. Keep
+             these in step with the hosts the Tenancy/PlatformAdmin tests use. -->
+        <env name="TENANCY_BASE_DOMAIN" value="edu.raqeem-tech.com"/>
+        <env name="TENANCY_CENTRAL_DOMAINS" value="admin.edu.raqeem-tech.com"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>

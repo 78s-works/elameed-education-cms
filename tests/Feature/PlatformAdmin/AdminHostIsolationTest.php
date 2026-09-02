@@ -38,7 +38,7 @@ class AdminHostIsolationTest extends TestCase
     {
         Sanctum::actingAs($this->admin());
 
-        $this->getJson('http://admin.elameed.app/api/v1/admin/tenants')
+        $this->getJson('http://admin.edu.raqeem-tech.com/api/v1/admin/tenants')
             ->assertOk();
     }
 
@@ -46,7 +46,7 @@ class AdminHostIsolationTest extends TestCase
     {
         Sanctum::actingAs($this->admin());
 
-        $this->getJson('http://ahmed.elameed.app/api/v1/admin/tenants')
+        $this->getJson('http://ahmed.edu.raqeem-tech.com/api/v1/admin/tenants')
             ->assertNotFound()
             ->assertJsonPath('error.code', 'not_found');
     }
@@ -66,7 +66,7 @@ class AdminHostIsolationTest extends TestCase
         // teacher domain is still refused before it can create anything.
         Sanctum::actingAs($this->admin());
 
-        $this->postJson('http://ahmed.elameed.app/api/v1/admin/tenants', [
+        $this->postJson('http://ahmed.edu.raqeem-tech.com/api/v1/admin/tenants', [
             'name' => 'X', 'slug' => 'x', 'status' => 'active',
         ])->assertNotFound();
 
@@ -79,7 +79,7 @@ class AdminHostIsolationTest extends TestCase
         config(['tenancy.guard.trust_local_domains' => false]);
         Sanctum::actingAs($this->admin());
 
-        $this->getJson('http://admin.elameed.app/api/v1/admin/tenants')->assertOk();
+        $this->getJson('http://admin.edu.raqeem-tech.com/api/v1/admin/tenants')->assertOk();
 
         $this->getJson('http://127.0.0.1/api/v1/admin/tenants')
             ->assertNotFound()
@@ -95,12 +95,12 @@ class AdminHostIsolationTest extends TestCase
         Sanctum::actingAs($this->admin());
 
         // active-gated route (EnsureActiveMembership) — no membership here → 403.
-        $this->getJson('http://demo.elameed.app/api/v1/me')
+        $this->getJson('http://demo.edu.raqeem-tech.com/api/v1/me')
             ->assertStatus(403)
             ->assertJsonPath('error.code', 'forbidden');
 
         // role-gated route (EnsureTenantRole) — not a teacher here → 403.
-        $this->getJson('http://demo.elameed.app/api/v1/teacher/profile')
+        $this->getJson('http://demo.edu.raqeem-tech.com/api/v1/teacher/profile')
             ->assertStatus(403)
             ->assertJsonPath('error.code', 'forbidden');
     }
@@ -109,7 +109,7 @@ class AdminHostIsolationTest extends TestCase
     {
         Sanctum::actingAs($this->admin());
 
-        $this->postJson('http://admin.elameed.app/api/v1/admin/tenants', [
+        $this->postJson('http://admin.edu.raqeem-tech.com/api/v1/admin/tenants', [
             'name' => 'Admin Impersonator', 'slug' => 'admin', 'status' => 'active',
         ])->assertStatus(422)
             ->assertJsonPath('error.code', 'validation_error');

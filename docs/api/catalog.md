@@ -116,7 +116,7 @@ courses (default), individually-sellable **lessons**, or sellable **content pack
 **Request headers**
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `academy.elameed.app` |
+| Host | yes | `academy.edu.raqeem-tech.com` |
 | Accept | yes | `application/json` |
 | X-Tenant | dev only | `academy` (overrides host in non-prod) |
 
@@ -224,7 +224,7 @@ Common headers for every teacher endpoint:
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `academy.elameed.app` |
+| Host | yes | `academy.edu.raqeem-tech.com` |
 | Accept | yes | `application/json` |
 | Authorization | yes | `Bearer <sanctum-token>` |
 | X-Tenant | dev only | `academy` |

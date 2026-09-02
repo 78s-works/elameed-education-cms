@@ -65,6 +65,6 @@ All endpoints already live; payloads in [`api/catalog.md`](api/catalog.md).
    php artisan tinker --execute="echo Schema::hasColumn('media_assets','size_bytes')?'yes':'NO', PHP_EOL, Schema::hasTable('lesson_access_windows')?'yes':'NO';"
    ```
    If 500 persists after migrate, pull the exact `storage/logs/laravel.log` trace and reopen.
-2. Confirm which branch/build `ahmedtammam.com` and `front.edu.78sworks.io` run — features may be on an undeployed branch.
+2. Confirm which branch/build `ahmedtammam.com` and `front.edu.raqeem-tech.com` run — features may be on an undeployed branch.
 3. Hand the wiring checklist to frontend.
 4. Re-run QA against the confirmed build.

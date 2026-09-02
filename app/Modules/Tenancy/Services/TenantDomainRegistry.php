@@ -148,7 +148,7 @@ class TenantDomainRegistry
 
     private function baseDomain(): string
     {
-        return HostNormalizer::normalize((string) config('tenancy.base_domain', 'elameed.app'));
+        return HostNormalizer::normalize((string) config('tenancy.base_domain', 'edu.raqeem-tech.com'));
     }
 
     private function ttl(): int

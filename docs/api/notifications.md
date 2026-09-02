@@ -36,7 +36,7 @@ The legacy-feed and SMS-settings endpoints run inside the `tenant` middleware gr
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 42\|abc...` |
 | Accept | yes | `application/json` |
@@ -105,7 +105,7 @@ Notes: `payload` is an arbitrary JSON object whose shape depends on `type`; it i
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 42\|abc...` |
 | Accept | yes | `application/json` |
@@ -188,7 +188,7 @@ Served on the **central/admin host** (`central` + `auth:sanctum` + `admin`) — 
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 42\|abc...` |
 | Accept | yes | `application/json` |
@@ -229,7 +229,7 @@ Notes: `base_url` falls back to the platform default (`config('sms.connekio.base
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 42\|abc...` |
 | Content-Type | yes | `application/json` |

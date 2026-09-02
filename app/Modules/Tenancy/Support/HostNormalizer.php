@@ -10,7 +10,7 @@ use Illuminate\Support\Str;
  * TenantDomainRegistry so the two can never drift on how a host is matched.
  *
  * A host is normalised to: lower-cased, no port, no trailing dot, and with a
- * leading "www." stripped — so "WWW.Ahmed.Elameed.app." and "ahmed.elameed.app"
+ * leading "www." stripped — so "WWW.Ahmed.edu.raqeem-tech.com." and "ahmed.edu.raqeem-tech.com"
  * collapse to the same key. See 02_Architecture.md §4.3.
  */
 final class HostNormalizer

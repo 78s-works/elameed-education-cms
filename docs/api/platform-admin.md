@@ -3,7 +3,7 @@
 > The Platform Admin module is the operator console for the whole platform (M01, M17). Unlike every other API surface, it is **cross-tenant and NOT tenant-scoped**: its routes live under `/v1/admin/*` **outside** the `tenant` middleware group, so there is **no Host-based tenant resolution** and no per-tenant RLS binding. It owns the teacher-academy (tenant) lifecycle — create / list / view / update tenants and their owner — plus a cross-tenant reports overview and a global audit-log reader.
 
 **How admin auth differs from the rest of the API:**
-- **Host-pinned to the admin console.** The `/admin/*` group runs a `central` middleware (`EnsureCentralHost`) **ahead of auth**: the request `Host` must be a central host — `admin.<base_domain>` (default `admin.elameed.app`), the base-domain apex, or a trusted local host in dev. A request on any **teacher academy domain** (subdomain or custom domain) is answered with **`404 not_found`** — identical to a nonexistent route — so the console can never be opened from a teacher's domain, and a valid platform-admin token cannot be replayed against a tenant host.
+- **Host-pinned to the admin console.** The `/admin/*` group runs a `central` middleware (`EnsureCentralHost`) **ahead of auth**: the request `Host` must be a central host — `admin.<base_domain>` (default `admin.edu.raqeem-tech.com`), the base-domain apex, or a trusted local host in dev. A request on any **teacher academy domain** (subdomain or custom domain) is answered with **`404 not_found`** — identical to a nonexistent route — so the console can never be opened from a teacher's domain, and a valid platform-admin token cannot be replayed against a tenant host.
 - Middleware is `central` -> `auth:sanctum` -> `admin` (the `admin` alias = `EnsurePlatformAdmin`, which rejects anyone whose `isPlatformAdmin()` is false with a `403`). There is **no** `tenant`, `active`, or `role` middleware.
 - Admin resolution is **not** tenant-scoped: no Host-based *tenant* resolution, no per-tenant RLS binding, and **no `X-Tenant` header**. The admin acts across all academies **only through `/admin/*`** (cross-tenant reports + tenant CRUD). Tenant *targeting*, where supported, is done with the `?tenant=` **query param** (audit logs) or the `{tenant:uuid}` **path** binding (tenant CRUD), not a header.
 - **No implicit access to tenant-scoped routes.** A platform-admin token carries no role or membership inside any academy: presented to a tenant-scoped route (e.g. `/teacher/*`, `/me`) on a tenant host it is refused with `403` by the `active` / `role` gates. Admin power is exercised *exclusively* via `/admin/*` on the admin host — there is no admin override on tenant routes.
@@ -66,7 +66,7 @@ Money is integer minor units (`*_minor`), base currency EGP. Timestamps are ISO-
       "name": "Nile Academy",
       "status": "active",
       "owner_user_id": 5501,
-      "primary_host": "nile-academy.elameed.app",
+      "primary_host": "nile-academy.edu.raqeem-tech.com",
       "created_at": "2026-06-02T11:14:00+00:00"
     }
   ],
@@ -89,7 +89,7 @@ Money is integer minor units (`*_minor`), base currency EGP. Timestamps are ISO-
 
 #### `POST /v1/admin/tenants`
 
-**Purpose:** Provision a new tenant academy. Creates the `Tenant`, auto-creates a primary **subdomain** domain (`<slug>.<base_domain>`, default `elameed.app`), and optionally provisions an owner (teacher) user + active `TenantUser` membership in one transaction.
+**Purpose:** Provision a new tenant academy. Creates the `Tenant`, auto-creates a primary **subdomain** domain (`<slug>.<base_domain>`, default `edu.raqeem-tech.com`), and optionally provisions an owner (teacher) user + active `TenantUser` membership in one transaction.
 
 **Auth:** 🛡️ Platform admin
 **Middleware:** `central` -> `auth:sanctum` -> `admin`
@@ -143,7 +143,7 @@ Notes: the owner is created with `firstOrCreate` on `phone` (existing users reus
     "name": "Nile Academy",
     "status": "active",
     "owner_user_id": 5501,
-    "primary_host": "nile-academy.elameed.app",
+    "primary_host": "nile-academy.edu.raqeem-tech.com",
     "created_at": "2026-07-15T10:00:00+00:00"
   }
 }
@@ -191,7 +191,7 @@ Notes: the owner is created with `firstOrCreate` on `phone` (existing users reus
       "trial_ends_at": null,
       "created_at": "2026-06-02T11:14:00+00:00",
       "domains": [
-        { "host": "nile-academy.elameed.app", "type": "subdomain", "is_primary": true }
+        { "host": "nile-academy.edu.raqeem-tech.com", "type": "subdomain", "is_primary": true }
       ]
     },
     "owner": {
@@ -303,7 +303,7 @@ Notes:
     "name": "Nile Academy (Updated)",
     "status": "suspended",
     "owner_user_id": 5501,
-    "primary_host": "nile-academy.elameed.app",
+    "primary_host": "nile-academy.edu.raqeem-tech.com",
     "created_at": "2026-06-02T11:14:00+00:00"
   }
 }

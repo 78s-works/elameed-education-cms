@@ -341,7 +341,7 @@ class AhmedTammamAcademySeeder extends Seeder
 
     private function seedTenantAndTeacher(): void
     {
-        $this->teacher = $this->makeUser('01200000001', 'د. أحمد تمّام', 'ahmed.tammam@elameed.app');
+        $this->teacher = $this->makeUser('01200000001', 'د. أحمد تمّام', 'ahmed.tammam@raqeem-tech.com');
 
         $this->tenant = Tenant::create([
             'slug' => self::SLUG,
@@ -373,7 +373,10 @@ class AhmedTammamAcademySeeder extends Seeder
         ]);
         TenantDomain::create([
             'tenant_id' => $this->tenant->id,
-            'host' => 'ahmed-tammam.elameed.app',
+            // Platform subdomain, minted under the configured base domain
+            // (TENANCY_BASE_DOMAIN) so the seed follows the deployment instead of
+            // pinning a host that no longer resolves after a domain move.
+            'host' => 'ahmed-tammam.'.config('tenancy.base_domain'),
             'type' => TenantDomainType::Subdomain->value,
             'is_primary' => false,
             'ssl_status' => 'active',
@@ -563,35 +566,35 @@ class AhmedTammamAcademySeeder extends Seeder
         ]);
 
         // Students + support, across every year.
-        $menna = $this->makeUser('01200000002', 'أ. منة الله (مساعدة)', 'menna.ta@elameed.app');
+        $menna = $this->makeUser('01200000002', 'أ. منة الله (مساعدة)', 'menna.ta@raqeem-tech.com');
         $this->assistant($menna, $all, now()->subMonths(4), [
             RoleTemplateKey::StudentsManager,
             RoleTemplateKey::SupportAgent,
         ]);
 
         // Grading + finance, graduating year only (single-year pivot).
-        $ali = $this->makeUser('01200000003', 'أ. علي حسن (مساعد)', 'ali.ta@elameed.app');
+        $ali = $this->makeUser('01200000003', 'أ. علي حسن (مساعد)', 'ali.ta@raqeem-tech.com');
         $this->assistant($ali, [$year3], now()->subMonths(2), [
             RoleTemplateKey::HomeworkGrader,
             RoleTemplateKey::Finance,
         ]);
 
         // Content only, and only the parts of it a copy editor needs.
-        $sara = $this->makeUser('01200000004', 'أ. سارة محمود (محررة محتوى)', 'sara.ta@elameed.app');
+        $sara = $this->makeUser('01200000004', 'أ. سارة محمود (محررة محتوى)', 'sara.ta@raqeem-tech.com');
         $this->assistant($sara, $all, now()->subMonths(3), [], [$lessonEditor]);
 
         // The front desk at the physical center.
-        $hoda = $this->makeUser('01200000005', 'أ. هدى عبد الله (استقبال)', 'hoda.ta@elameed.app');
+        $hoda = $this->makeUser('01200000005', 'أ. هدى عبد الله (استقبال)', 'hoda.ta@raqeem-tech.com');
         $this->assistant($hoda, $all, now()->subMonth(), [], [$receptionDesk]);
 
         // A delegate: may hand out roles, but cannot grant what he does not hold,
         // and can never grant team management onward (TeamAuthority).
-        $tarek = $this->makeUser('01200000006', 'أ. طارق فؤاد (مسؤول الفريق)', 'tarek.ta@elameed.app');
+        $tarek = $this->makeUser('01200000006', 'أ. طارق فؤاد (مسؤول الفريق)', 'tarek.ta@raqeem-tech.com');
         $this->assistant($tarek, $all, now()->subWeeks(6), [], [$teamDelegate]);
 
         // Baseline only: a real member of staff who can open the panel and reach
         // nothing inside it. The proof that no authority is implied by membership.
-        $nour = $this->makeUser('01200000007', 'أ. نور سيد (بلا صلاحيات)', 'nour.ta@elameed.app');
+        $nour = $this->makeUser('01200000007', 'أ. نور سيد (بلا صلاحيات)', 'nour.ta@raqeem-tech.com');
         $this->assistant($nour, $all, now()->subWeeks(2), []);
     }
 
@@ -1084,7 +1087,7 @@ class AhmedTammamAcademySeeder extends Seeder
         // Parent linked to a year-3 student, with a magic link.
         $year3 = $this->years['الثالث الثانوي'];
         $studentUser = User::query()->where('phone', '01200130001')->first();
-        $parent = $this->makeUser('01200099001', 'والد يوسف عادل', 'parent.youssef@elameed.app');
+        $parent = $this->makeUser('01200099001', 'والد يوسف عادل', 'parent.youssef@raqeem-tech.com');
         TenantUser::create([
             'tenant_id' => $this->tenant->id,
             'user_id' => $parent->id,

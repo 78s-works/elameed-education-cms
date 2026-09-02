@@ -88,7 +88,7 @@ class CustomDomainService
 
         // The platform owns central hosts, the base-domain apex and every
         // *.<base_domain> subdomain — a teacher can never claim one as "custom".
-        $base = HostNormalizer::normalize((string) config('tenancy.base_domain', 'elameed.app'));
+        $base = HostNormalizer::normalize((string) config('tenancy.base_domain', 'edu.raqeem-tech.com'));
         if (CentralHosts::matches($host) || $host === $base || str_ends_with($host, '.'.$base)) {
             throw ValidationException::withMessages(['host' => 'This domain is managed by the platform and cannot be registered.']);
         }

@@ -1,6 +1,6 @@
 <?php
 
-$baseDomain = env('TENANCY_BASE_DOMAIN', 'elameed.app');
+$baseDomain = env('TENANCY_BASE_DOMAIN', 'edu.raqeem-tech.com');
 
 return [
 

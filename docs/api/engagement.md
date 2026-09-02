@@ -49,7 +49,7 @@
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override) | `mrkhaled` |
 | Accept | yes | `application/json` |
 
@@ -104,7 +104,7 @@ Notes: `student_name` is the linked student's name, or the teacher-authored `aut
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Content-Type | yes | `application/json` |
 | Accept | yes | `application/json` |
@@ -191,7 +191,7 @@ Middleware: `tenant`, `auth:sanctum`, `active`, `role:teacher`. Responses use `R
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Content-Type | yes | `application/json` |
 | Accept | yes | `application/json` |
@@ -247,7 +247,7 @@ Middleware: `tenant`, `auth:sanctum`, `active`, `role:teacher`. Responses use `R
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
 
@@ -291,7 +291,7 @@ Note: plain `{ "data": [...] }` (no pagination meta).
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
 
@@ -331,7 +331,7 @@ Lesson Q&A (M09). Comments live per lesson; a top-level row is a question, a row
   "is_hidden": false,
   "author": { "uuid": "9b2c…", "name": "سارة محمد" },
   "attachments": [
-    { "uuid": "7c3d…", "kind": "image", "url": "https://cdn.elameed.app/storage/attachments/…png", "mime": "image/png", "size_bytes": 84213, "duration_sec": null, "created_at": "2026-07-27T10:00:00+00:00" }
+    { "uuid": "7c3d…", "kind": "image", "url": "https://cdn.raqeem-tech.com/storage/attachments/…png", "mime": "image/png", "size_bytes": 84213, "duration_sec": null, "created_at": "2026-07-27T10:00:00+00:00" }
   ],
   "replies": [ { "uuid": "…", "body": "…", "status": "new", "author": { "…": "…" }, "attachments": [], "created_at": "…" } ],
   "created_at": "2026-07-27T09:55:00+00:00"
@@ -420,7 +420,7 @@ Lesson Q&A (M09). Comments live per lesson; a top-level row is a question, a row
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
 
@@ -436,7 +436,7 @@ Lesson Q&A (M09). Comments live per lesson; a top-level row is a question, a row
       "uuid": "7b9d1f2a-4c8e-4a11-9f3b-1e2d3c4b5a60",
       "title": "فيزياء الصف الثالث الثانوي",
       "slug": "physics-g3",
-      "cover_url": "https://cdn.elameed.app/courses/34/cover.jpg"
+      "cover_url": "https://cdn.raqeem-tech.com/courses/34/cover.jpg"
     }
   ]
 }
@@ -454,7 +454,7 @@ Lesson Q&A (M09). Comments live per lesson; a top-level row is a question, a row
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Content-Type | yes | `application/json` |
 | Accept | yes | `application/json` |
@@ -493,7 +493,7 @@ Lesson Q&A (M09). Comments live per lesson; a top-level row is a question, a row
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
 
@@ -527,7 +527,7 @@ Lesson Q&A (M09). Comments live per lesson; a top-level row is a question, a row
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
 
@@ -560,7 +560,7 @@ Lesson Q&A (M09). Comments live per lesson; a top-level row is a question, a row
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
 
@@ -594,7 +594,7 @@ Lesson Q&A (M09). Comments live per lesson; a top-level row is a question, a row
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
 
@@ -637,7 +637,7 @@ All teacher endpoints require the token holder to be an `active` member with the
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
 
@@ -672,7 +672,7 @@ All teacher endpoints require the token holder to be an `active` member with the
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Content-Type | yes | `application/json` |
 | Accept | yes | `application/json` |
@@ -715,7 +715,7 @@ All teacher endpoints require the token holder to be an `active` member with the
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
 
@@ -743,7 +743,7 @@ All teacher endpoints require the token holder to be an `active` member with the
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
 
@@ -768,7 +768,7 @@ All teacher endpoints require the token holder to be an `active` member with the
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Content-Type | yes | `application/json` |
 | Accept | yes | `application/json` |

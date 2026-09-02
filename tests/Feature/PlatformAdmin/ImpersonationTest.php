@@ -27,7 +27,7 @@ class ImpersonationTest extends TestCase
     private function academy(): array
     {
         $tenant = Tenant::create(['slug' => 'ahmed', 'name' => 'Ahmed Academy', 'status' => TenantStatus::Active]);
-        $tenant->domains()->create(['host' => 'ahmed.elameed.app', 'type' => 'subdomain', 'is_primary' => true]);
+        $tenant->domains()->create(['host' => 'ahmed.edu.raqeem-tech.com', 'type' => 'subdomain', 'is_primary' => true]);
 
         $owner = User::factory()->create(['name' => 'Ahmed']);
         TenantUser::create([

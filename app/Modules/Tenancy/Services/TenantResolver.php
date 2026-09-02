@@ -87,7 +87,7 @@ class TenantResolver
             return (int) $domain->tenant_id;
         }
 
-        $label = HostNormalizer::subdomainLabel($host, (string) config('tenancy.base_domain', 'elameed.app'));
+        $label = HostNormalizer::subdomainLabel($host, (string) config('tenancy.base_domain', 'edu.raqeem-tech.com'));
 
         if ($label !== null) {
             return Tenant::query()->where('slug', $label)->value('id');

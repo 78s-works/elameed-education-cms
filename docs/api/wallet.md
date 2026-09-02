@@ -72,7 +72,7 @@ ledger entries.
 **Request headers**
 | Header | Required | Example |
 |---|---|---|
-| Host | Yes (or `X-Tenant`) | `academy.elameed.app` |
+| Host | Yes (or `X-Tenant`) | `academy.edu.raqeem-tech.com` |
 | X-Tenant | Alt to Host | `academy` |
 | Accept | Yes | `application/json` |
 | Authorization | Yes | `Bearer 1|xxxx…` |
@@ -121,7 +121,7 @@ newest first (30 per page).
 **Request headers**
 | Header | Required | Example |
 |---|---|---|
-| Host | Yes (or `X-Tenant`) | `academy.elameed.app` |
+| Host | Yes (or `X-Tenant`) | `academy.edu.raqeem-tech.com` |
 | Accept | Yes | `application/json` |
 | Authorization | Yes | `Bearer 1|xxxx…` |
 
@@ -146,10 +146,10 @@ newest first (30 per page).
     }
   ],
   "links": {
-    "first": "https://academy.elameed.app/api/v1/wallet/ledger?page=1",
-    "last": "https://academy.elameed.app/api/v1/wallet/ledger?page=3",
+    "first": "https://academy.edu.raqeem-tech.com/api/v1/wallet/ledger?page=1",
+    "last": "https://academy.edu.raqeem-tech.com/api/v1/wallet/ledger?page=3",
     "prev": null,
-    "next": "https://academy.elameed.app/api/v1/wallet/ledger?page=2"
+    "next": "https://academy.edu.raqeem-tech.com/api/v1/wallet/ledger?page=2"
   },
   "meta": {
     "current_page": 1,

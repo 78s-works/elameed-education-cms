@@ -66,6 +66,6 @@ final class CentralHosts
 
     private static function baseDomain(): string
     {
-        return HostNormalizer::normalize((string) config('tenancy.base_domain', 'elameed.app'));
+        return HostNormalizer::normalize((string) config('tenancy.base_domain', 'edu.raqeem-tech.com'));
     }
 }

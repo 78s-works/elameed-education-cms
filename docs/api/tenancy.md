@@ -1,6 +1,6 @@
 # Tenancy Module
 
-> The Tenancy module is the platform's multi-tenant backbone. It maps an incoming **Host** (custom domain or `*.elameed.app` subdomain) to a tenant academy, binds that tenant for the rest of the request (RLS/`BelongsToTenant` scoping), and exposes the tenant's public identity, branding/theme, and teacher-authored landing page to the SPA. It also owns the teacher-facing endpoints for editing branding (profile) and the landing page (layout + typed sections), a media upload helper for landing images, per-academy switches for access (sign-in/registration) and **landing mode** (CMS sections vs. a frontend-bundled custom page), and a per-academy **site metadata** store (arbitrary key/value entries, namespaced by `group`) managed via `/teacher/meta` and surfaced to the public landing (branding + meta bundle) via `GET /tenant/landing/meta`. Landing content follows the **LANDING_CONTRACT_V2** contract: a fixed catalog of typed sections where two types (`courses`, `testimonials`) are resolved server-side into real items.
+> The Tenancy module is the platform's multi-tenant backbone. It maps an incoming **Host** (custom domain or `*.edu.raqeem-tech.com` subdomain) to a tenant academy, binds that tenant for the rest of the request (RLS/`BelongsToTenant` scoping), and exposes the tenant's public identity, branding/theme, and teacher-authored landing page to the SPA. It also owns the teacher-facing endpoints for editing branding (profile) and the landing page (layout + typed sections), a media upload helper for landing images, per-academy switches for access (sign-in/registration) and **landing mode** (CMS sections vs. a frontend-bundled custom page), and a per-academy **site metadata** store (arbitrary key/value entries, namespaced by `group`) managed via `/teacher/meta` and surfaced to the public landing (branding + meta bundle) via `GET /tenant/landing/meta`. Landing content follows the **LANDING_CONTRACT_V2** contract: a fixed catalog of typed sections where two types (`courses`, `testimonials`) are resolved server-side into real items.
 >
 > **Per-section layout:** on top of the page-level `layout` (overall theme: `classic|grid|spotlight`), **every section carries its own `variant`** — one of **4 layouts defined per section type** (`LandingSchema::VARIANTS`). The teacher picks a section's variant from the editor, independently per section, so e.g. the `courses` section can render as a `carousel` while `testimonials` render as a `slider`. Variants are validated **per type** (a `courses` variant can't be set on a `hero`), and any section stored without a variant resolves to that type's default (the first variant listed).
 >
@@ -83,7 +83,7 @@ The teacher may add, remove, reorder, and **duplicate** sections — restricted 
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Accept | yes | `application/json` |
 
@@ -101,9 +101,9 @@ The teacher may add, remove, reorder, and **duplicate** sections — restricted 
     "name": "أكاديمية مستر خالد",
     "status": "active",
     "branding": {
-      "logo_url": "https://cdn.elameed.app/landing/12/logo.png",
-      "favicon_url": "https://cdn.elameed.app/landing/12/favicon.ico",
-      "cover_url": "https://cdn.elameed.app/landing/12/cover.jpg",
+      "logo_url": "https://cdn.raqeem-tech.com/landing/12/logo.png",
+      "favicon_url": "https://cdn.raqeem-tech.com/landing/12/favicon.ico",
+      "cover_url": "https://cdn.raqeem-tech.com/landing/12/cover.jpg",
       "primary_color": "#1E88E5",
       "secondary_color": "#FFB300",
       "bio": "مدرّس فيزياء بخبرة 10 سنوات.",
@@ -159,7 +159,7 @@ Notes: `branding` fields are `null` until the teacher sets them; `socials` is an
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | optional (Bearer token → `enrolled`) | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
@@ -224,8 +224,8 @@ Notes: `branding` fields are `null` until the teacher sets them; `socials` is an
             "uuid": "3f1c9a2b-8d47-4e10-9b6a-1c2d3e4f5061",
             "slug": "physics-grade-3",
             "title": "فيزياء الثالث الثانوي",
-            "cover_url": "https://cdn.elameed.app/covers/41.jpg",
-            "thumbnail_url": "https://cdn.elameed.app/thumbs/41.jpg",
+            "cover_url": "https://cdn.raqeem-tech.com/covers/41.jpg",
+            "thumbnail_url": "https://cdn.raqeem-tech.com/thumbs/41.jpg",
             "grade": "الصف الثالث الثانوي",
             "type": "online",
             "price": { "amount_minor": 25000, "currency": "EGP" },
@@ -294,7 +294,7 @@ Notes:
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | If-None-Match | optional (conditional GET → `304`) | `"9f2b…"` |
 | Accept | yes | `application/json` |
@@ -310,9 +310,9 @@ Notes:
   "data": {
     "site": { "slug": "mrkhaled", "name": "أكاديمية مستر خالد" },
     "branding": {
-      "logo_url": "https://cdn.elameed.app/landing/12/logo.png",
-      "favicon_url": "https://cdn.elameed.app/landing/12/favicon.ico",
-      "cover_url": "https://cdn.elameed.app/landing/12/cover.jpg",
+      "logo_url": "https://cdn.raqeem-tech.com/landing/12/logo.png",
+      "favicon_url": "https://cdn.raqeem-tech.com/landing/12/favicon.ico",
+      "cover_url": "https://cdn.raqeem-tech.com/landing/12/cover.jpg",
       "primary_color": "#1E88E5",
       "secondary_color": "#FFB300",
       "bio": "مدرّس فيزياء بخبرة 10 سنوات.",
@@ -324,7 +324,7 @@ Notes:
         { "key": "keywords", "value": "فيزياء, ثانوية عامة" }
       ],
       "og": [
-        { "key": "og:image", "value": "https://cdn.elameed.app/landing/12/og.jpg" }
+        { "key": "og:image", "value": "https://cdn.raqeem-tech.com/landing/12/og.jpg" }
       ]
     }
   }
@@ -360,7 +360,7 @@ Notes: `meta` is an object keyed by the entry's `group` (`seo`, `og`, `general`,
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
@@ -374,9 +374,9 @@ Notes: `meta` is an object keyed by the entry's `group` (`seo`, `og`, `general`,
 ```json
 {
   "data": {
-    "logo_url": "https://cdn.elameed.app/landing/12/logo.png",
-    "favicon_url": "https://cdn.elameed.app/landing/12/favicon.ico",
-    "cover_url": "https://cdn.elameed.app/landing/12/cover.jpg",
+    "logo_url": "https://cdn.raqeem-tech.com/landing/12/logo.png",
+    "favicon_url": "https://cdn.raqeem-tech.com/landing/12/favicon.ico",
+    "cover_url": "https://cdn.raqeem-tech.com/landing/12/cover.jpg",
     "primary_color": "#1E88E5",
     "secondary_color": "#FFB300",
     "bio": "مدرّس فيزياء بخبرة 10 سنوات.",
@@ -417,7 +417,7 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Content-Type | yes | `application/json` |
@@ -567,7 +567,7 @@ Notes: unset `contact` / `socials` serialize as empty objects `{}`; the other fi
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Accept | yes | `application/json` |
@@ -651,7 +651,7 @@ Omitting `locales`/`primary_locale` keeps the academy's current language set. Se
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Content-Type | yes | `application/json` |
@@ -766,7 +766,7 @@ Cross-field validation: `primary_locale` (when both are sent) must be one of `lo
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 12\|abc...` |
 | Content-Type | yes | `multipart/form-data` |
@@ -787,7 +787,7 @@ Cross-field validation: `primary_locale` (when both are sent) must be one of `lo
 ```json
 {
   "data": {
-    "url": "https://cdn.elameed.app/storage/landing/12/9aX7bQ...png"
+    "url": "https://cdn.raqeem-tech.com/storage/landing/12/9aX7bQ...png"
   }
 }
 ```
@@ -876,7 +876,7 @@ All five routes are tenant-scoped and require `role:teacher`. `{meta}` binds by 
 
 ### Custom domains (`/teacher/domains`)
 
-Attach the academy's own domain (M02, custom domains Part 2). A teacher points a CNAME at the platform's shared origin (`config('domains.cname_target')`, e.g. `connect.elameed.app`); once DNS propagates the host resolves to this tenant like any subdomain, and CORS trusts it (via `DynamicTenantCors`). TLS + ownership verification are handled by **Cloudflare-for-SaaS** in production — that provisioning is the documented future seam (`ssl_status` starts `pending`); the API records the row and returns the DNS record to publish.
+Attach the academy's own domain (M02, custom domains Part 2). A teacher points a CNAME at the platform's shared origin (`config('domains.cname_target')`, e.g. `connect.edu.raqeem-tech.com`); once DNS propagates the host resolves to this tenant like any subdomain, and CORS trusts it (via `DynamicTenantCors`). TLS + ownership verification are handled by **Cloudflare-for-SaaS** in production — that provisioning is the documented future seam (`ssl_status` starts `pending`); the API records the row and returns the DNS record to publish.
 
 `tenant_domains` is a **global** model, so `{domain}` (a `uuid`) is resolved **scoped-by-tenant inside the controller** (not implicit binding) — a uuid from another tenant → `404`. The auto-provisioned platform subdomain is read-only here (it can't be deleted). Config lives in `config/domains.php` (`custom_enabled`, `cname_target`, `max_per_tenant`, default 5).
 
@@ -923,7 +923,7 @@ Attach the academy's own domain (M02, custom domains Part 2). A teacher points a
     "dns": {
       "type": "CNAME",
       "name": "academy.example.com",
-      "value": "connect.elameed.app",
+      "value": "connect.edu.raqeem-tech.com",
       "note": "Add this record at your DNS provider. Verification and SSL are issued automatically once it propagates."
     }
   }
@@ -950,7 +950,7 @@ Audit-logged (`domain.registered`).
 ## Tenancy & error conventions (applies to every endpoint)
 
 - **Base path:** all routes are under `/api/v1`.
-- **Host gate:** every route runs through the `tenant` middleware group — `EnsureRegisteredDomain` (rejects unknown host → `404`, inactive tenant → `403`) then `ResolveTenant` (binds the tenant + RLS session). The tenant is resolved from the **Host** header (custom domain or `*.elameed.app` subdomain). An `X-Tenant: <slug>` header overrides only when `tenancy.allow_header_override` is enabled (local/tooling).
+- **Host gate:** every route runs through the `tenant` middleware group — `EnsureRegisteredDomain` (rejects unknown host → `404`, inactive tenant → `403`) then `ResolveTenant` (binds the tenant + RLS session). The tenant is resolved from the **Host** header (custom domain or a `*.<base_domain>` subdomain — `TENANCY_BASE_DOMAIN`, `edu.raqeem-tech.com` in production). An `X-Tenant: <slug>` header overrides only when `tenancy.allow_header_override` is enabled (local/tooling, and the split front/back production deployment — see `.env.production.example`).
 - **Success envelope:** `{ "data": ... }`.
 - **Error envelope:** `{ "error": { "code": "...", "message": "...", "details": { } } }`.
 - **Money:** integer minor units + `currency`. **Timestamps:** ISO-8601 UTC. **Arabic content:** UTF-8 as-is.

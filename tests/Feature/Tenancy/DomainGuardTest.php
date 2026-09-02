@@ -64,7 +64,7 @@ class DomainGuardTest extends TestCase
     {
         $this->activeTenant('ahmed');
 
-        $this->context('ahmed.elameed.app')
+        $this->context('ahmed.edu.raqeem-tech.com')
             ->assertOk()
             ->assertJsonPath('data.slug', 'ahmed');
     }
@@ -83,7 +83,7 @@ class DomainGuardTest extends TestCase
         $this->activeTenant('ahmed');
 
         // A subdomain of the base whose label matches no tenant slug.
-        $this->context('stranger.elameed.app')
+        $this->context('stranger.edu.raqeem-tech.com')
             ->assertNotFound()
             ->assertJsonPath('error.code', 'not_found');
     }
@@ -124,7 +124,7 @@ class DomainGuardTest extends TestCase
     {
         $this->activeTenant('ahmed');
 
-        $this->context('www.ahmed.elameed.app')
+        $this->context('www.ahmed.edu.raqeem-tech.com')
             ->assertOk()
             ->assertJsonPath('data.slug', 'ahmed');
     }
@@ -135,14 +135,14 @@ class DomainGuardTest extends TestCase
     {
         // Reaches the controller (which reports no tenant) rather than being
         // blocked by the gate — proven by the distinct error code.
-        $this->context('elameed.app')
+        $this->context('edu.raqeem-tech.com')
             ->assertNotFound()
             ->assertJsonPath('error.code', 'tenant_not_found');
     }
 
     public function test_admin_domain_bypasses_the_gate(): void
     {
-        $this->context('admin.elameed.app')
+        $this->context('admin.edu.raqeem-tech.com')
             ->assertNotFound()
             ->assertJsonPath('error.code', 'tenant_not_found');
     }

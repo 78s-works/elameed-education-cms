@@ -103,9 +103,9 @@ class CustomDomainTest extends TestCase
         Sanctum::actingAs($this->teacher());
         $h = ['X-Tenant' => 'demo'];
 
-        // A *.elameed.app subdomain and the apex are platform-managed.
-        $this->withHeaders($h)->postJson('/api/v1/teacher/domains', ['host' => 'x.elameed.app'])->assertStatus(422);
-        $this->withHeaders($h)->postJson('/api/v1/teacher/domains', ['host' => 'elameed.app'])->assertStatus(422);
+        // A *.edu.raqeem-tech.com subdomain and the apex are platform-managed.
+        $this->withHeaders($h)->postJson('/api/v1/teacher/domains', ['host' => 'x.edu.raqeem-tech.com'])->assertStatus(422);
+        $this->withHeaders($h)->postJson('/api/v1/teacher/domains', ['host' => 'edu.raqeem-tech.com'])->assertStatus(422);
         // Malformed.
         $this->withHeaders($h)->postJson('/api/v1/teacher/domains', ['host' => 'not a domain'])->assertStatus(422);
 
@@ -133,7 +133,7 @@ class CustomDomainTest extends TestCase
     public function test_platform_subdomain_cannot_be_removed(): void
     {
         $subdomain = TenantDomain::create([
-            'tenant_id' => $this->tenant->id, 'host' => 'demo.elameed.app', 'type' => 'subdomain', 'is_primary' => true,
+            'tenant_id' => $this->tenant->id, 'host' => 'demo.edu.raqeem-tech.com', 'type' => 'subdomain', 'is_primary' => true,
         ]);
         Sanctum::actingAs($this->teacher());
 

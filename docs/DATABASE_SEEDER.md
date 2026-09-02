@@ -65,7 +65,7 @@ per-tenant** (`tenant_user` table).
 | `01000000000` | إدارة منصة العميد | `is_platform_admin = true`; operates `/admin/*` on the central host only |
 
 ### Academy A — `farag-physics` (الفيزياء)
-Send header **`X-Tenant: farag-physics`** (dev) or use host `farag-physics.elameed.app`.
+Send header **`X-Tenant: farag-physics`** (dev) or use host `farag-physics.edu.raqeem-tech.com`.
 
 | Role | Phone | Name | Membership status |
 |---|---|---|---|
@@ -186,7 +186,7 @@ Legend: **Null?** ✓ = nullable · **FK** → referenced table · *(enum)* valu
 | Field | Type | Null? | Notes |
 |---|---|:--:|---|
 | `tenant_id` | bigint | | FK → tenants |
-| `host` | string | | unique, e.g. `farag-physics.elameed.app` |
+| `host` | string | | unique, e.g. `farag-physics.edu.raqeem-tech.com` |
 | `type` | string | | *(TenantDomainType)* `subdomain` \| `custom` |
 | `is_primary` | bool | | |
 | `cf_custom_hostname_id` | string | ✓ | Cloudflare hostname id |
@@ -523,7 +523,7 @@ Example `content.ar` for the **hero** section:
   "secondary_cta": { "label": "تصفّح الكورسات" },
   "teacher": {
     "name": "الأستاذ محمود فرّاج", "role": "مدرّس الفيزياء للثانوية العامة",
-    "image_url": "https://cdn.elameed.app/farag-physics/teacher.jpg",
+    "image_url": "https://cdn.raqeem-tech.com/farag-physics/teacher.jpg",
     "card_stats": [ {"value":"12","label":"سنة خبرة"}, {"value":"+8000","label":"طالب"}, {"value":"4.9","label":"التقييم"} ]
   },
   "chips": [ {"text":"ثانوية عامة","type":"green"}, {"text":"حصص مباشرة","type":"plain"}, {"text":"مراجعات نهائية","type":"red"} ]

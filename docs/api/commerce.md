@@ -115,7 +115,7 @@ return line items and total. Nothing is persisted.
 **Request headers**
 | Header | Required | Example |
 |---|---|---|
-| Host | Yes (or `X-Tenant`) | `academy.elameed.app` |
+| Host | Yes (or `X-Tenant`) | `academy.edu.raqeem-tech.com` |
 | X-Tenant | Alt to Host | `academy` |
 | Accept | Yes | `application/json` |
 | Authorization | Yes | `Bearer 1|xxxx…` |
@@ -181,7 +181,7 @@ invalid/expired/used-up/not-applicable `coupon` (`coupon` validation message).
 **Request headers**
 | Header | Required | Example |
 |---|---|---|
-| Host | Yes (or `X-Tenant`) | `academy.elameed.app` |
+| Host | Yes (or `X-Tenant`) | `academy.edu.raqeem-tech.com` |
 | Accept | Yes | `application/json` |
 | Authorization | Yes | `Bearer 1|xxxx…` |
 | Content-Type | Yes | `application/json` |
@@ -234,7 +234,7 @@ webhook confirms).
 **Request headers**
 | Header | Required | Example |
 |---|---|---|
-| Host | Yes (or `X-Tenant`) | `academy.elameed.app` |
+| Host | Yes (or `X-Tenant`) | `academy.edu.raqeem-tech.com` |
 | Accept | Yes | `application/json` |
 | Authorization | Yes | `Bearer 1|xxxx…` |
 | Content-Type | Yes | `application/json` |
@@ -268,7 +268,7 @@ Paymob payment (hosted redirect; order remains pending):
   "data": {
     "status": "pending",
     "order": "3d2b…-order-uuid",
-    "redirect_url": "https://academy.elameed.app/pay/paymob/3d2b…-order-uuid"
+    "redirect_url": "https://academy.edu.raqeem-tech.com/pay/paymob/3d2b…-order-uuid"
   }
 }
 ```
@@ -466,7 +466,7 @@ active **teacher/assistant** of the invoice's tenant. Anyone else → `403`.
       "number": 42,
       "issued_at": "2026-07-27T10:15:00+00:00",
       "pdf_available": true,
-      "download_url": "https://academy.elameed.app/api/v1/invoices/b2c1…-invoice-uuid/download",
+      "download_url": "https://academy.edu.raqeem-tech.com/api/v1/invoices/b2c1…-invoice-uuid/download",
       "order": { "uuid": "3d2b…-order-uuid", "total_minor": 15000, "currency": "EGP", "items": [ … ] }
     }
   ],

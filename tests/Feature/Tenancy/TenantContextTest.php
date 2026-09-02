@@ -38,7 +38,7 @@ class TenantContextTest extends TestCase
         Tenant::create(['slug' => 'ahmed', 'name' => "Ahmed's Academy", 'status' => TenantStatus::Active]);
 
         // Host = <slug>.<base_domain>; the first label is parsed as the slug.
-        $response = $this->getJson('http://ahmed.elameed.app/api/v1/tenant/context');
+        $response = $this->getJson('http://ahmed.edu.raqeem-tech.com/api/v1/tenant/context');
 
         $response->assertOk()->assertJsonPath('data.slug', 'ahmed');
     }

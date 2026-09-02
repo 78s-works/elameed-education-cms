@@ -73,7 +73,7 @@ class AdminTenantController
 
             TenantDomain::create([
                 'tenant_id' => $tenant->id,
-                'host' => $data['slug'].'.'.config('tenancy.base_domain', 'elameed.app'),
+                'host' => $data['slug'].'.'.config('tenancy.base_domain', 'edu.raqeem-tech.com'),
                 'type' => TenantDomainType::Subdomain->value,
                 'is_primary' => true,
             ]);

@@ -43,7 +43,7 @@ class AdminTenantTest extends TestCase
             ->assertJsonPath('data.status', 'active');
 
         $this->assertNotNull($res->json('data.owner_user_id'));
-        $this->assertSame('ahmed.elameed.app', $res->json('data.primary_host'));
+        $this->assertSame('ahmed.edu.raqeem-tech.com', $res->json('data.primary_host'));
     }
 
     public function test_admin_can_suspend_tenant(): void

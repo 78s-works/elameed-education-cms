@@ -39,7 +39,7 @@ use Illuminate\Support\Str;
  * nothing leaks across years.
  *
  * Credentials (all password `password`):
- *   - platform admin  admin@elameed.app / 01000000000
+ *   - platform admin  admin@raqeem-tech.com / 01000000000
  *   - teacher         0101000001  (tenant `farag-physics`)
  *   - students        0101000<year><seq>  e.g. 0101000101 (year 1, online),
  *                     0101000102 (year 1, center), 0101000201 (year 2, online)…
@@ -83,7 +83,7 @@ class DatabaseSeeder extends Seeder
 
     private function seedPlatformAdmin(): void
     {
-        $admin = User::firstOrNew(['email' => 'admin@elameed.app']);
+        $admin = User::firstOrNew(['email' => 'admin@raqeem-tech.com']);
         $admin->forceFill([
             'name' => 'إدارة منصة العميد',
             'phone' => '01000000000',

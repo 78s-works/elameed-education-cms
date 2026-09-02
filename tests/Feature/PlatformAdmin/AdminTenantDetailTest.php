@@ -50,7 +50,7 @@ class AdminTenantDetailTest extends TestCase
         Sanctum::actingAs(User::factory()->platformAdmin()->create());
 
         $tenant = Tenant::create(['slug' => 'ahmed', 'name' => 'Ahmed Academy', 'status' => TenantStatus::Active]);
-        $tenant->domains()->create(['host' => 'ahmed.elameed.app', 'type' => 'subdomain', 'is_primary' => true]);
+        $tenant->domains()->create(['host' => 'ahmed.edu.raqeem-tech.com', 'type' => 'subdomain', 'is_primary' => true]);
 
         $teacher = $this->member($tenant, TenantUserRole::Teacher, ['phone' => '01555555555', 'name' => 'Ahmed']);
         $tenant->forceFill(['owner_user_id' => $teacher->id])->save();
@@ -69,7 +69,7 @@ class AdminTenantDetailTest extends TestCase
         $this->getJson("/api/v1/admin/tenants/{$tenant->uuid}")
             ->assertOk()
             ->assertJsonPath('data.tenant.slug', 'ahmed')
-            ->assertJsonPath('data.tenant.domains.0.host', 'ahmed.elameed.app')
+            ->assertJsonPath('data.tenant.domains.0.host', 'ahmed.edu.raqeem-tech.com')
             ->assertJsonPath('data.owner.phone', '01555555555')
             ->assertJsonPath('data.branding.primary_color', '#1D4ED8')
             ->assertJsonPath('data.subscription.package.slug', 'growth')
@@ -88,6 +88,6 @@ class AdminTenantDetailTest extends TestCase
 
         // Admin off the central host → 404 (host gate).
         Sanctum::actingAs(User::factory()->platformAdmin()->create());
-        $this->getJson("http://ahmed.elameed.app/api/v1/admin/tenants/{$tenant->uuid}")->assertNotFound();
+        $this->getJson("http://ahmed.edu.raqeem-tech.com/api/v1/admin/tenants/{$tenant->uuid}")->assertNotFound();
     }
 }

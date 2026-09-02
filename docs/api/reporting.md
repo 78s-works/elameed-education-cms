@@ -27,7 +27,7 @@ Money is reported as an integer in minor units (`*_minor`); the platform base cu
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 42\|abc...` |
 | Accept | yes | `application/json` |
@@ -45,7 +45,7 @@ Money is reported as an integer in minor units (`*_minor`); the platform base cu
       "uuid": "0b8f9c2e-1d34-4a76-9c0e-77e2a1b3c4d5",
       "title": "الفيزياء - الصف الثالث الثانوي",
       "slug": "physics-g3",
-      "cover_url": "https://cdn.elameed.app/courses/12/cover.jpg",
+      "cover_url": "https://cdn.raqeem-tech.com/courses/12/cover.jpg",
       "lessons_total": 24,
       "lessons_completed": 9,
       "watch_precent": 37,
@@ -81,7 +81,7 @@ Notes:
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 42\|abc...` |
 | Accept | yes | `application/json` |
@@ -125,7 +125,7 @@ Notes:
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 42\|abc...` |
 | Accept | yes | `application/json` |
@@ -375,7 +375,7 @@ the refundable remainder · `403` — missing `finance.refunds.manage` · `404` 
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Authorization | yes | `Bearer 42\|abc...` |
 | Accept | yes | `application/json` |

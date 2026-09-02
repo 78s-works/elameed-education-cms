@@ -52,7 +52,7 @@ All routes are under the base prefix `/api/v1` and run through the `tenant` midd
 
 | Header | Required | Example |
 |---|---|---|
-| Host | yes | `mrkhaled.elameed.app` |
+| Host | yes | `mrkhaled.edu.raqeem-tech.com` |
 | X-Tenant | optional (dev override only) | `mrkhaled` |
 | Accept | yes | `application/json` |
 | Authorization | yes | `Bearer <token>` |
@@ -276,7 +276,7 @@ Per-item `status` is `applied`, `duplicate` (already synced / same student alrea
     "current_page": 1,
     "from": 1,
     "last_page": 1,
-    "path": "https://mrkhaled.elameed.app/api/v1/teacher/centers/{uuid}/attendance",
+    "path": "https://mrkhaled.edu.raqeem-tech.com/api/v1/teacher/centers/{uuid}/attendance",
     "per_page": 50,
     "to": 1,
     "total": 1
@@ -370,7 +370,7 @@ Records created here get `source: "online"` and `marked_by` = the acting teacher
     "current_page": 1,
     "from": 1,
     "last_page": 1,
-    "path": "https://mrkhaled.elameed.app/api/v1/teacher/codes",
+    "path": "https://mrkhaled.edu.raqeem-tech.com/api/v1/teacher/codes",
     "per_page": 50,
     "to": 1,
     "total": 1

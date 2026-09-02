@@ -83,7 +83,8 @@ assistant = granted subset, everyone else `[]`).
 
 ## 1. Tenancy
 `app/Modules/Tenancy` — the multi-tenant backbone. Resolves an incoming `Host`
-(custom domain or `*.elameed.app` subdomain) to a tenant academy, binds it for
+(custom domain or a `*.<base_domain>` subdomain — `edu.raqeem-tech.com` in
+production) to a tenant academy, binds it for
 the request, and serves the tenant's public identity/branding plus the
 teacher-authored landing page.
 

@@ -8,7 +8,7 @@ Postman collection in [`postman/`](../postman).
 | | |
 |---|---|
 | **Stack** | Laravel 13, PHP 8.3, Laravel Sanctum (personal access tokens) |
-| **Base URL** | `https://<tenant-host>/api/v1` (per-tenant host, or `*.elameed.app` subdomain) |
+| **Base URL** | `https://<tenant-host>/api/v1` (per-tenant host, or `*.edu.raqeem-tech.com` subdomain) |
 | **Format** | JSON only (`Accept: application/json`) |
 | **Architecture** | Modular monolith — one module per bounded context under `app/Modules` |
 
@@ -67,13 +67,17 @@ EnsureRegisteredDomain  →  ResolveTenant  →  (route-model binding)
 ```
 
 - The tenant is resolved from the **`Host` header** — a custom domain or an
-  `*.elameed.app` subdomain registered to an **active** tenant.
+  `*.<base_domain>` subdomain (`TENANCY_BASE_DOMAIN`, `edu.raqeem-tech.com` in
+  production) registered to an **active** tenant.
 - An unknown/suspended host is rejected **before** any tenant work happens.
 - `ResolveTenant` binds the tenant and its **RLS session** *before* route-model
   binding, so bound models can never cross tenants.
-- **Dev/tooling override:** `X-Tenant: <slug>` selects the tenant directly —
-  only when `tenancy.allow_header_override` is enabled. Production resolves
-  purely from `Host`.
+- **`X-Tenant: <slug>` override:** selects the tenant directly, only when
+  `tenancy.allow_header_override` is enabled. That is the default off production;
+  the split front/back deployment (SPA on `front.edu.raqeem-tech.com`, API on
+  `back.edu.raqeem-tech.com`) turns it on too, because every request reaches the
+  API on one central host and the `Host` header can no longer name a tenant. See
+  `.env.production.example`.
 
 ### Authentication
 - **Laravel Sanctum** personal access tokens: `Authorization: Bearer <token>`.
@@ -95,7 +99,7 @@ EnsureRegisteredDomain  →  ResolveTenant  →  (route-model binding)
 
 | Header | When | Value |
 |---|---|---|
-| `Host` | tenant-scoped routes | tenant domain, e.g. `academy.elameed.app` |
+| `Host` | tenant-scoped routes | tenant domain, e.g. `academy.edu.raqeem-tech.com` |
 | `X-Tenant` | dev/tooling only | tenant slug, e.g. `academy` (overrides Host) |
 | `Accept` | always | `application/json` |
 | `Authorization` | authenticated routes | `Bearer <sanctum-token>` |
