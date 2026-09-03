@@ -149,6 +149,8 @@ Route::prefix('v1')->middleware(['central', 'auth:sanctum', 'admin'])->group(fun
     Route::post('/admin/tenants', [AdminTenantController::class, 'store']);
     Route::get('/admin/tenants/{tenant:uuid}', [AdminTenantController::class, 'show']);
     Route::put('/admin/tenants/{tenant:uuid}', [AdminTenantController::class, 'update']);
+    // Soft-remove an academy (AdminTenantController::destroy — reversible, not a purge).
+    Route::delete('/admin/tenants/{tenant:uuid}', [AdminTenantController::class, 'destroy']);
     // Role templates (M20) — the blueprints tenants are stamped from. Editing one
     // affects only academies created afterwards; `resync` is the explicit, and
     // destructive, way to push a change onto the copies that already exist.

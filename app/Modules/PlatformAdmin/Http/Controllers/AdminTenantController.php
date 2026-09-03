@@ -113,6 +113,43 @@ class AdminTenantController
         return response()->json(['data' => $this->insights->detail($tenant)]);
     }
 
+    /**
+     * Remove an academy from the platform.
+     *
+     * This SOFT-deletes: the tenant keeps its rows, drops out of every listing,
+     * and stops resolving (TenantObserver::deleting flushes the host cache, so
+     * its domains 404 on the next request). Deliberately not a hard delete —
+     * 59 tables carry a cascading tenant_id, so forcing one would erase every
+     * lesson, student, exam and payment the academy ever had, with no undo. A
+     * purge, if it is ever wanted, belongs behind its own explicit endpoint.
+     *
+     * The admin must echo the academy's slug back in `confirm`; an academy is
+     * not something to remove on a mis-click.
+     */
+    public function destroy(Request $request, Tenant $tenant): JsonResponse
+    {
+        $confirm = (string) $request->input('confirm', '');
+
+        if ($confirm !== $tenant->slug) {
+            return response()->json([
+                'error' => [
+                    'code' => 'confirmation_mismatch',
+                    'message' => 'Type the academy slug to confirm removal.',
+                    'details' => ['confirm' => ['Expected the academy slug.']],
+                ],
+            ], 422);
+        }
+
+        $slug = $tenant->slug;
+        $tenant->delete();
+
+        app(AuditLogger::class)->log('tenant.deleted', [
+            'tenant' => $slug,
+        ], $tenant->id, 'tenant', $tenant->id);
+
+        return response()->json(null, 204);
+    }
+
     public function update(UpdateTenantRequest $request, Tenant $tenant): AdminTenantResource
     {
         $tenant->update($request->validated());
