@@ -20,6 +20,17 @@ $centralOrigins = array_map(
     )))
 );
 
+/*
+ * The live platform hosts, written out rather than only derived. The block
+ * above depends on TENANCY_CENTRAL_DOMAINS being present in the server's .env,
+ * and a deployment whose .env is missing it would silently allow nothing and
+ * break the console again. These two are the deployment, so they are stated.
+ */
+$liveOrigins = [
+    'https://front.edu.raqeem-tech.com',
+    'https://back.edu.raqeem-tech.com',
+];
+
 return [
 
     /*
@@ -45,6 +56,7 @@ return [
             explode(',', (string) env('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173')),
         ))),
         $centralOrigins,
+        $liveOrigins,
     ))),
 
     'allowed_origins_patterns' => [],
