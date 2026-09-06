@@ -3,6 +3,7 @@
 namespace App\Modules\Catalog\Http\Resources;
 
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Catalog\Services\StudentOwnership;
 use App\Modules\Catalog\Support\AccessTerms;
 use App\Modules\Media\Http\Resources\MediaAssetResource;
 use Illuminate\Http\Request;
@@ -24,6 +25,9 @@ class LessonResource extends JsonResource
             'price_minor' => $this->price_minor,
             'currency' => $this->currency,
             'is_purchasable' => (bool) $this->is_purchasable,
+            // True when the calling student already owns this standalone lesson —
+            // the Explore card then opens the player instead of a buy button.
+            'owned' => $this->ownedByCaller($request),
             'academic_year_id' => $this->whenLoaded('academicYear', fn () => $this->academicYear?->uuid),
             'title' => $this->title,
             'description' => $this->description,
@@ -55,5 +59,15 @@ class LessonResource extends JsonResource
             'attachments' => MediaAssetResource::collection($this->whenLoaded('attachments')),
             'sections' => LessonSectionResource::collection($this->whenLoaded('sections')),
         ];
+    }
+
+    /** Whether the authenticated student (optional sanctum on the public route)
+     *  owns this lesson. */
+    private function ownedByCaller(Request $request): bool
+    {
+        $user = $request->user() ?? auth('sanctum')->user();
+
+        return $user !== null
+            && app(StudentOwnership::class)->ownsLesson((int) $user->getKey(), (int) $this->id);
     }
 }

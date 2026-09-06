@@ -4,6 +4,7 @@ namespace App\Modules\Catalog\Http\Resources;
 
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Catalog\Services\PackageItemService;
+use App\Modules\Catalog\Services\StudentOwnership;
 use App\Modules\Catalog\Support\AccessTerms;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -31,6 +32,10 @@ class PackageResource extends JsonResource
             'price_minor' => $this->price_minor,
             'currency' => $this->currency,
             'is_purchasable' => (bool) $this->is_purchasable,
+            // True when the calling student already owns this package (bought as a
+            // whole) — the Explore card then shows an "access" link, not a buy
+            // button. Anonymous callers always get false.
+            'owned' => $this->ownedByCaller($request),
             'type' => $this->when($this->package_type_id !== null, fn () => [
                 'id' => $this->packageType?->id,
                 'uuid' => $this->packageType?->uuid,
@@ -58,5 +63,15 @@ class PackageResource extends JsonResource
             'items' => PackageItemResource::collection($this->whenLoaded('items')),
             'created_at' => $this->created_at?->toIso8601String(),
         ];
+    }
+
+    /** Whether the authenticated student (optional sanctum on the public route)
+     *  owns this package. */
+    private function ownedByCaller(Request $request): bool
+    {
+        $user = $request->user() ?? auth('sanctum')->user();
+
+        return $user !== null
+            && app(StudentOwnership::class)->ownsPackage((int) $user->getKey(), (int) $this->id);
     }
 }
