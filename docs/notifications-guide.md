@@ -77,13 +77,20 @@ Always available: `{tenant_name}`, `{app_name}`, `{app_url}`, `{now}`. Each noti
 
 Staff notifications follow **permissions**, not job titles: whoever holds the matching permission is notified, so an assistant who reviews receipts hears about receipts and a teacher who delegated that away does not.
 
+### Academy isolation
+
+Every audience is resolved inside the sender's own academy, in the resolver rather than in the caller. A student id belonging to another academy resolves to nobody rather than to a delivery, an academy can only search its own roster, and a foreign academic-year id in the request header is refused outright. The platform-wide "all teachers" audience is rejected on the academy surface — only the central admin console can address it.
+
 ---
 
 ## 2. Custom notifications
 
 **Teacher → Settings → رسائل مخصصة.**
 
-1. **Pick who it goes to** — everyone, one grade, one package, one lesson, one center, hand-picked students, or the assistants. Package and lesson lists follow the academic year selected at the top of the panel.
+1. **Pick who it goes to** — everyone, one grade, one package, one lesson, one center, hand-picked students, or the assistants.
+   - **Hand-picked students** are searched, not listed: type a name or a phone number, click a result to add them, and the chosen ones appear underneath as chips with an `×` to drop them. Two students can share a name, so each chip shows the phone as well.
+   - **The pickers follow the academic year selected at the top of the panel** — the student search, the lesson list and the package list all show that year only. To message a third-year student while the panel is on first year, switch the year first.
+   - **The audiences themselves are not year-filtered.** "كل الطلاب" means the whole academy across every year; to reach one grade, use the grade audience. This is deliberate, so "everyone" does not quietly mean "everyone in the year I happen to have selected".
 2. **Pick the channels** — in-app is always available. SMS is greyed out until the academy has entered its own SMS credentials (below). Email is available. Push is not built yet.
 3. **Write the message** — Arabic, English, or both. At least one language needs a title *and* a body. A reader whose language is missing gets the other one.
 4. **Press "احسب العدد والتكلفة"** — this is the safety step. It reports how many people the message reaches, how many of them have a phone / an email, and what the SMS part will cost. Changing the message or the audience clears the estimate, so a confirmed cost always belongs to the message actually being sent.
