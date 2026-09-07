@@ -7,6 +7,45 @@
 <a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
 </p>
 
+## Deployment — `public/web.config` is NOT in this repository
+
+The platform runs behind **IIS (Plesk on Windows)**, and IIS needs a
+`public/web.config` that this repository deliberately does not carry: it is
+listed in `.gitignore`, so it exists only on the server.
+
+**If the project moves to a new domain, host or server, that file has to be
+copied across by hand.** A fresh `git clone` plus deploy will not produce it,
+nothing in the build creates it, and the failures it causes do not look like a
+missing config file:
+
+| Missing from `web.config` | What breaks |
+|---|---|
+| WebDAV module + handler removed | `PUT`, `PATCH` and `DELETE` return 405 — WebDAV claims those verbs before PHP sees them, so every update and delete endpoint fails while `GET`/`POST` look fine |
+| CORS preflight outbound rules | IIS answers `OPTIONS` itself without the `Access-Control-Allow-*` headers, so the browser blocks the real request and the SPA reports a network error on every write |
+| `maxAllowedContentLength` (2 GB) | Large video and PDF uploads fail with a 404-shaped IIS error, not a Laravel validation message |
+| `TRACE` denied | Method still reachable |
+
+The last known-good version is in git history — recover it with:
+
+```bash
+git show 4a922b3^:public/web.config > public/web.config
+```
+
+It carries no hostnames, so the same file works on any domain; it is untracked
+because the server, not the repository, owns it. After copying it, confirm the
+response includes the `X-Elameed-Webconfig` header — that header exists purely
+to prove the file is live.
+
+Also remember, on any new environment:
+
+```bash
+php artisan migrate --force && php artisan rbac:sync
+```
+
+plus a queue worker and the scheduler (`php artisan queue:work`,
+`php artisan schedule:work`) — notifications are delivered on the queue, and
+scheduled messages and the daily billing reminders come from the scheduler.
+
 ## About Laravel
 
 Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
