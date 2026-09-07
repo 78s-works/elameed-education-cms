@@ -10,6 +10,8 @@ use App\Modules\Centers\Enums\CodeType;
 use App\Modules\Centers\Models\ActivationCode;
 use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Services\EnrollmentService;
+use App\Modules\Notifications\Services\Engine\NotificationEngineService;
+use App\Modules\Notifications\Support\Money;
 use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Services\LedgerService;
 use Illuminate\Support\Facades\DB;
@@ -27,6 +29,7 @@ class CodeRedemptionService
     public function __construct(
         private readonly LedgerService $ledger,
         private readonly EnrollmentService $enrollments,
+        private readonly NotificationEngineService $engine,
     ) {}
 
     /**
@@ -34,7 +37,7 @@ class CodeRedemptionService
      */
     public function redeem(int $tenantId, string $code, User $student): array
     {
-        return DB::transaction(function () use ($tenantId, $code, $student): array {
+        $result = DB::transaction(function () use ($tenantId, $code, $student): array {
             $ac = ActivationCode::withoutGlobalScopes()
                 ->where('tenant_id', $tenantId)
                 ->where('code', $code)
@@ -86,7 +89,43 @@ class CodeRedemptionService
                 'redeemed_at' => now(),
             ]);
 
-            return ['code' => $ac->code] + $result;
+            return ['code' => $ac->code, 'notify' => $this->describe($ac, $result)] + $result;
         });
+
+        // Confirmed after the money/enrollment transaction commits, so the
+        // student is never told about a redemption that then rolled back.
+        $this->engine->dispatch(
+            notificationKey: 'center.activation_code.redeemed',
+            tenantId: $tenantId,
+            recipientUserIds: [(int) $student->getKey()],
+            renderVariables: ['target' => (string) ($result['notify'] ?? '')],
+            triggeredByUserId: $student->getKey(),
+            entityType: 'activation_code',
+            entityId: null,
+            auditPayload: ['type' => (string) ($result['type'] ?? '')],
+        );
+
+        unset($result['notify']);
+
+        return $result;
+    }
+
+    /**
+     * A one-line, human description of what the code actually gave — the copy
+     * variable `{target}`.
+     *
+     * @param  array<string, mixed>  $result
+     */
+    private function describe(ActivationCode $code, array $result): string
+    {
+        if (($result['type'] ?? null) === 'wallet') {
+            return Money::format((int) ($result['amount_minor'] ?? 0));
+        }
+
+        if (($code->target_type ?? null) === ActivationCode::TARGET_PACKAGE) {
+            return (string) (Package::withoutGlobalScopes()->find($code->target_id)?->title ?? '');
+        }
+
+        return (string) (Lesson::withoutGlobalScopes()->find($code->target_id)?->title ?? '');
     }
 }

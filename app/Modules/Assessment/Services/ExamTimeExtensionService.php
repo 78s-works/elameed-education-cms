@@ -4,7 +4,11 @@ namespace App\Modules\Assessment\Services;
 
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamTimeExtension;
+use App\Models\User;
 use App\Modules\Catalog\Enums\ExtensionStatus;
+use App\Modules\Identity\Enums\Permission;
+use App\Modules\Notifications\Services\Engine\NotificationEngineService;
+use App\Modules\Notifications\Support\StaffRecipients;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /**
@@ -15,6 +19,8 @@ use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
  */
 class ExamTimeExtensionService
 {
+    public function __construct(private readonly NotificationEngineService $engine) {}
+
     /** Student requests extra time. One pending request at a time; allowance must remain. */
     public function request(int $tenantId, int $userId, Exam $exam, ?int $minutes): ExamTimeExtension
     {
@@ -47,6 +53,24 @@ class ExamTimeExtensionService
         $row->tenant_id = $tenantId;
         $row->save();
 
+        $reviewers = StaffRecipients::withPermission($tenantId, Permission::ExamExtensionsReview->value);
+
+        if ($reviewers !== []) {
+            $this->engine->dispatch(
+                notificationKey: 'exams.extension.requested',
+                tenantId: $tenantId,
+                recipientUserIds: $reviewers,
+                renderVariables: [
+                    'student.name' => (string) (User::query()->find($userId)?->name ?? ''),
+                    'exam.title' => (string) $exam->title,
+                ],
+                triggeredByUserId: $userId,
+                entityType: 'exam_time_extension',
+                entityId: $row->getKey(),
+                auditPayload: ['exam_uuid' => $exam->uuid, 'requested_minutes' => $minutes],
+            );
+        }
+
         return $row;
     }
 
@@ -73,6 +97,22 @@ class ExamTimeExtensionService
         $request->decided_at = now();
         $request->decided_by = $staffId;
         $request->save();
+
+        if ($grant) {
+            $this->engine->dispatch(
+                notificationKey: 'exams.extension.approved',
+                tenantId: $tenantId,
+                recipientUserIds: [(int) $request->user_id],
+                renderVariables: [
+                    'exam.title' => (string) $exam->title,
+                    'minutes' => (string) $request->granted_minutes,
+                ],
+                triggeredByUserId: $staffId,
+                entityType: 'exam_time_extension',
+                entityId: $request->getKey(),
+                auditPayload: ['granted_minutes' => $request->granted_minutes],
+            );
+        }
 
         return $request;
     }

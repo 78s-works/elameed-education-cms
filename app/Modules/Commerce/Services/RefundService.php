@@ -10,7 +10,8 @@ use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Commerce\Models\OrderItem;
 use App\Modules\Commerce\Models\Refund;
-use App\Modules\Notifications\Services\NotificationService;
+use App\Modules\Notifications\Services\Engine\NotificationEngineService;
+use App\Modules\Notifications\Support\Money;
 use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Services\LedgerService;
 use App\Support\Audit\AuditLogger;
@@ -38,7 +39,7 @@ class RefundService
     public function __construct(
         private readonly LedgerService $ledger,
         private readonly PackageItemService $packageItems,
-        private readonly NotificationService $notifications,
+        private readonly NotificationEngineService $engine,
         private readonly AuditLogger $audit,
     ) {}
 
@@ -123,12 +124,24 @@ class RefundService
             return $refund;
         });
 
-        $this->notifications->inApp($tenantId, (int) $order->user_id, 'purchase.refunded', [
-            'order_uuid' => $order->uuid,
-            'amount_minor' => $amount,
-            'destination' => $destination,
-            'full' => $isFull,
-        ]);
+        $this->engine->dispatch(
+            notificationKey: 'payments.order.refunded',
+            tenantId: $tenantId,
+            recipientUserIds: [(int) $order->user_id],
+            renderVariables: [
+                'amount' => Money::format($amount, (string) ($order->currency ?? 'EGP')),
+                'order.uuid' => (string) $order->uuid,
+            ],
+            triggeredByUserId: $actorId,
+            entityType: 'order',
+            entityId: $order->getKey(),
+            auditPayload: [
+                'order_uuid' => $order->uuid,
+                'amount_minor' => $amount,
+                'destination' => $destination,
+                'full' => $isFull,
+            ],
+        );
 
         // A refund is the most financially sensitive action in the system, so
         // the actor is passed explicitly rather than left to Auth::id() — this

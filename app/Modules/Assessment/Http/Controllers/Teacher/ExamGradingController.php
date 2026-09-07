@@ -7,6 +7,7 @@ use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Assessment\Services\GradingService;
 use App\Modules\Engagement\Services\PointsService;
+use App\Modules\Notifications\Services\Engine\NotificationEngineService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -21,6 +22,7 @@ class ExamGradingController
     public function __construct(
         private readonly GradingService $grading,
         private readonly PointsService $points,
+        private readonly NotificationEngineService $engine,
     ) {}
 
     public function submissions(Request $request, Exam $exam): JsonResponse
@@ -63,6 +65,25 @@ class ExamGradingController
             && $exam->passed((int) $attempt->score, (int) $attempt->max_score) === true) {
             $this->points->award((int) $exam->tenant_id, (int) $attempt->user_id,
                 (int) config('gamification.exam_points', 20), 'exam.passed', 'exam', $exam->id);
+        }
+
+        // "Your score is ready" only makes sense for work a human had to mark:
+        // an auto-graded attempt shows its result on the submit screen, so it is
+        // not announced. This fires when the last manual question is settled.
+        if ($attempt->status->value === 'graded') {
+            $this->engine->dispatch(
+                notificationKey: 'exams.attempt.graded',
+                tenantId: (int) $exam->tenant_id,
+                recipientUserIds: [(int) $attempt->user_id],
+                renderVariables: [
+                    'exam.title' => (string) $exam->title,
+                    'score' => $attempt->score.'/'.$attempt->max_score,
+                ],
+                triggeredByUserId: $request->user()?->getKey(),
+                entityType: 'exam_attempt',
+                entityId: $attempt->getKey(),
+                auditPayload: ['exam_uuid' => $exam->uuid],
+            );
         }
 
         return response()->json(['data' => [

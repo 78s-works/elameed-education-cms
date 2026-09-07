@@ -12,6 +12,7 @@ use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Identity\Services\OtpService;
+use App\Modules\Notifications\Services\Engine\NotificationEngineService;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -33,6 +34,7 @@ class RegisterStudentAction
     public function __construct(
         private readonly OtpService $otp,
         private readonly CenterIdCodeRedemptionService $idCodes,
+        private readonly NotificationEngineService $engine,
     ) {}
 
     public function handle(Tenant $tenant, array $data, string $verificationMode = 'auto'): User
@@ -146,8 +148,25 @@ class RegisterStudentAction
         });
 
         if ($sendOtp) {
+            // The account is not usable yet; the welcome goes out from
+            // VerifyOtpAction, once the code activates the membership.
             $this->otp->issue($phone, OtpPurpose::Register);
+
+            return $user;
         }
+
+        // `auto` mode: the membership is active the moment we get here, so this
+        // is the point the student is actually welcomed. (Most academies run in
+        // this mode — wiring the welcome only into the OTP path left them with
+        // no welcome at all.)
+        $this->engine->dispatch(
+            notificationKey: 'account.welcome',
+            tenantId: $tenant->getKey(),
+            recipientUserIds: [$user->getKey()],
+            renderVariables: ['student.name' => (string) $user->name],
+            entityType: 'user',
+            entityId: $user->getKey(),
+        );
 
         return $user;
     }

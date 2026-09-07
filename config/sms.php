@@ -20,4 +20,13 @@ return [
         'base_url' => env('SMS_CONNEKIO_BASE_URL', 'https://weapi.connekio.com'),
     ],
 
+    /*
+    | Fallback price of ONE SMS segment, in minor units (piastres), used by the
+    | custom-notification cost preview when an academy has not stored its own
+    | contract price on its sms channel settings (`price_per_segment_minor`).
+    */
+    'price_per_segment_minor' => (int) env('SMS_PRICE_PER_SEGMENT_MINOR', 0),
+
+    'currency' => env('SMS_CURRENCY', 'EGP'),
+
 ];

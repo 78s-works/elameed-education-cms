@@ -12,6 +12,7 @@ use App\Modules\Catalog\Enums\LessonSectionType;
 use App\Modules\Catalog\Enums\SectionDelivery;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonSection;
+use App\Modules\Notifications\Services\Events\ExamAnnouncer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -29,6 +30,8 @@ use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
  */
 class ExamController
 {
+    public function __construct(private readonly ExamAnnouncer $announcer) {}
+
     /** Filterable list: ?type=&lesson_id= . */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -91,7 +94,15 @@ class ExamController
             $data['lesson_id'] = $lessonId;
         }
 
+        $wasPublished = (bool) $exam->is_published;
+
         $exam->update($data);
+
+        // Tell the students the moment it actually goes live — the flip is the
+        // event, so ordinary edits to an already-published exam stay silent.
+        if (! $wasPublished && (bool) $exam->is_published) {
+            $this->announcer->announce($exam, $request->user()?->getKey());
+        }
 
         // The delivery method now lives on the exam (as `mode`); the backing lesson
         // part mirrors it. Re-sync the part's `delivery` whenever the mode is (re)set

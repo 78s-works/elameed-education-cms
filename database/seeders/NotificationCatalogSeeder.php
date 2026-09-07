@@ -26,7 +26,11 @@ class NotificationCatalogSeeder extends Seeder
                     'module' => $entry['module'],
                     'severity' => $entry['severity'],
                     'is_system' => true,
-                    'status' => NotificationTypeStatus::Ready->value,
+                    // Everything in the catalog is live unless the entry says
+                    // otherwise — the engine refuses to dispatch a non-`ready`
+                    // type, so this is how an entry is parked (see
+                    // `packages.package.purchased`).
+                    'status' => $entry['status'] ?? NotificationTypeStatus::Ready->value,
                 ],
             );
 
@@ -129,7 +133,13 @@ class NotificationCatalogSeeder extends Seeder
                 ]],
             ],
             [
+                // NOT live: a completed purchase is announced once, as
+                // `payments.order.completed`. This per-package variant is kept in
+                // the catalog (status `planning`) for the day package activation
+                // needs its own message — a code redemption or a manual grant,
+                // where no order exists. A `planning` type never dispatches.
                 'key' => 'packages.package.purchased', 'module' => 'packages', 'severity' => 'info',
+                'status' => NotificationTypeStatus::Planning->value,
                 'channels' => [$db => [
                     'ar' => ['title' => 'تم شراء الحزمة', 'body' => 'تم تفعيل حزمة "{package.title}". استمتع بالمحتوى!'],
                     'en' => ['title' => 'Package purchased', 'body' => 'Your "{package.title}" package is active. Enjoy!'],
@@ -172,6 +182,129 @@ class NotificationCatalogSeeder extends Seeder
                     'ar' => ['title' => 'رد على تذكرة الدعم', 'body' => 'رد فريق الدعم على تذكرتك: "{ticket.subject}".'],
                     'en' => ['title' => 'Reply to your ticket', 'body' => 'Support replied to your ticket: "{ticket.subject}".'],
                 ]],
+            ],
+
+            // ── Account ──────────────────────────────────────────────────────
+            [
+                // First thing a student sees after the account is verified.
+                'key' => 'account.welcome', 'module' => 'account', 'severity' => 'info',
+                'channels' => [$db => [
+                    'ar' => ['title' => 'أهلًا بك في {tenant_name}', 'body' => 'مرحبًا {student.name}، تم تفعيل حسابك. ابدأ الآن بتصفح الدروس والباقات.'],
+                    'en' => ['title' => 'Welcome to {tenant_name}', 'body' => 'Hi {student.name}, your account is active. Start exploring the lessons and packages.'],
+                ]],
+            ],
+
+            // ── Payments ─────────────────────────────────────────────────────
+            [
+                // Any completed order — wallet, card or code.
+                'key' => 'payments.order.completed', 'module' => 'payments', 'severity' => 'info',
+                'channels' => [$db => [
+                    'ar' => ['title' => 'تم إتمام الطلب', 'body' => 'تم إتمام طلبك بقيمة {amount} وتفعيل ما اشتريته.'],
+                    'en' => ['title' => 'Order completed', 'body' => 'Your order for {amount} is complete and what you bought is now active.'],
+                ]],
+            ],
+            [
+                'key' => 'payments.order.refunded', 'module' => 'payments', 'severity' => 'warning',
+                'channels' => [$db => [
+                    'ar' => ['title' => 'تم استرداد المبلغ', 'body' => 'تم استرداد {amount} من طلبك. قد يتم سحب ما اشتريته بهذا الطلب.'],
+                    'en' => ['title' => 'Order refunded', 'body' => '{amount} was refunded from your order. Access bought with it may be revoked.'],
+                ]],
+            ],
+            [
+                // → teacher/staff who review receipts. Vodafone Cash / InstaPay.
+                'key' => 'payments.receipt.uploaded', 'module' => 'payments', 'severity' => 'info',
+                'channels' => [$db => [
+                    'ar' => ['title' => 'إيصال دفع جديد', 'body' => 'رفع الطالب {student.name} إيصال {method} بقيمة {amount} للمراجعة.'],
+                    'en' => ['title' => 'New payment receipt', 'body' => '{student.name} uploaded a {method} receipt for {amount} to review.'],
+                ]],
+            ],
+            [
+                'key' => 'payments.receipt.approved', 'module' => 'payments', 'severity' => 'info',
+                'channels' => [
+                    $db => [
+                        'ar' => ['title' => 'تم قبول الإيصال', 'body' => 'تم قبول إيصالك وإضافة {amount} إلى محفظتك.'],
+                        'en' => ['title' => 'Receipt approved', 'body' => 'Your receipt was approved and {amount} was added to your wallet.'],
+                    ],
+                    $sms => [
+                        'ar' => ['title' => '', 'body' => 'تم قبول إيصالك في {tenant_name} وإضافة {amount} إلى محفظتك.'],
+                        'en' => ['title' => '', 'body' => 'Your {tenant_name} receipt was approved: {amount} added to your wallet.'],
+                    ],
+                ],
+            ],
+            [
+                'key' => 'payments.receipt.rejected', 'module' => 'payments', 'severity' => 'warning',
+                'channels' => [
+                    $db => [
+                        'ar' => ['title' => 'تم رفض الإيصال', 'body' => 'تم رفض إيصالك. السبب: {reason|default:"غير مذكور"}.'],
+                        'en' => ['title' => 'Receipt rejected', 'body' => 'Your receipt was rejected. Reason: {reason|default:"not given"}.'],
+                    ],
+                    $sms => [
+                        'ar' => ['title' => '', 'body' => 'تم رفض إيصالك في {tenant_name}. السبب: {reason|default:"غير مذكور"}.'],
+                        'en' => ['title' => '', 'body' => 'Your {tenant_name} receipt was rejected. Reason: {reason|default:"not given"}.'],
+                    ],
+                ],
+            ],
+
+            // ── Center (on-premise) students ─────────────────────────────────
+            [
+                // Also texted to the guardian_phone when the academy has SMS on.
+                'key' => 'center.attendance.absent', 'module' => 'center', 'severity' => 'warning',
+                'channels' => [
+                    $db => [
+                        'ar' => ['title' => 'تسجيل غياب', 'body' => 'تم تسجيل غياب {student.name} في حصة {session|default:"اليوم"} بتاريخ {date}.'],
+                        'en' => ['title' => 'Marked absent', 'body' => '{student.name} was marked absent from {session|default:"today\'s session"} on {date}.'],
+                    ],
+                    $sms => [
+                        'ar' => ['title' => '', 'body' => '{tenant_name}: تم تسجيل غياب {student.name} بتاريخ {date}.'],
+                        'en' => ['title' => '', 'body' => '{tenant_name}: {student.name} was marked absent on {date}.'],
+                    ],
+                ],
+            ],
+            [
+                'key' => 'center.exam_grade.published', 'module' => 'center', 'severity' => 'info',
+                'channels' => [
+                    $db => [
+                        'ar' => ['title' => 'نتيجة امتحان السنتر', 'body' => 'نتيجتك في "{exam.title}": {score} من {total}.'],
+                        'en' => ['title' => 'Center exam result', 'body' => 'Your result for "{exam.title}": {score} out of {total}.'],
+                    ],
+                    $sms => [
+                        'ar' => ['title' => '', 'body' => '{tenant_name}: نتيجة {student.name} في "{exam.title}" هي {score} من {total}.'],
+                        'en' => ['title' => '', 'body' => '{tenant_name}: {student.name} scored {score}/{total} in "{exam.title}".'],
+                    ],
+                ],
+            ],
+            [
+                'key' => 'center.activation_code.redeemed', 'module' => 'center', 'severity' => 'info',
+                'channels' => [$db => [
+                    'ar' => ['title' => 'تم تفعيل الكود', 'body' => 'تم تفعيل الكود بنجاح: {target|default:"تمت إضافة الرصيد"}.'],
+                    'en' => ['title' => 'Code redeemed', 'body' => 'Your code was redeemed: {target|default:"credit added"}.'],
+                ]],
+            ],
+
+            // ── Exams: time extensions ───────────────────────────────────────
+            [
+                'key' => 'exams.extension.requested', 'module' => 'exams', 'severity' => 'info',
+                'channels' => [$db => [
+                    'ar' => ['title' => 'طلب وقت إضافي', 'body' => 'طلب الطالب {student.name} وقتًا إضافيًا في اختبار "{exam.title}".'],
+                    'en' => ['title' => 'Extra-time request', 'body' => '{student.name} requested extra time on the exam "{exam.title}".'],
+                ]],
+            ],
+            [
+                'key' => 'exams.extension.approved', 'module' => 'exams', 'severity' => 'info',
+                'channels' => [$db => [
+                    'ar' => ['title' => 'تمت الموافقة على الوقت الإضافي', 'body' => 'تمت إضافة {minutes} دقيقة إلى اختبار "{exam.title}".'],
+                    'en' => ['title' => 'Extra time approved', 'body' => '{minutes} extra minutes were added to your "{exam.title}" attempt.'],
+                ]],
+            ],
+
+            // ── Custom (human-written) messages ──────────────────────────────
+            [
+                // The audit type every custom notification is filed under. It has
+                // NO templates on purpose: the copy travels with the broadcast
+                // (see BroadcastService), and this row exists so a custom send
+                // still lands in notification_events with the automatic ones.
+                'key' => 'custom.message', 'module' => 'custom', 'severity' => 'info',
+                'channels' => [],
             ],
         ];
     }

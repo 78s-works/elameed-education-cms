@@ -5,6 +5,7 @@ namespace App\Modules\Identity\Services;
 use App\Modules\Identity\Enums\OtpPurpose;
 use App\Modules\Identity\Jobs\SendOtpJob;
 use App\Modules\Identity\Models\OtpCode;
+use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
 
@@ -34,7 +35,16 @@ class OtpService
             'expires_at' => Carbon::now()->addSeconds((int) config('otp.ttl', 600)),
         ]);
 
-        SendOtpJob::dispatch($identifier, $channel, $purpose, $code);
+        // The academy is captured HERE, while the request still has one: SMS
+        // credentials and the message wording are both per-tenant, and the
+        // worker has no request to resolve them from.
+        SendOtpJob::dispatch(
+            $identifier,
+            $channel,
+            $purpose,
+            $code,
+            app(TenantContext::class)->tenantId(),
+        );
     }
 
     /**

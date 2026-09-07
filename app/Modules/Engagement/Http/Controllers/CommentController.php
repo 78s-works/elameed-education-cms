@@ -11,10 +11,12 @@ use App\Modules\Engagement\Http\Resources\CommentResource;
 use App\Modules\Engagement\Models\Attachment;
 use App\Modules\Engagement\Models\Comment;
 use App\Modules\Identity\Enums\TenantUserRole;
+use App\Modules\Notifications\Services\Engine\NotificationEngineService;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 /**
@@ -27,6 +29,7 @@ class CommentController
     public function __construct(
         private readonly TenantContext $context,
         private readonly EnrollmentService $enrollments,
+        private readonly NotificationEngineService $engine,
     ) {}
 
     public function index(Request $request, Lesson $lesson): AnonymousResourceCollection
@@ -57,6 +60,11 @@ class CommentController
             'user_id' => $user->getKey(),
             'body' => $request->validated('body'),
             'status' => CommentStatus::New->value,
+            // Pin the thread to the LESSON's academic year, not the caller's active
+            // year context. A staff reply may arrive with a different year (or none),
+            // and the BelongsToAcademicYear global scope would then hide the row from
+            // the listings — so anchor it to the lesson deterministically.
+            'academic_year_id' => $lesson->academic_year_id,
         ]);
         $comment->save();
 
@@ -81,6 +89,11 @@ class CommentController
             'parent_id' => $parent->getKey(),
             'body' => $request->validated('body'),
             'status' => CommentStatus::New->value,
+            // Inherit the parent question's academic year so the reply always lives
+            // in the same thread scope. Without this a teacher's reply picks up the
+            // teacher's active year (or none), and the BelongsToAcademicYear global
+            // scope hides the answer from both the lesson page and the forum.
+            'academic_year_id' => $parent->academic_year_id,
         ]);
         $reply->save();
 
@@ -88,6 +101,24 @@ class CommentController
 
         if ($this->isStaff($request) && $parent->status === CommentStatus::New) {
             $parent->update(['status' => CommentStatus::Answered->value]);
+        }
+
+        // Tell the asker their question was answered — but only for a STAFF
+        // reply, and never for the asker's own follow-up.
+        if ($this->isStaff($request) && (int) $parent->user_id !== (int) $user->getKey()) {
+            $this->engine->dispatch(
+                notificationKey: 'qa.answer.posted',
+                tenantId: (int) $this->context->tenantOrFail()->getKey(),
+                recipientUserIds: [(int) $parent->user_id],
+                renderVariables: [
+                    'question.title' => Str::limit((string) $parent->body, 60),
+                    'lesson.title' => (string) $lesson->title,
+                ],
+                triggeredByUserId: $user->getKey(),
+                entityType: 'comment',
+                entityId: $parent->getKey(),
+                auditPayload: ['lesson_id' => $lesson->getKey()],
+            );
         }
 
         return (new CommentResource($reply->load('user', 'attachments')))->response()->setStatusCode(201);

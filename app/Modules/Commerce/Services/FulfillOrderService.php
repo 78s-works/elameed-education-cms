@@ -8,7 +8,8 @@ use App\Modules\Commerce\Enums\EnrollmentSource;
 use App\Modules\Commerce\Enums\OrderStatus;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Commerce\Models\OrderItem;
-use App\Modules\Notifications\Services\NotificationService;
+use App\Modules\Notifications\Services\Engine\NotificationEngineService;
+use App\Modules\Notifications\Support\Money;
 use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Services\LedgerService;
 use Illuminate\Support\Facades\DB;
@@ -28,7 +29,7 @@ class FulfillOrderService
         private readonly LedgerService $ledger,
         private readonly EnrollmentService $enrollments,
         private readonly InvoiceService $invoices,
-        private readonly NotificationService $notifications,
+        private readonly NotificationEngineService $engine,
         private readonly InvoicePdfService $invoicePdf,
     ) {}
 
@@ -123,10 +124,23 @@ class FulfillOrderService
             report($e);
         }
 
-        $this->notifications->inApp($tenantId, (int) $order->user_id, 'purchase.completed', [
-            'order_uuid' => $order->uuid,
-            'total_minor' => (int) $order->total_minor,
-        ]);
+        // Through the engine, not the legacy feed: one inbox, one audit trail,
+        // and copy the teacher can reword per academy.
+        $this->engine->dispatch(
+            notificationKey: 'payments.order.completed',
+            tenantId: $tenantId,
+            recipientUserIds: [(int) $order->user_id],
+            renderVariables: [
+                'amount' => Money::format((int) $order->total_minor, (string) $order->currency),
+                'order.uuid' => (string) $order->uuid,
+            ],
+            entityType: 'order',
+            entityId: $order->getKey(),
+            auditPayload: [
+                'order_uuid' => $order->uuid,
+                'total_minor' => (int) $order->total_minor,
+            ],
+        );
     }
 
     private function leg(string $account, string $direction, int $amount, ?int $walletId = null): array

@@ -70,12 +70,14 @@ use App\Modules\Media\Http\Controllers\PlaybackController;
 use App\Modules\Media\Http\Controllers\RemotePlaybackController;
 use App\Modules\Media\Http\Controllers\Teacher\RemoteVideoController;
 use App\Modules\Media\Http\Controllers\TeacherMediaController;
+use App\Modules\Notifications\Http\Controllers\Admin\BroadcastController as AdminBroadcastController;
 use App\Modules\Notifications\Http\Controllers\Admin\EventController as AdminNotificationEventController;
 use App\Modules\Notifications\Http\Controllers\Admin\TemplateController as AdminNotificationTemplateController;
 use App\Modules\Notifications\Http\Controllers\Admin\TranslationController as AdminNotificationTranslationController;
 use App\Modules\Notifications\Http\Controllers\Admin\TypeController as AdminNotificationTypeController;
 use App\Modules\Notifications\Http\Controllers\InboxController;
 use App\Modules\Notifications\Http\Controllers\NotificationController;
+use App\Modules\Notifications\Http\Controllers\Teacher\BroadcastController as TeacherBroadcastController;
 use App\Modules\Notifications\Http\Controllers\Teacher\SmsSettingsController;
 use App\Modules\Notifications\Http\Controllers\Teacher\TeacherNotificationController;
 use App\Modules\PlatformAdmin\Http\Controllers\AdminReportController;
@@ -202,6 +204,13 @@ Route::prefix('v1')->middleware(['central', 'auth:sanctum', 'admin'])->group(fun
     Route::get('/admin/notifications/events', [AdminNotificationEventController::class, 'index']);
     Route::get('/admin/notifications/events/{event}', [AdminNotificationEventController::class, 'show']);
     Route::get('/admin/notifications/events/{event}/failures', [AdminNotificationEventController::class, 'failures']);
+
+    // Custom notifications, platform scope: admin → every teacher, in-app and
+    // email. `preview` answers the reach before `store` commits to it.
+    Route::get('/admin/notifications/custom', [AdminBroadcastController::class, 'index']);
+    Route::post('/admin/notifications/custom/preview', [AdminBroadcastController::class, 'preview']);
+    Route::post('/admin/notifications/custom', [AdminBroadcastController::class, 'store']);
+    Route::get('/admin/notifications/custom/{broadcast}', [AdminBroadcastController::class, 'show']);
 });
 
 /*
@@ -538,6 +547,26 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         // the implicit authority this milestone removed. Every route below carries
         // its own `can:`, and a member with no keys reaches none of them.
         Route::group([], function (): void {
+
+            // ── Custom notifications ─────────────────────────────────────
+            // A human-written message to a slice of the academy: everyone, one
+            // lesson, one package, one grade, one center, hand-picked students,
+            // or the assistants. Own permission (`settings.notifications.send`),
+            // which an assistant holds only if the teacher granted it — sending
+            // spends the academy's SMS credit and reaches muted students.
+            //
+            // Path is `custom-notifications`, NOT `notifications/custom`: the
+            // override surface above already owns `/teacher/notifications/{type:key}`
+            // and would swallow a `custom` segment.
+            Route::middleware('can:settings.notifications.send')->group(function (): void {
+                Route::get('/teacher/custom-notifications', [TeacherBroadcastController::class, 'index']);
+                // Static segments first — otherwise {broadcast} eats them.
+                Route::get('/teacher/custom-notifications/channels', [TeacherBroadcastController::class, 'channels']);
+                Route::post('/teacher/custom-notifications/preview', [TeacherBroadcastController::class, 'preview']);
+                Route::post('/teacher/custom-notifications', [TeacherBroadcastController::class, 'store']);
+                Route::get('/teacher/custom-notifications/{broadcast}', [TeacherBroadcastController::class, 'show']);
+                Route::post('/teacher/custom-notifications/{broadcast}/cancel', [TeacherBroadcastController::class, 'cancel']);
+            });
 
             // ── Team (M20) ───────────────────────────────────────────────
             // The owner may delegate team management, but the delegation cannot

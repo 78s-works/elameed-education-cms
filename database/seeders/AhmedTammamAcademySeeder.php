@@ -97,11 +97,14 @@ use App\Modules\Media\Models\MediaRendition;
 use App\Modules\Media\Models\MediaUploadSession;
 use App\Modules\Media\Models\MediaVersion;
 use App\Modules\Media\Models\PlaybackSession;
+use App\Modules\Notifications\Enums\BroadcastAudience;
+use App\Modules\Notifications\Enums\BroadcastStatus;
 use App\Modules\Notifications\Enums\NotificationChannel;
 use App\Modules\Notifications\Enums\NotificationModule;
 use App\Modules\Notifications\Enums\NotificationSeverity;
 use App\Modules\Notifications\Enums\NotificationTypeStatus;
 use App\Modules\Notifications\Models\Notification;
+use App\Modules\Notifications\Models\NotificationBroadcast;
 use App\Modules\Notifications\Models\NotificationChannelSetting;
 use App\Modules\Notifications\Models\NotificationEvent;
 use App\Modules\Notifications\Models\NotificationFailure;
@@ -429,11 +432,28 @@ class AhmedTammamAcademySeeder extends Seeder
         }
 
         // Tenant-level notification channel settings.
-        foreach (['database', 'sms'] as $channel) {
-            $cs = new NotificationChannelSetting(['channel' => $channel, 'is_active' => true, 'config' => ['sender' => 'AhmedTammam']]);
-            $cs->tenant_id = $this->tenant->id;
-            $cs->save();
-        }
+        //
+        // The in-app channel is on (it needs no configuration). SMS is seeded in
+        // its HONEST default: present but disabled, with no credentials — the
+        // platform holds no aggregator account, so an academy has no SMS until
+        // its teacher stores their own WE data via PUT /teacher/sms-settings.
+        // Seeding it "active" with only a sender name would show an enabled
+        // switch while every send was skipped, and is a state the settings screen
+        // itself refuses to produce.
+        $inApp = new NotificationChannelSetting([
+            'channel' => NotificationChannel::Database->value,
+            'is_active' => true,
+        ]);
+        $inApp->tenant_id = $this->tenant->id;
+        $inApp->save();
+
+        $sms = new NotificationChannelSetting([
+            'channel' => NotificationChannel::Sms->value,
+            'is_active' => false,
+            'config' => ['provider' => 'connekio', 'sender' => 'AhmedTammam'],
+        ]);
+        $sms->tenant_id = $this->tenant->id;
+        $sms->save();
     }
 
     private function seedSubscription(): void
@@ -2521,6 +2541,7 @@ class AhmedTammamAcademySeeder extends Seeder
 
         $this->trailMediaPipeline($year3, $s1);
         $this->trailNotificationDelivery($s1);
+        $this->trailCustomNotifications($year3, $s1);
         $this->trailArchivedAndRevoked($year3, $s1, $s2);
         $this->trailGrantsAndGrading($year3, $s1, $s2, $s3);
         $this->trailPlatformRecords();
@@ -2707,8 +2728,11 @@ class AhmedTammamAcademySeeder extends Seeder
             'edited_by' => $this->teacher->id,
         ]);
 
-        foreach ([['ar', 'محاضرة جديدة', 'تم إتاحة محاضرة «:lesson» — ابدأ المشاهدة الآن.'],
-            ['en', 'New lecture', 'The lecture ":lesson" is now available.']] as [$lang, $title, $body]) {
+        // `{lesson.title}` — the engine's own placeholder syntax (see
+        // TemplateInterpolator). Laravel's `:lesson` translation syntax is NOT
+        // interpolated here and would render literally to every student.
+        foreach ([['ar', 'محاضرة جديدة', 'تم إتاحة محاضرة «{lesson.title}» — ابدأ المشاهدة الآن.'],
+            ['en', 'New lecture', 'The lecture "{lesson.title}" is now available.']] as [$lang, $title, $body]) {
             NotificationTemplateTranslation::create([
                 'notification_template_id' => $template->id,
                 'language' => $lang,
@@ -2758,6 +2782,122 @@ class AhmedTammamAcademySeeder extends Seeder
             ->where('tenant_id', $this->tenant->id)
             ->whereNull('template_id')
             ->update(['template_id' => $template->id]);
+    }
+
+    /**
+     * Custom (human-written) notifications, in every state the composer screen has
+     * a branch for: one already delivered (with its real inbox rows and per-channel
+     * stats), one waiting for its scheduled time — which is the only way to see the
+     * "cancel" control — and one the teacher called off.
+     *
+     * The SMS figures on the delivered row are the estimate the sender CONFIRMED,
+     * frozen at send time, so the history keeps showing what the blast was quoted
+     * at even after prices or audiences change.
+     */
+    private function trailCustomNotifications(AcademicYear $year, ?User $student): void
+    {
+        $type = NotificationType::query()->where('key', 'custom.message')->first();
+
+        if ($type === null || $student === null) {
+            return;
+        }
+
+        // 1. Delivered: a reminder that went out to the whole academy in-app.
+        $sent = NotificationBroadcast::create([
+            'tenant_id' => $this->tenant->id,
+            'created_by' => $this->teacher->id,
+            'audience_type' => BroadcastAudience::AllStudents->value,
+            'audience_ids' => null,
+            'channels' => [NotificationChannel::Database->value],
+            'title_ar' => 'مراجعة ليلة الامتحان',
+            'body_ar' => 'مراجعة ليلة الامتحان متاحة الآن على المنصة — ذاكروها كويس وبالتوفيق.',
+            'title_en' => 'Exam-night revision',
+            'body_en' => 'The exam-night revision is live on the platform. Good luck!',
+            'status' => BroadcastStatus::Sent->value,
+            'scheduled_at' => null,
+            'sent_at' => now()->subDays(9),
+            'recipient_count' => 3,
+            'sms_recipient_count' => 0,
+            'sms_segments' => 0,
+            'sms_cost_minor' => 0,
+            'currency' => self::CURRENCY,
+            'stats' => [
+                'channels' => ['database' => ['attempted' => 3, 'sent' => 3, 'failed' => 0]],
+                'totals' => ['attempted' => 3, 'sent' => 3, 'failed' => 0],
+            ],
+        ]);
+
+        // Its audit event + the inbox row the student actually reads.
+        $event = NotificationEvent::create([
+            'notification_type_id' => $type->id,
+            'tenant_id' => $this->tenant->id,
+            'entity_type' => NotificationBroadcast::class,
+            'entity_id' => $sent->id,
+            'payload' => ['audience_type' => $sent->audience_type->value, 'channels' => $sent->channels],
+            'triggered_by' => $this->teacher->id,
+        ]);
+        $sent->forceFill(['stats' => $sent->stats + ['event_id' => $event->id]])->save();
+
+        $message = new NotificationMessage([
+            'notification_event_id' => $event->id,
+            'user_id' => $student->id,
+            'channel' => NotificationChannel::Database->value,
+            'title' => $sent->title_ar,
+            'body' => $sent->body_ar,
+            'is_read' => false,
+        ]);
+        $message->tenant_id = $this->tenant->id;
+        $message->save();
+
+        // 2. Scheduled: aimed at one grade, on SMS as well — the row whose stored
+        // estimate is what the confirmation dialog quoted (3 recipients × 1
+        // segment × 0.25 EGP).
+        NotificationBroadcast::create([
+            'tenant_id' => $this->tenant->id,
+            'created_by' => $this->teacher->id,
+            'audience_type' => BroadcastAudience::AcademicYear->value,
+            'audience_ids' => [$year->id],
+            'channels' => [NotificationChannel::Database->value, NotificationChannel::Sms->value],
+            'title_ar' => 'حصة تعويضية',
+            'body_ar' => 'حصة تعويضية يوم الجمعة الساعة ٦ مساءً في سنتر المعادي.',
+            'status' => BroadcastStatus::Scheduled->value,
+            'scheduled_at' => now()->addDays(2),
+            'recipient_count' => 3,
+            'sms_recipient_count' => 3,
+            'sms_segments' => 3,
+            'sms_cost_minor' => 75,
+            'currency' => self::CURRENCY,
+        ]);
+
+        // 3. Called off before it went anywhere.
+        NotificationBroadcast::create([
+            'tenant_id' => $this->tenant->id,
+            'created_by' => $this->teacher->id,
+            'audience_type' => BroadcastAudience::Assistants->value,
+            'channels' => [NotificationChannel::Database->value],
+            'title_ar' => 'اجتماع الفريق',
+            'body_ar' => 'اجتماع الفريق اتأجل — هيتحدد ميعاد جديد.',
+            'status' => BroadcastStatus::Canceled->value,
+            'scheduled_at' => now()->subDay(),
+            'recipient_count' => 2,
+            'currency' => self::CURRENCY,
+        ]);
+
+        // 4. The platform's own message to every teacher (tenant_id NULL).
+        NotificationBroadcast::create([
+            'tenant_id' => null,
+            'created_by' => User::query()->where('is_platform_admin', true)->value('id'),
+            'audience_type' => BroadcastAudience::Teachers->value,
+            'channels' => [NotificationChannel::Database->value, NotificationChannel::Email->value],
+            'title_ar' => 'تحديث المنصة',
+            'body_ar' => 'تم تحديث لوحة المعلم — راجع صفحة الإشعارات للتعرف على الجديد.',
+            'title_en' => 'Platform update',
+            'body_en' => 'The teacher dashboard was updated — see the notifications page for what changed.',
+            'status' => BroadcastStatus::Sent->value,
+            'sent_at' => now()->subDays(4),
+            'recipient_count' => 1,
+            'currency' => self::CURRENCY,
+        ]);
     }
 
     /**

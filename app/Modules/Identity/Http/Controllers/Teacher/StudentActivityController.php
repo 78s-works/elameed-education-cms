@@ -16,7 +16,9 @@ use App\Modules\Identity\Http\Controllers\Teacher\Concerns\ManagesTenantStudents
 use App\Modules\Identity\Http\Requests\NotifyStudentRequest;
 use App\Modules\Identity\Models\LoginAttempt;
 use App\Modules\Media\Models\PlaybackSession;
-use App\Modules\Notifications\Services\NotificationService;
+use App\Modules\Notifications\Enums\BroadcastAudience;
+use App\Modules\Notifications\Jobs\SendBroadcastJob;
+use App\Modules\Notifications\Services\Broadcasts\BroadcastService;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Collection;
@@ -30,7 +32,7 @@ class StudentActivityController
 
     public function __construct(
         private readonly TenantContext $context,
-        private readonly NotificationService $notifications,
+        private readonly BroadcastService $broadcasts,
     ) {}
 
     public function progress(User $student): JsonResponse
@@ -233,10 +235,23 @@ class StudentActivityController
         $tenantId = $this->context->tenantOrFail()->getKey();
         $this->membershipOrFail($tenantId, $student);
 
-        $this->notifications->inApp($tenantId, $student->getKey(), 'teacher.message', [
-            'title' => $request->validated('title'),
-            'message' => $request->validated('message'),
-        ]);
+        // One student is just the narrowest custom message, so it takes the same
+        // road as a blast: same inbox row, same audit trail, and it reaches a
+        // student who muted notifications — which is the point of a teacher
+        // writing to them directly.
+        $broadcast = $this->broadcasts->create(
+            [
+                'audience_type' => BroadcastAudience::Students->value,
+                'audience_ids' => [$student->getKey()],
+                'channels' => ['database'],
+                'title_ar' => $request->validated('title'),
+                'body_ar' => $request->validated('message'),
+            ],
+            $tenantId,
+            $request->user()?->getKey(),
+        );
+
+        SendBroadcastJob::dispatch($broadcast->uuid, $tenantId);
 
         return response()->json(['data' => ['message' => __('Notification sent.')]], 201);
     }

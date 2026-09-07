@@ -5,7 +5,6 @@ namespace App\Modules\Notifications\Services\Engine;
 use App\Models\User;
 use App\Modules\Notifications\Enums\NotificationChannel;
 use App\Modules\Notifications\Enums\NotificationTypeStatus;
-use App\Modules\Notifications\Models\NotificationChannelSetting;
 use App\Modules\Notifications\Models\NotificationEvent;
 use App\Modules\Notifications\Models\NotificationFailure;
 use App\Modules\Notifications\Models\NotificationPreference;
@@ -13,6 +12,7 @@ use App\Modules\Notifications\Models\NotificationType;
 use App\Modules\Notifications\Services\Factories\ChannelFactory;
 use App\Modules\Notifications\Services\Resolvers\NotificationTemplateResolver;
 use App\Modules\Tenancy\Models\Tenant;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -35,13 +35,18 @@ class NotificationEngineService
         private readonly NotificationTemplateResolver $resolver,
         private readonly ChannelFactory $channelFactory,
         private readonly TemplateInterpolator $interpolator,
+        private readonly ChannelAvailability $availability,
     ) {}
 
     /**
      * @param  array<int, int>  $recipientUserIds
      * @param  array<string, mixed>  $renderVariables  Not persisted (doc 10 §11).
      * @param  array<string, mixed>  $auditPayload     Non-sensitive; persisted on the event.
-     * @param  array<string, mixed>  $options          e.g. ['channel_var_blacklist' => ['sms' => ['otp']]]
+     * @param  array<string, mixed>  $options          Recognised keys:
+     *                                                 - `channel_var_blacklist`: ['sms' => ['otp']]
+     *                                                 - `channels`: ['database', 'sms'] — restrict to these channels
+     *                                                 - `ignore_preferences`: true — deliver even to opted-out
+     *                                                 recipients (a teacher's custom message reaches muted students)
      * @return array<string, mixed>  Summary (doc 10 §12 output).
      */
     public function dispatch(
@@ -105,19 +110,28 @@ class NotificationEngineService
             return $summary;
         }
 
-        // 6. Built-in variables + resolved language for the tenant.
+        // 6. Built-in variables + the tenant's fallback language.
         $tenant = Tenant::query()->with('teacherProfile')->find($tenantId);
         $builtIns = $this->builtInVariables($tenant);
-        $language = $this->tenantLanguage($tenant);
+        $tenantLanguage = $this->tenantLanguage($tenant);
 
         $blacklist = $options['channel_var_blacklist'] ?? [];
+        $onlyChannels = $options['channels'] ?? null;
+        $ignorePreferences = (bool) ($options['ignore_preferences'] ?? false);
 
         // 7. Per channel.
         foreach ($templates as $channelValue => $template) {
             $channel = NotificationChannel::from($channelValue);
 
-            // a. Tenant channel kill-switch.
-            if ($this->channelDisabledForTenant($tenantId, $channel)) {
+            if (is_array($onlyChannels) && ! in_array($channelValue, $onlyChannels, true)) {
+                continue;
+            }
+
+            // a. The channel must be usable for this tenant at all: kill-switch on,
+            //    a real dispatcher behind it, and — for sms — credentials actually
+            //    filled in. An academy that never configured SMS simply has SMS
+            //    off; it does not collect one NotificationFailure per recipient.
+            if (! $this->availability->isAvailable($tenantId, $channel)) {
                 continue;
             }
 
@@ -130,15 +144,7 @@ class NotificationEngineService
             // c. Channel formatting hook.
             $vars = $this->applyChannelFormatting($channel, $vars);
 
-            // d. Render title + body.
-            $translation = $this->resolver->pickTranslation($template, $language);
-            if ($translation === null) {
-                continue; // no copy → no message for this channel
-            }
-            $title = $this->interpolator->render($translation->title, $vars);
-            $body = $this->interpolator->render($translation->body, $vars);
-
-            // e. Pick dispatcher.
+            // d. Pick dispatcher.
             $dispatcher = $this->channelFactory->make($channel);
             if ($dispatcher === null) {
                 Log::warning('[notifications] no dispatcher for channel', ['channel' => $channelValue]);
@@ -148,25 +154,40 @@ class NotificationEngineService
 
             $counters = ['attempted' => 0, 'sent' => 0, 'failed' => 0];
 
-            // f. Per recipient.
-            foreach ($recipients as $user) {
-                if ($this->recipientOptedOut($user->getKey(), $type->getKey(), $channel)) {
-                    continue;
+            // e. Render per LANGUAGE rather than once per channel: an academy has
+            //    Arabic and English readers side by side, so each recipient gets
+            //    the copy for his own `users.locale` (tenant locale as fallback).
+            foreach ($this->groupByLanguage($recipients, $tenantLanguage) as $language => $group) {
+                $translation = $this->resolver->pickTranslation($template, $language);
+                if ($translation === null) {
+                    continue; // no copy → no message for this channel/language
                 }
 
-                $counters['attempted']++;
-                $result = $dispatcher->send($event, $user, $title, $body, ['language' => $language]);
+                $title = $this->interpolator->render($translation->title, $vars);
+                $body = $this->interpolator->render($translation->body, $vars);
 
-                if ($result->success) {
-                    $counters['sent']++;
-                } else {
-                    $counters['failed']++;
-                    NotificationFailure::create([
-                        'notification_event_id' => $event->getKey(),
-                        'user_id' => $user->getKey(),
-                        'channel' => $channel->value,
-                        'error_message' => $result->error ?? 'Unknown error',
+                foreach ($group as $user) {
+                    if (! $ignorePreferences && $this->recipientOptedOut($user->getKey(), $type->getKey(), $channel)) {
+                        continue;
+                    }
+
+                    $counters['attempted']++;
+                    $result = $dispatcher->send($event, $user, $title, $body, [
+                        'language' => $language,
+                        'tenant_name' => $builtIns['tenant_name'],
                     ]);
+
+                    if ($result->success) {
+                        $counters['sent']++;
+                    } else {
+                        $counters['failed']++;
+                        NotificationFailure::create([
+                            'notification_event_id' => $event->getKey(),
+                            'user_id' => $user->getKey(),
+                            'channel' => $channel->value,
+                            'error_message' => $result->error ?? 'Unknown error',
+                        ]);
+                    }
                 }
             }
 
@@ -199,14 +220,22 @@ class NotificationEngineService
         return $primary ?: (string) config('tenancy.default_locale', 'ar');
     }
 
-    private function channelDisabledForTenant(int $tenantId, NotificationChannel $channel): bool
+    /**
+     * Recipients bucketed by the language their copy renders in.
+     *
+     * @param  Collection<int, User>  $recipients
+     * @return array<string, list<User>>
+     */
+    private function groupByLanguage(Collection $recipients, string $fallback): array
     {
-        $setting = NotificationChannelSetting::query()
-            ->where('tenant_id', $tenantId)
-            ->where('channel', $channel->value)
-            ->first();
+        $grouped = [];
 
-        return $setting !== null && ! $setting->is_active;
+        foreach ($recipients as $user) {
+            $language = trim((string) ($user->locale ?? '')) ?: $fallback;
+            $grouped[$language][] = $user;
+        }
+
+        return $grouped;
     }
 
     private function recipientOptedOut(int $userId, int $typeId, NotificationChannel $channel): bool

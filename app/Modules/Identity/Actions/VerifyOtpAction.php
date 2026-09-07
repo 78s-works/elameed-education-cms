@@ -7,7 +7,7 @@ use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\OtpPurpose;
 use App\Modules\Identity\Services\OtpService;
 use App\Modules\Identity\Support\UserLookup;
-use App\Modules\Notifications\Services\NotificationService;
+use App\Modules\Notifications\Services\Engine\NotificationEngineService;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Validation\ValidationException;
 
@@ -22,7 +22,7 @@ class VerifyOtpAction
 {
     public function __construct(
         private readonly OtpService $otp,
-        private readonly NotificationService $notifications,
+        private readonly NotificationEngineService $engine,
     ) {}
 
     public function handle(string $identifier, OtpPurpose $purpose, string $code, ?Tenant $tenant): array
@@ -70,8 +70,13 @@ class VerifyOtpAction
             ]);
         }
 
-        $this->notifications->inApp($tenant->getKey(), $user->getKey(), 'account.welcome', [
-            'name' => $user->name,
-        ]);
+        $this->engine->dispatch(
+            notificationKey: 'account.welcome',
+            tenantId: $tenant->getKey(),
+            recipientUserIds: [$user->getKey()],
+            renderVariables: ['student.name' => (string) $user->name],
+            entityType: 'user',
+            entityId: $user->getKey(),
+        );
     }
 }

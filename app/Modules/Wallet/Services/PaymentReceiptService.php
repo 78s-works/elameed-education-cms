@@ -3,6 +3,10 @@
 namespace App\Modules\Wallet\Services;
 
 use App\Models\User;
+use App\Modules\Identity\Enums\Permission;
+use App\Modules\Notifications\Services\Engine\NotificationEngineService;
+use App\Modules\Notifications\Support\Money;
+use App\Modules\Notifications\Support\StaffRecipients;
 use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Models\PaymentReceipt;
 use Illuminate\Support\Facades\DB;
@@ -17,7 +21,10 @@ use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
  */
 class PaymentReceiptService
 {
-    public function __construct(private readonly LedgerService $ledger) {}
+    public function __construct(
+        private readonly LedgerService $ledger,
+        private readonly NotificationEngineService $engine,
+    ) {}
 
     /** Student submits a receipt → a `pending` row. */
     public function submit(int $tenantId, int $userId, string $method, int $amountMinor, int $attachmentId, string $currency = 'EGP'): PaymentReceipt
@@ -32,6 +39,27 @@ class PaymentReceiptService
         ]);
         $receipt->tenant_id = $tenantId;
         $receipt->save();
+
+        // Whoever reviews receipts needs to know one is waiting — a manual
+        // top-up sits idle until a human looks at it.
+        $reviewers = StaffRecipients::withPermission($tenantId, Permission::PaymentReceiptsReview->value);
+
+        if ($reviewers !== []) {
+            $this->engine->dispatch(
+                notificationKey: 'payments.receipt.uploaded',
+                tenantId: $tenantId,
+                recipientUserIds: $reviewers,
+                renderVariables: [
+                    'student.name' => (string) (User::query()->find($userId)?->name ?? ''),
+                    'method' => $method,
+                    'amount' => Money::format($amountMinor, $currency),
+                ],
+                triggeredByUserId: $userId,
+                entityType: 'payment_receipt',
+                entityId: $receipt->getKey(),
+                auditPayload: ['receipt_uuid' => $receipt->uuid, 'method' => $method],
+            );
+        }
 
         return $receipt;
     }
@@ -55,7 +83,7 @@ class PaymentReceiptService
             throw new InvalidArgumentException('Corrected amount must be greater than 0 and within the allowed ceiling.');
         }
 
-        return DB::transaction(function () use ($receipt, $reviewer, $correctedAmountMinor): PaymentReceipt {
+        $approved = DB::transaction(function () use ($receipt, $reviewer, $correctedAmountMinor): PaymentReceipt {
             $fresh = PaymentReceipt::withoutGlobalScopes()
                 ->whereKey($receipt->getKey())
                 ->lockForUpdate()
@@ -91,12 +119,33 @@ class PaymentReceiptService
 
             return $fresh;
         });
+
+        // Notify AFTER the money transaction commits: an SMS round-trip must not
+        // sit inside a `lockForUpdate` on the receipt, and the student should
+        // only hear "approved" once the credit is actually durable.
+        $this->engine->dispatch(
+            notificationKey: 'payments.receipt.approved',
+            tenantId: (int) $approved->tenant_id,
+            recipientUserIds: [(int) $approved->user_id],
+            renderVariables: [
+                'amount' => Money::format(
+                    (int) ($approved->corrected_amount_minor ?? $approved->amount_minor),
+                    (string) ($approved->currency ?? 'EGP'),
+                ),
+            ],
+            triggeredByUserId: $reviewer->getKey(),
+            entityType: 'payment_receipt',
+            entityId: $approved->getKey(),
+            auditPayload: ['receipt_uuid' => $approved->uuid],
+        );
+
+        return $approved;
     }
 
     /** Reject a pending receipt with a reason. No ledger effect. */
     public function reject(PaymentReceipt $receipt, User $reviewer, string $reason): PaymentReceipt
     {
-        return DB::transaction(function () use ($receipt, $reviewer, $reason): PaymentReceipt {
+        $rejected = DB::transaction(function () use ($receipt, $reviewer, $reason): PaymentReceipt {
             $fresh = PaymentReceipt::withoutGlobalScopes()
                 ->whereKey($receipt->getKey())
                 ->lockForUpdate()
@@ -113,6 +162,19 @@ class PaymentReceiptService
 
             return $fresh;
         });
+
+        $this->engine->dispatch(
+            notificationKey: 'payments.receipt.rejected',
+            tenantId: (int) $rejected->tenant_id,
+            recipientUserIds: [(int) $rejected->user_id],
+            renderVariables: ['reason' => $reason],
+            triggeredByUserId: $reviewer->getKey(),
+            entityType: 'payment_receipt',
+            entityId: $rejected->getKey(),
+            auditPayload: ['receipt_uuid' => $rejected->uuid],
+        );
+
+        return $rejected;
     }
 
     private function guardPending(PaymentReceipt $receipt): void

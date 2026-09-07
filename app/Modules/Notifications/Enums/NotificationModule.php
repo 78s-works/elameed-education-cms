@@ -18,4 +18,10 @@ enum NotificationModule: string
     case Account = 'account';
     case Domains = 'domains';
     case Support = 'support';
+    /** Manual receipts, orders and wallet movements the student/teacher sees. */
+    case Payments = 'payments';
+    /** On-premise (center) attendance, printed grades and activation codes. */
+    case Center = 'center';
+    /** Free-text messages a human composed — see NotificationBroadcast. */
+    case Custom = 'custom';
 }

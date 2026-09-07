@@ -61,13 +61,26 @@ class TemplateInterpolator
     }
 
     /**
-     * Walk a dot path through nested arrays/objects. Returns null if any segment
-     * is missing.
+     * Resolve `{a.b}` against the variable bag.
+     *
+     * A FLAT key wins first: callers naturally write
+     * `['exam.title' => $exam->title]`, which reads as the placeholder does, and
+     * every dispatch site in the codebase passes variables that way. Walking the
+     * path first would silently render those as an empty string — which is
+     * exactly what "…the exam \"\"" was.
+     *
+     * Failing that, the path is walked through nested arrays/objects, so
+     * `['exam' => $exam]` and `['exam' => ['title' => …]]` both work too. Null
+     * if neither resolves.
      *
      * @param  array<string,mixed>  $vars
      */
     private function resolvePath(string $path, array $vars): mixed
     {
+        if (array_key_exists($path, $vars)) {
+            return $vars[$path];
+        }
+
         $current = $vars;
 
         foreach (explode('.', $path) as $segment) {

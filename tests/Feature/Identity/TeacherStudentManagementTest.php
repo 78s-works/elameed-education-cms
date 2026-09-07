@@ -16,11 +16,13 @@ use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\LoginAttempt;
 use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Notifications\Jobs\SendBroadcastJob;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Wallet\Models\LedgerEntry;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Queue;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -246,17 +248,30 @@ class TeacherStudentManagementTest extends TestCase
         $this->assertSame((int) $debits, (int) $credits);
     }
 
-    public function test_notify_creates_in_app_notification(): void
+    /**
+     * Messaging one student is the narrowest CUSTOM notification, so it records
+     * a `notification_broadcasts` row aimed at that student and delivers through
+     * the engine — not a row on the retired `notifications` table.
+     */
+    public function test_notify_records_a_custom_notification_for_the_student(): void
     {
+        Queue::fake();
+
         $student = $this->member($this->tenant, TenantUserRole::Student);
 
         $this->withHeaders($this->h)->postJson("/api/v1/teacher/students/{$student->uuid}/notify", [
             'title' => 'Reminder', 'message' => 'Please finish lesson 3.',
         ])->assertStatus(201);
 
-        $this->assertDatabaseHas('notifications', [
-            'tenant_id' => $this->tenant->id, 'user_id' => $student->id, 'type' => 'teacher.message',
+        $this->assertDatabaseHas('notification_broadcasts', [
+            'tenant_id' => $this->tenant->id,
+            'audience_type' => 'students',
+            'title_ar' => 'Reminder',
+            'body_ar' => 'Please finish lesson 3.',
         ]);
+
+        // Delivery is queued, never done inside the request.
+        Queue::assertPushed(SendBroadcastJob::class);
     }
 
     public function test_teacher_adds_and_edits_full_registration_fields(): void

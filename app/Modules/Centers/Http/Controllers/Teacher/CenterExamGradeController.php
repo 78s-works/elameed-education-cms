@@ -7,6 +7,7 @@ use App\Modules\Centers\Http\Requests\CenterExamGradeRequest;
 use App\Modules\Centers\Http\Resources\CenterExamGradeResource;
 use App\Modules\Centers\Models\Center;
 use App\Modules\Centers\Models\CenterExamGrade;
+use App\Modules\Notifications\Services\Engine\NotificationEngineService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -21,6 +22,8 @@ use Illuminate\Http\Response;
  */
 class CenterExamGradeController
 {
+    public function __construct(private readonly NotificationEngineService $engine) {}
+
     /** Filterable by ?student=<uuid> and ?center=<uuid>. */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -44,6 +47,11 @@ class CenterExamGradeController
     {
         $grade = CenterExamGrade::create($this->attributes($request));
 
+        // Recording a paper score IS publishing it — the student can see it the
+        // moment the row exists, so this is where they are told. A later `update`
+        // (a typo fix) is silent; correcting a mark is not news.
+        $this->notifyStudent($grade, $request->user()?->getKey());
+
         return (new CenterExamGradeResource($grade->load(['center', 'student', 'enteredBy'])))
             ->response()->setStatusCode(201);
     }
@@ -60,6 +68,25 @@ class CenterExamGradeController
         $grade->delete();
 
         return response()->noContent();
+    }
+
+    private function notifyStudent(CenterExamGrade $grade, ?int $actorId): void
+    {
+        $this->engine->dispatch(
+            notificationKey: 'center.exam_grade.published',
+            tenantId: (int) $grade->tenant_id,
+            recipientUserIds: [(int) $grade->student_user_id],
+            renderVariables: [
+                'exam.title' => (string) $grade->title,
+                'score' => (string) $grade->score,
+                'total' => (string) $grade->total_marks,
+                'student.name' => (string) ($grade->student?->name ?? ''),
+            ],
+            triggeredByUserId: $actorId,
+            entityType: 'center_exam_grade',
+            entityId: $grade->getKey(),
+            auditPayload: ['grade_uuid' => $grade->uuid],
+        );
     }
 
     /** Map the validated uuids to ids and stamp the staff author. */

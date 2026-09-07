@@ -7,6 +7,7 @@ use App\Modules\Catalog\Http\Requests\LessonRequest;
 use App\Modules\Catalog\Http\Resources\LessonResource;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Services\LessonAccessModeGuard;
+use App\Modules\Notifications\Services\Events\LessonAnnouncer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -20,7 +21,10 @@ use Illuminate\Http\Response;
  */
 class LessonController
 {
-    public function __construct(private readonly LessonAccessModeGuard $guard) {}
+    public function __construct(
+        private readonly LessonAccessModeGuard $guard,
+        private readonly LessonAnnouncer $announcer,
+    ) {}
 
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -45,6 +49,11 @@ class LessonController
         // tenant_id + academic_year_id are auto-filled by the model traits.
         $lesson = Lesson::create($request->lessonAttributes());
 
+        // Announce it if it went straight to visible. A hidden or scheduled
+        // lesson is announced later — on the edit that reveals it, or by
+        // `notifications:announce-lessons` when its publish_at arrives.
+        $this->announcer->announce($lesson, $request->user()?->getKey());
+
         return (new LessonResource($lesson->fresh()->load('sections')))
             ->response()->setStatusCode(201);
     }
@@ -67,6 +76,10 @@ class LessonController
         }
 
         $lesson->update($attributes);
+
+        // Idempotent: a lesson already announced is never announced again, so
+        // ordinary edits to a live lesson are silent.
+        $this->announcer->announce($lesson, $request->user()?->getKey());
 
         return new LessonResource(
             $lesson->load(['sections' => fn ($q) => $q->ordered()->with(['mediaAsset', 'exam'])]),

@@ -39,6 +39,24 @@ class SeederSmokeTest extends TestCase
         $this->assertDatabaseMissing('packages', ['academic_year_id' => null]);
         $this->assertDatabaseMissing('student_profiles', ['academic_year_id' => null]);
 
+        // Custom notifications are seeded in every state the composer screen has a
+        // branch for, including the platform-scoped one (tenant_id NULL) that the
+        // admin surface reads and the teacher surface must never see.
+        foreach (['sent', 'scheduled', 'canceled'] as $status) {
+            $this->assertDatabaseHas('notification_broadcasts', ['status' => $status]);
+        }
+        $this->assertSame(
+            1,
+            (int) DB::table('notification_broadcasts')->whereNull('tenant_id')->count(),
+        );
+
+        // SMS is seeded OFF for the demo academy: the platform holds no aggregator
+        // account, so an academy has none until its teacher stores their own.
+        $this->assertDatabaseHas('notification_channel_settings', [
+            'channel' => 'sms',
+            'is_active' => false,
+        ]);
+
         // The archive tenant exists only as a soft-deleted row (the platform-admin
         // trashed branch), so it must never show up in a normal tenant query.
         $this->assertDatabaseHas('tenants', ['slug' => 'closed-academy']);

@@ -3,6 +3,7 @@
 namespace App\Modules\Notifications\Http\Controllers\Teacher;
 
 use App\Modules\Notifications\Enums\NotificationChannel;
+use App\Modules\Notifications\Enums\NotificationModule;
 use App\Modules\Notifications\Enums\NotificationTypeStatus;
 use App\Modules\Notifications\Http\Requests\TeacherOverrideChannelRequest;
 use App\Modules\Notifications\Http\Requests\UpsertTranslationRequest;
@@ -40,6 +41,9 @@ class TeacherNotificationController
 
         $types = NotificationType::query()
             ->where('status', NotificationTypeStatus::Ready->value)
+            // `custom` is not an automatic notification: it is the audit type
+            // behind human-written messages and owns no editable copy.
+            ->where('module', '!=', NotificationModule::Custom->value)
             ->orderBy('module')->orderBy('key')
             ->get();
 
@@ -160,5 +164,6 @@ class TeacherNotificationController
     private function assertReadyVisible(NotificationType $type): void
     {
         abort_if($type->status !== NotificationTypeStatus::Ready, 404);
+        abort_if($type->module === NotificationModule::Custom, 404);
     }
 }

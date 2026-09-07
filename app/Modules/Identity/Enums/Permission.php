@@ -111,6 +111,10 @@ enum Permission: string
     case DomainsManage = 'settings.domains.manage';
     case SmsSettingsManage = 'settings.sms.manage';
     case NotificationsManage = 'settings.notifications.manage';
+    // Writing and sending a custom message to students/assistants. Deliberately
+    // its own permission: an assistant gets it only when the teacher grants it,
+    // because it spends the academy's SMS credit and reaches muted students.
+    case NotificationsSend = 'settings.notifications.send';
 
     // ---- Team --------------------------------------------------------------
     // Grantable by the academy owner ONLY — see TeamAuthority. Delegating team
@@ -164,7 +168,8 @@ enum Permission: string
             self::ReportsView, self::AuditLogView => PermissionGroup::Reports,
 
             self::AccessManage, self::LandingManage, self::MetaManage, self::DomainsManage,
-            self::SmsSettingsManage, self::NotificationsManage => PermissionGroup::Settings,
+            self::SmsSettingsManage, self::NotificationsManage,
+            self::NotificationsSend => PermissionGroup::Settings,
 
             self::TeamView, self::TeamAssistantsManage, self::TeamRolesManage => PermissionGroup::Team,
         };
@@ -253,6 +258,7 @@ enum Permission: string
             self::DomainsManage => 'Manage domains',
             self::SmsSettingsManage => 'Manage SMS settings',
             self::NotificationsManage => 'Manage notification templates',
+            self::NotificationsSend => 'Send custom notifications',
 
             self::TeamView => 'View the team',
             self::TeamAssistantsManage => 'Manage assistants',
@@ -272,6 +278,7 @@ enum Permission: string
             self::SalesView => 'Read every transaction in the sales ledger, with student and amount.',
             self::RefundsManage => 'Reverse a paid order: refunds the money to the wallet and revokes the access it bought.',
             self::AccessManage => 'Close sign-in or self-registration for the whole academy.',
+            self::NotificationsSend => 'Write and send a message to students or assistants. Spends SMS credit when the SMS channel is picked.',
             self::TeamRolesManage => 'Create roles and assign them. Only the academy owner can grant this.',
             self::TeamAssistantsManage => 'Invite, edit and remove assistants. Only the academy owner can grant this.',
             default => null,

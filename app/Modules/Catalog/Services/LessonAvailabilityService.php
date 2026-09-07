@@ -6,6 +6,10 @@ use App\Modules\Catalog\Enums\ExtensionStatus;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonAccessWindow;
 use App\Modules\Catalog\Models\LessonExtensionRequest;
+use App\Modules\Identity\Enums\Permission;
+use App\Modules\Notifications\Services\Engine\NotificationEngineService;
+use App\Modules\Notifications\Support\StaffRecipients;
+use App\Models\User;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /**
@@ -18,6 +22,8 @@ use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
  */
 class LessonAvailabilityService
 {
+    public function __construct(private readonly NotificationEngineService $engine) {}
+
     /**
      * Open the student's window (or return the running one). Idempotent per
      * (user, lesson). Returns null when the lesson is unlimited (no window).
@@ -155,6 +161,25 @@ class LessonAvailabilityService
         $request->tenant_id = $tenantId;
         $request->save();
 
+        // The request is worthless until someone with review rights sees it.
+        $reviewers = StaffRecipients::withPermission($tenantId, Permission::ExtensionRequestsReview->value);
+
+        if ($reviewers !== []) {
+            $this->engine->dispatch(
+                notificationKey: 'lessons.extension.requested',
+                tenantId: $tenantId,
+                recipientUserIds: $reviewers,
+                renderVariables: [
+                    'student.name' => (string) (User::query()->find($userId)?->name ?? ''),
+                    'lesson.title' => (string) $lesson->title,
+                ],
+                triggeredByUserId: $userId,
+                entityType: 'lesson_extension_request',
+                entityId: $request->getKey(),
+                auditPayload: ['lesson_id' => $lesson->getKey()],
+            );
+        }
+
         return $request;
     }
 
@@ -191,6 +216,25 @@ class LessonAvailabilityService
         $request->decided_at = now();
         $request->decided_by = $staffId;
         $request->save();
+
+        // Only a grant is announced: the student asked for more time, and
+        // `lessons.extension.approved` is the answer. A denial is surfaced on the
+        // lesson screen instead of pushed as a notification.
+        if ($grant) {
+            $this->engine->dispatch(
+                notificationKey: 'lessons.extension.approved',
+                tenantId: $tenantId,
+                recipientUserIds: [(int) $request->user_id],
+                renderVariables: [
+                    'lesson.title' => (string) ($lesson?->title ?? ''),
+                    'until' => (string) $window->expires_at?->toDateTimeString(),
+                ],
+                triggeredByUserId: $staffId,
+                entityType: 'lesson_extension_request',
+                entityId: $request->getKey(),
+                auditPayload: ['granted' => true],
+            );
+        }
 
         return $request;
     }

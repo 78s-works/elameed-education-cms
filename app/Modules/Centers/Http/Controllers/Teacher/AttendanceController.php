@@ -9,6 +9,7 @@ use App\Modules\Centers\Models\AttendanceRecord;
 use App\Modules\Centers\Models\Center;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
+use App\Modules\Notifications\Services\Events\AbsenceNotifier;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -18,7 +19,10 @@ use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
  */
 class AttendanceController
 {
-    public function __construct(private readonly TenantContext $context) {}
+    public function __construct(
+        private readonly TenantContext $context,
+        private readonly AbsenceNotifier $absences,
+    ) {}
 
     public function index(Center $center): AnonymousResourceCollection
     {
@@ -54,13 +58,26 @@ class AttendanceController
                 continue;
             }
 
-            AttendanceRecord::updateOrCreate(
+            $record = AttendanceRecord::updateOrCreate(
                 // Pin `center_session_id = null` so day-attendance never matches or
                 // overwrites a session check-in row (which shares the day+center+user).
                 ['center_id' => $center->id, 'user_id' => $user->id, 'attended_on' => $date, 'center_session_id' => null],
                 ['status' => $status, 'marked_by' => $markedBy, 'source' => 'online'],
             );
             $marked++;
+
+            // Only an absence is worth a message, and only the FIRST time it is
+            // recorded: re-saving the same day's sheet must not re-alert the
+            // parent. `wasRecentlyCreated` distinguishes the two, and a
+            // present→absent correction is caught by the status change.
+            if ($status === 'absent' && ($record->wasRecentlyCreated || $record->wasChanged('status'))) {
+                $this->absences->notify(
+                    $tenantId,
+                    $user,
+                    ['date' => (string) $date],
+                    $markedBy,
+                );
+            }
         }
 
         return response()->json(['data' => ['marked' => $marked, 'skipped' => $skipped]]);
