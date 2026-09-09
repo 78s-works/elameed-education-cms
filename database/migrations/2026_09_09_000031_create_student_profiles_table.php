@@ -31,7 +31,16 @@ return new class extends Migration
             $table->string('region')->nullable();
             $table->string('academic_year')->nullable();
             $table->string('education_type')->nullable();
+            // guardian_phone is deliberately NOT unique: siblings share a number.
             $table->string('guardian_phone', 30)->nullable();
+            // How the student attends (B5 / VD R6-R7). Same vocabulary as
+            // Catalog\Enums\AccessMode, so a student's mode reads against a
+            // lesson's access_mode without a mapping.
+            $table->enum('study_mode', ['center', 'online', 'both'])->default('online');
+            // The physical center a center/both student belongs to; online
+            // students have none. nullOnDelete: removing a center must never
+            // destroy the student's profile.
+            $table->foreignId('center_id')->nullable()->constrained('centers')->nullOnDelete();
             $table->timestamps();
 
             $table->unique(['tenant_id', 'user_id']);

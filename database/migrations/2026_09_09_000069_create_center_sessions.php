@@ -36,44 +36,10 @@ return new class extends Migration
             $table->unique(['center_session_id', 'lesson_id']);
         });
 
-        // Move attendance from lesson_section_id to center_session_id. Create the
-        // new (center_id-leading) unique BEFORE dropping the old one — the old
-        // index backs the center_id foreign key, so MySQL refuses to drop it until
-        // another center_id-leading index exists.
-        Schema::table('attendance_records', function (Blueprint $table) {
-            $table->foreignId('center_session_id')->nullable()->after('lesson_section_id')
-                ->constrained('center_sessions')->nullOnDelete();
-        });
-
-        Schema::table('attendance_records', function (Blueprint $table) {
-            $table->unique(
-                ['center_id', 'user_id', 'attended_on', 'center_session_id'],
-                'attendance_center_user_day_csession_unique',
-            );
-        });
-
-        Schema::table('attendance_records', function (Blueprint $table) {
-            $table->dropUnique('attendance_center_user_day_section_unique');
-            $table->dropConstrainedForeignId('lesson_section_id');
-        });
     }
 
     public function down(): void
     {
-        Schema::table('attendance_records', function (Blueprint $table) {
-            $table->foreignId('lesson_section_id')->nullable()->after('user_id')
-                ->constrained('lesson_sections')->nullOnDelete();
-            $table->unique(
-                ['center_id', 'user_id', 'attended_on', 'lesson_section_id'],
-                'attendance_center_user_day_section_unique',
-            );
-        });
-
-        Schema::table('attendance_records', function (Blueprint $table) {
-            $table->dropUnique('attendance_center_user_day_csession_unique');
-            $table->dropConstrainedForeignId('center_session_id');
-        });
-
         Schema::dropIfExists('center_session_lesson');
         Schema::dropIfExists('center_sessions');
     }

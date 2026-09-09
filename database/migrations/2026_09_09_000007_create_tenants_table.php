@@ -31,9 +31,11 @@ return new class extends Migration
             // stores its connection name here (02_Architecture.md §4.1).
             $table->string('dedicated_db_connection')->nullable();
 
-            // Teacher subscription package (subscription_packages is P1.5, so
-            // no FK constraint yet — added when that table lands).
-            $table->unsignedBigInteger('package_id')->nullable();
+            // Teacher subscription plan. nullOnDelete so hard-deleting a plan
+            // detaches its tenants rather than blocking the delete — retiring a
+            // plan is a soft delete and leaves the row intact.
+            $table->foreignId('package_id')->nullable()
+                ->constrained('subscription_packages')->nullOnDelete();
 
             $table->timestamp('trial_ends_at')->nullable();
 
