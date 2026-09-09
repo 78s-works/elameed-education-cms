@@ -35,7 +35,6 @@ class User extends Authenticatable
     use HasRoles;
 
     use HasUuids;
-
     use Notifiable;
 
     protected $fillable = [
