@@ -23,6 +23,7 @@ use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Services\TenantContext;
+use Database\Seeders\Concerns\GuardsDemoSeeding;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -49,6 +50,8 @@ use Illuminate\Support\Str;
  */
 class DatabaseSeeder extends Seeder
 {
+    use GuardsDemoSeeding;
+
     private const TENANT_SLUG = 'farag-physics';
 
     /** The academy's grades (academic years), in display order. */
@@ -56,8 +59,6 @@ class DatabaseSeeder extends Seeder
 
     public function run(): void
     {
-        $this->seedPlatformAdmin();
-
         // Permission catalog (M20) — must run before any tenant is created, since
         // provisioning a tenant copies role templates that reference these keys.
         $this->call(PermissionCatalogSeeder::class);
@@ -69,6 +70,16 @@ class DatabaseSeeder extends Seeder
         // Global notification catalog (types/templates/translations) — needed before
         // any tenant dispatches notifications.
         $this->call(NotificationCatalogSeeder::class);
+
+        // Everything below is demo data. Production keeps the catalog rows only
+        // (ruled 8 Sep) unless SEED_DEMO=true says otherwise.
+        if (! $this->demoSeedingAllowed()) {
+            $this->command?->info('Production environment — seeded the catalogs only. Set SEED_DEMO=true to include the demo academies.');
+
+            return;
+        }
+
+        $this->seedPlatformAdmin();
 
         if (Tenant::query()->where('slug', self::TENANT_SLUG)->exists()) {
             $this->command?->info('Academy already seeded — skipping content.');
