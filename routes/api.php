@@ -110,6 +110,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function (): void {
     Route::post('/webhooks/paymob', [PaymentWebhookController::class, 'paymob'])->middleware('throttle:120,1');
+    Route::post('/webhooks/fawry', [PaymentWebhookController::class, 'fawry'])->middleware('throttle:120,1');
 
     // AES key (token-authenticated) + internal media-tier endpoints.
     Route::get('/media/key/{token}', [PlaybackController::class, 'key']);

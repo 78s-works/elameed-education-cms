@@ -14,9 +14,14 @@ interface PaymentGateway
     public function name(): string;
 
     /**
-     * Begin a hosted payment for an order.
+     * Begin a payment for an order.
      *
-     * @return array{redirect_url: string, reference: string}
+     * `redirect_url` is the hosted page to send the student to, and is null for
+     * a gateway that answers with a payable reference instead (Fawry). Extra
+     * keys a gateway needs to surface — `expires_at`, `gateway_reference` — ride
+     * along and the checkout response passes them through when present.
+     *
+     * @return array{redirect_url: ?string, reference: string, expires_at?: ?string, gateway_reference?: ?string}
      */
     public function createCharge(Order $order): array;
 

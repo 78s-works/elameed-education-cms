@@ -2,7 +2,7 @@
 
 namespace App\Modules\Commerce\Http\Controllers;
 
-use App\Modules\Commerce\Gateways\PaymobGateway;
+use App\Modules\Commerce\Gateways\GatewayFactory;
 use App\Modules\Commerce\Http\Requests\CartRequest;
 use App\Modules\Commerce\Http\Requests\PayRequest;
 use App\Modules\Commerce\Http\Resources\OrderResource;
@@ -19,8 +19,9 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Checkout (M05/M06): quote → order → pay. Wallet payment is fully functional
- * locally; card (Paymob) returns a hosted-payment redirect and completes via the
- * idempotent webhook.
+ * locally; a gateway payment leaves the order pending and completes via the
+ * idempotent webhook — Paymob answers with a hosted-checkout redirect, Fawry
+ * with a reference number the student pays at an outlet.
  */
 class CheckoutController
 {
@@ -85,9 +86,11 @@ class CheckoutController
             return response()->json(['data' => ['status' => 'paid', 'order' => $order->uuid]]);
         }
 
-        return $request->validated('method') === 'wallet'
+        $method = (string) $request->validated('method');
+
+        return $method === 'wallet'
             ? $this->payWithWallet($order)
-            : $this->payWithPaymob($order);
+            : $this->payWithGateway($order, $method);
     }
 
     private function payWithWallet(Order $order): JsonResponse
@@ -111,10 +114,11 @@ class CheckoutController
         return response()->json(['data' => ['status' => 'paid', 'order' => $order->fresh()->uuid]]);
     }
 
-    private function payWithPaymob(Order $order): JsonResponse
+    private function payWithGateway(Order $order, string $method): JsonResponse
     {
-        $gateway = app(PaymobGateway::class);
+        $gateway = app(GatewayFactory::class)->make($method);
         $charge = $gateway->createCharge($order);
+        $expiresAt = $charge['expires_at'] ?? null;
 
         Payment::create([
             'order_id' => $order->id,
@@ -122,13 +126,19 @@ class CheckoutController
             'amount_minor' => $order->total_minor,
             'status' => Payment::STATUS_PENDING,
             'reference_number' => $charge['reference'],
+            'expires_at' => $expiresAt,
         ]);
 
-        return response()->json(['data' => [
+        return response()->json(['data' => array_filter([
             'status' => 'pending',
             'order' => $order->uuid,
+            'gateway' => $gateway->name(),
+            // Paymob sends the student to a hosted page; Fawry hands over a
+            // reference number to pay at an outlet before it expires.
             'redirect_url' => $charge['redirect_url'],
-        ]]);
+            'reference_number' => $charge['gateway_reference'] ?? null,
+            'expires_at' => $expiresAt,
+        ], static fn ($value): bool => $value !== null)]);
     }
 
     private function userOrder(Request $request): Order

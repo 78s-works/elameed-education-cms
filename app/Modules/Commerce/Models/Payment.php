@@ -16,6 +16,9 @@ class Payment extends Model
 
     public const STATUS_FAILED = 'failed';
 
+    /** A payable reference (Fawry) nobody paid before it lapsed. */
+    public const STATUS_EXPIRED = 'expired';
+
     protected $fillable = [
         'order_id',
         'gateway',
@@ -23,12 +26,14 @@ class Payment extends Model
         'amount_minor',
         'status',
         'reference_number',
+        'expires_at',
         'raw_payload',
         'processed_at',
     ];
 
     protected $casts = [
         'raw_payload' => 'array',
+        'expires_at' => 'datetime',
         'processed_at' => 'datetime',
         'amount_minor' => 'integer',
     ];
