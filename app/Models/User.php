@@ -28,14 +28,13 @@ class User extends Authenticatable
     /** @use HasFactory<UserFactory> */
     use HasFactory;
 
-    use HasUuids;
-
     /**
      * Roles and permissions are per-tenant (M20): the team id comes from
      * TenantTeamResolver, so every check below answers "in the current academy".
      */
     use HasRoles;
 
+    use HasUuids;
     use Notifiable;
 
     protected $fillable = [

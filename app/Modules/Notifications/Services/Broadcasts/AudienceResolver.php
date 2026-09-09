@@ -32,7 +32,7 @@ class AudienceResolver
 
     /**
      * @param  array<int, int|string>  $audienceIds  numeric ids or uuids
-     * @return list<int>  distinct user ids
+     * @return list<int> distinct user ids
      */
     public function resolve(BroadcastAudience $audience, ?int $tenantId, array $audienceIds = []): array
     {

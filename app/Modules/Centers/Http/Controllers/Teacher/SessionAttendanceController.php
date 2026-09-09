@@ -3,18 +3,19 @@
 namespace App\Modules\Centers\Http\Controllers\Teacher;
 
 use App\Models\User;
+use App\Modules\Catalog\Models\LessonAccessWindow;
 use App\Modules\Centers\Http\Requests\CheckinAttendanceRequest;
 use App\Modules\Centers\Http\Resources\SessionAttendanceResource;
 use App\Modules\Centers\Models\AttendanceRecord;
 use App\Modules\Centers\Models\Center;
 use App\Modules\Centers\Models\CenterSession;
 use App\Modules\Centers\Services\CenterSessionAttendanceService;
-use App\Modules\Catalog\Models\LessonAccessWindow;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
 
@@ -106,7 +107,7 @@ class SessionAttendanceController
      * lessons with its OWN window expiry (each lesson opens for its own
      * availability_days). Unlimited lessons carry no window and never expire.
      *
-     * @param  \Illuminate\Support\Collection<string, LessonAccessWindow>  $windows
+     * @param  Collection<string, LessonAccessWindow>  $windows
      * @return array<int, array<string, mixed>>
      */
     private function lessonGates(AttendanceRecord $r, $windows): array

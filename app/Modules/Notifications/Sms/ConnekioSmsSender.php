@@ -5,8 +5,8 @@ namespace App\Modules\Notifications\Sms;
 use App\Modules\Notifications\Contracts\SmsSender;
 use App\Modules\Notifications\Enums\NotificationChannel;
 use App\Modules\Notifications\Models\NotificationChannelSetting;
-use RuntimeException;
 use Illuminate\Support\Facades\Http;
+use RuntimeException;
 
 /**
  * WE Business SMS (Telecom Egypt / connekio) driver — per-tenant, self-service.

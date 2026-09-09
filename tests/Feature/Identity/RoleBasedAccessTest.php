@@ -31,8 +31,8 @@ use Tests\TestCase;
  */
 class RoleBasedAccessTest extends TestCase
 {
-    use RefreshDatabase;
     use GrantsTenantRoles;
+    use RefreshDatabase;
 
     private Tenant $tenant;
 

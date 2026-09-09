@@ -160,7 +160,7 @@ class BroadcastService
      * Deliver a broadcast. Claims the row first (`scheduled` → `sending`) so two
      * workers picking up the same due broadcast cannot both send it.
      *
-     * @return array<string, mixed>  per-channel counters
+     * @return array<string, mixed> per-channel counters
      */
     public function send(NotificationBroadcast $broadcast): array
     {

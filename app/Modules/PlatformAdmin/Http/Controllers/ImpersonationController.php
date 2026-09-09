@@ -2,6 +2,7 @@
 
 namespace App\Modules\PlatformAdmin\Http\Controllers;
 
+use App\Http\Middleware\BlockImpersonatedWrites;
 use App\Models\User;
 use App\Modules\Tenancy\Models\Tenant;
 use App\Support\Audit\AuditLogger;
@@ -15,7 +16,7 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
  *
  * Three properties make this safe enough to exist:
  *   - READ ONLY. The minted token carries a single ability, and
- *     {@see \App\Http\Middleware\BlockImpersonatedWrites} refuses every
+ *     {@see BlockImpersonatedWrites} refuses every
  *     non-GET request it is used on. A write-enabled mode is deliberately not
  *     built here.
  *   - SHORT LIVED and single-purpose: one token per session, revoked on exit.

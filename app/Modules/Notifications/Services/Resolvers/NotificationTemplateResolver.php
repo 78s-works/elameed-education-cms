@@ -6,6 +6,7 @@ use App\Modules\Notifications\Enums\TemplateScope;
 use App\Modules\Notifications\Models\NotificationTemplate;
 use App\Modules\Notifications\Models\NotificationTemplateTranslation;
 use App\Modules\Notifications\Models\NotificationType;
+use Illuminate\Support\Collection;
 
 /**
  * Resolves which template and which translation win for a (type, tenant),
@@ -24,11 +25,11 @@ class NotificationTemplateResolver
      * Effective template per channel for this tenant. Channels that resolve to a
      * disabled override or have no usable template are omitted.
      *
-     * @return array<string, NotificationTemplate>  keyed by channel value
+     * @return array<string, NotificationTemplate> keyed by channel value
      */
     public function resolveForTenant(NotificationType $type, int $tenantId): array
     {
-        /** @var \Illuminate\Support\Collection<int, NotificationTemplate> $rows */
+        /** @var Collection<int, NotificationTemplate> $rows */
         $rows = NotificationTemplate::query()
             ->where('notification_type_id', $type->getKey())
             ->where(function ($q) use ($tenantId): void {

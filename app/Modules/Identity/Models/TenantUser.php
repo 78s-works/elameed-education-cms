@@ -104,6 +104,7 @@ class TenantUser extends Model
      * — and an answer computed against the wrong academy is a privilege leak.
      *
      * @template T
+     *
      * @param  callable(): T  $callback
      * @return T
      */
@@ -211,5 +212,4 @@ class TenantUser extends Model
 
         return $this->withTeam(fn (): array => $user->roles()->pluck('name')->values()->all());
     }
-
 }

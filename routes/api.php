@@ -55,8 +55,8 @@ use App\Modules\Engagement\Http\Controllers\Teacher\SupportTicketController as T
 use App\Modules\Identity\Http\Controllers\Admin\RoleTemplateController;
 use App\Modules\Identity\Http\Controllers\AuthController;
 use App\Modules\Identity\Http\Controllers\MeController;
-use App\Modules\Identity\Http\Controllers\StudentLoginHistoryController;
 use App\Modules\Identity\Http\Controllers\ParentController;
+use App\Modules\Identity\Http\Controllers\StudentLoginHistoryController;
 use App\Modules\Identity\Http\Controllers\Teacher\AssistantController;
 use App\Modules\Identity\Http\Controllers\Teacher\RoleController;
 use App\Modules\Identity\Http\Controllers\Teacher\StudentActivityController;

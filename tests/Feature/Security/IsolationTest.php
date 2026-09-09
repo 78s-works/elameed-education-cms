@@ -34,8 +34,8 @@ use Tests\TestCase;
  */
 class IsolationTest extends TestCase
 {
-    use RefreshDatabase;
     use GrantsTenantRoles;
+    use RefreshDatabase;
 
     private Tenant $alpha;
 

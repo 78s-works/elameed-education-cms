@@ -6,6 +6,7 @@ use App\Modules\Assessment\Enums\AttemptStatus;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
 use App\Modules\Centers\Models\CenterExamGrade;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 /**
@@ -120,8 +121,9 @@ class StudentResultsQuery
      * filter back explicitly, since dropping scopes drops tenant isolation too.
      *
      * @template TModel of \Illuminate\Database\Eloquent\Model
-     * @param  \Illuminate\Database\Eloquent\Builder<TModel>  $query
-     * @return \Illuminate\Database\Eloquent\Builder<TModel>
+     *
+     * @param  Builder<TModel>  $query
+     * @return Builder<TModel>
      */
     private function scoped($query, int $tenantId, bool $crossYear)
     {

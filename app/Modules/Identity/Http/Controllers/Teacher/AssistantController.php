@@ -4,6 +4,8 @@ namespace App\Modules\Identity\Http\Controllers\Teacher;
 
 use App\Models\User;
 use App\Modules\Billing\Services\PlanLimitGuard;
+use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Catalog\Services\AcademicYearContext;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\Permission as PermissionEnum;
 use App\Modules\Identity\Enums\RoleTemplateKey;
@@ -14,17 +16,18 @@ use App\Modules\Identity\Http\Requests\UpdateAssistantRequest;
 use App\Modules\Identity\Http\Resources\AssistantResource;
 use App\Modules\Identity\Models\TenantUser;
 use App\Modules\Identity\Support\TeamAuthority;
-use App\Modules\Catalog\Models\AcademicYear;
-use App\Modules\Catalog\Services\AcademicYearContext;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Support\Audit\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 /**
  * Teacher management of their academy's assistants (M18). Assistants are global
@@ -57,11 +60,11 @@ class AssistantController
      * so a client can neither add nor drop it here.
      *
      * @param  array<int, string>|null  $uuids
-     * @return \Illuminate\Support\Collection<int, \Spatie\Permission\Models\Role>
+     * @return Collection<int, Role>
      */
-    private function resolveRoles(Request $request, int $tenantId, ?array $uuids): \Illuminate\Support\Collection
+    private function resolveRoles(Request $request, int $tenantId, ?array $uuids): Collection
     {
-        $roles = \Spatie\Permission\Models\Role::query()
+        $roles = Role::query()
             ->where('tenant_id', $tenantId)
             ->whereIn('uuid', $uuids ?? [])
             // The two baseline staff roles are off-limits: `assistant` is the
@@ -93,11 +96,11 @@ class AssistantController
      * Make the assistant hold exactly: their baseline role + the given roles.
      * Written through the membership so the team id is pinned to this academy.
      *
-     * @param  \Illuminate\Support\Collection<int, \Spatie\Permission\Models\Role>  $roles
+     * @param  Collection<int, Role>  $roles
      */
-    private function syncAssistantRoles(TenantUser $membership, \Illuminate\Support\Collection $roles): void
+    private function syncAssistantRoles(TenantUser $membership, Collection $roles): void
     {
-        $baseline = \Spatie\Permission\Models\Role::query()
+        $baseline = Role::query()
             ->where('tenant_id', $membership->tenant_id)
             ->where('template_key', RoleTemplateKey::Assistant->value)
             ->first();
@@ -108,7 +111,7 @@ class AssistantController
             $target[] = $baseline->name;
         }
 
-        $registrar = app(\Spatie\Permission\PermissionRegistrar::class);
+        $registrar = app(PermissionRegistrar::class);
         $previous = $registrar->getPermissionsTeamId();
         $registrar->setPermissionsTeamId($membership->tenant_id);
 

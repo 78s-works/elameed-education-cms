@@ -16,6 +16,7 @@ use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Laravel\Sanctum\PersonalAccessToken;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -176,9 +177,9 @@ class ParentController
      * A removed child drops via the FK cascade; a disabled (suspended) child is
      * filtered here — the magic link itself stays valid (VD R11 acceptance).
      *
-     * @return \Illuminate\Support\Collection<int, array{id:int, uuid:?string, name:?string, phone:?string, relation:?string}>
+     * @return Collection<int, array{id:int, uuid:?string, name:?string, phone:?string, relation:?string}>
      */
-    private function childrenFor(User $parent): \Illuminate\Support\Collection
+    private function childrenFor(User $parent): Collection
     {
         $tenantId = $this->context->tenantOrFail()->getKey();
 

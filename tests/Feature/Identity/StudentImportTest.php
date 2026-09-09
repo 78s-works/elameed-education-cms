@@ -61,7 +61,7 @@ class StudentImportTest extends TestCase
         $path = $stem.'.xlsx';
         @unlink($stem);
 
-        $writer = new Writer();
+        $writer = new Writer;
         $writer->openToFile($path);
         foreach ($rows as $r) {
             $writer->addRow(Row::fromValues($r));

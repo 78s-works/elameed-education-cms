@@ -2,6 +2,7 @@
 
 namespace App\Modules\Identity\Http\Resources;
 
+use App\Modules\Identity\Enums\RoleTemplateKey;
 use App\Modules\Identity\Models\RoleTemplate;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -27,7 +28,7 @@ class RoleTemplateResource extends JsonResource
             'is_system' => (bool) $this->is_system,
             // The owner template is code-derived: the console shows the set but
             // refuses edits to it (see RoleTemplateController::update).
-            'is_derived' => $this->key === \App\Modules\Identity\Enums\RoleTemplateKey::Teacher,
+            'is_derived' => $this->key === RoleTemplateKey::Teacher,
             'permissions' => $this->whenLoaded('permissions', fn () => $this->permissions->pluck('name')->values()->all()),
             'permissions_count' => $this->whenLoaded('permissions', fn () => $this->permissions->count()),
             'copies_count' => Role::query()->where('template_key', $this->key->value)->count(),

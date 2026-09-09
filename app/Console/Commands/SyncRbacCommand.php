@@ -10,6 +10,7 @@ use App\Modules\Identity\Services\TenantRoleProvisioner;
 use App\Modules\Identity\Support\RbacGuard;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Brings the whole authorization layer in step with the code (M20): catalog →
@@ -34,7 +35,7 @@ class SyncRbacCommand extends Command
         // `auth.defaults.guard` per request, so rows written during an API call
         // could land on `sanctum` while the catalog lives on `web` — a role on the
         // wrong guard matches no permission and no user, silently granting nothing.
-        $drifted = \Illuminate\Support\Facades\DB::table('roles')
+        $drifted = DB::table('roles')
             ->where('guard_name', '!=', RbacGuard::NAME)
             ->update(['guard_name' => RbacGuard::NAME]);
 

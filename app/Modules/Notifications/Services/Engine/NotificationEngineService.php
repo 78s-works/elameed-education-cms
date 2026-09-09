@@ -41,13 +41,13 @@ class NotificationEngineService
     /**
      * @param  array<int, int>  $recipientUserIds
      * @param  array<string, mixed>  $renderVariables  Not persisted (doc 10 §11).
-     * @param  array<string, mixed>  $auditPayload     Non-sensitive; persisted on the event.
-     * @param  array<string, mixed>  $options          Recognised keys:
-     *                                                 - `channel_var_blacklist`: ['sms' => ['otp']]
-     *                                                 - `channels`: ['database', 'sms'] — restrict to these channels
-     *                                                 - `ignore_preferences`: true — deliver even to opted-out
-     *                                                 recipients (a teacher's custom message reaches muted students)
-     * @return array<string, mixed>  Summary (doc 10 §12 output).
+     * @param  array<string, mixed>  $auditPayload  Non-sensitive; persisted on the event.
+     * @param  array<string, mixed>  $options  Recognised keys:
+     *                                         - `channel_var_blacklist`: ['sms' => ['otp']]
+     *                                         - `channels`: ['database', 'sms'] — restrict to these channels
+     *                                         - `ignore_preferences`: true — deliver even to opted-out
+     *                                         recipients (a teacher's custom message reaches muted students)
+     * @return array<string, mixed> Summary (doc 10 §12 output).
      */
     public function dispatch(
         string $notificationKey,

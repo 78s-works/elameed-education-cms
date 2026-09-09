@@ -40,7 +40,7 @@ class TemplatedSmsNotifier
     /**
      * @param  list<string>  $phones
      * @param  array<string, mixed>  $variables
-     * @return int  numbers actually texted
+     * @return int numbers actually texted
      */
     public function send(string $notificationKey, int $tenantId, array $phones, array $variables = []): int
     {

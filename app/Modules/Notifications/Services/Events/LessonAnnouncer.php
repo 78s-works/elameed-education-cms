@@ -45,7 +45,7 @@ class LessonAnnouncer
     /**
      * Announce the lesson if it is available and has not been announced before.
      *
-     * @return bool  whether an announcement was actually sent
+     * @return bool whether an announcement was actually sent
      */
     public function announce(Lesson $lesson, ?int $actorId = null): bool
     {

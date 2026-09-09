@@ -11,8 +11,6 @@ use App\Modules\Engagement\Models\Review;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
-use App\Modules\Media\Enums\MediaType;
-use App\Modules\Media\Models\MediaAsset;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\TeacherProfile;
 use App\Modules\Tenancy\Models\Tenant;

@@ -4,7 +4,6 @@ namespace Tests\Feature\Catalog;
 
 use App\Models\User;
 use App\Modules\Assessment\Models\Exam;
-use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonSection;

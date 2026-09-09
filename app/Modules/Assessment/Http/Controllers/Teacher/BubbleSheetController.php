@@ -7,6 +7,7 @@ use App\Modules\Assessment\Http\Requests\BubbleSheetRequest;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\Question;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -68,7 +69,7 @@ class BubbleSheetController
      * Shape the teacher sheet. `correct_index` is the first (only) entry of the
      * reused `correct` key.
      *
-     * @param  \Illuminate\Support\Collection<int, Question>  $questions
+     * @param  Collection<int, Question>  $questions
      * @return array<string, mixed>
      */
     private function present(Exam $exam, $questions): array
