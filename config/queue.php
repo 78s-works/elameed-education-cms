@@ -40,7 +40,28 @@ return [
             'connection' => env('DB_QUEUE_CONNECTION'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            // Must stay ABOVE the --timeout of every worker that consumes this
+            // connection (otp, media, default: 120 s worker timeout), or the
+            // queue re-reserves a job that is still running and the work is done
+            // twice. See docs/queues.md.
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 180),
+            'after_commit' => false,
+        ],
+
+        /*
+         * Same driver, same table — a second connection exists only to carry a
+         * longer `retry_after` for work that legitimately runs for minutes
+         * (report exports over thousands of rows). `retry_after` is a property of
+         * the CONNECTION, not of the queue, so a long job cannot share the
+         * connection its short-lived siblings use: a 90 s window would hand the
+         * same export to a second worker while the first is still writing it.
+         */
+        'database_long' => [
+            'driver' => 'database',
+            'connection' => env('DB_QUEUE_CONNECTION'),
+            'table' => env('DB_QUEUE_TABLE', 'jobs'),
+            'queue' => env('DB_LONG_QUEUE', 'exports'),
+            'retry_after' => (int) env('DB_LONG_QUEUE_RETRY_AFTER', 1800),
             'after_commit' => false,
         ],
 

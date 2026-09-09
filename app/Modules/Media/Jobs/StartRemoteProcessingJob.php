@@ -5,6 +5,7 @@ namespace App\Modules\Media\Jobs;
 use App\Modules\Media\Enums\MediaVersionState;
 use App\Modules\Media\Models\MediaVersion;
 use App\Modules\Media\Services\RemoteVideoService;
+use App\Support\Queue\QueueNames;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
@@ -22,7 +23,11 @@ class StartRemoteProcessingJob implements ShouldQueue
 
     public array $backoff = [30, 120];
 
-    public function __construct(public int $versionId, public int $attempt = 1) {}
+    public function __construct(public int $versionId, public int $attempt = 1)
+    {
+        // Same queue as the transcoder — one worker pool owns media work.
+        $this->onQueue(QueueNames::Media);
+    }
 
     public function handle(RemoteVideoService $service): void
     {

@@ -4,6 +4,7 @@ namespace App\Modules\Media\Jobs;
 
 use App\Modules\Media\Enums\MediaStatus;
 use App\Modules\Media\Models\MediaAsset;
+use App\Support\Queue\QueueNames;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
@@ -16,7 +17,11 @@ class TranscodeVideoJob implements ShouldQueue
 {
     use Queueable;
 
-    public function __construct(public int $mediaAssetId) {}
+    public function __construct(public int $mediaAssetId)
+    {
+        // Media work runs for minutes once FFmpeg is real — off the OTP path.
+        $this->onQueue(QueueNames::Media);
+    }
 
     public function handle(): void
     {
