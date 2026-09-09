@@ -848,13 +848,13 @@ class AhmedTammamAcademySeeder extends Seeder
         $this->linkDependency($lessons[0], $lessons[1]);
 
         // Package types: full-course + chapter (بابي) + monthly (شهري).
-        $fullType = $this->makePackageType($year, 'الكورس الكامل', 'hybrid', buyAlone: true);
+        $fullType = $this->makePackageType($year, 'الباقة الكاملة', 'hybrid', buyAlone: true);
         $chapterType = $this->makePackageType($year, 'اشتراك بابي', 'hybrid', buyAlone: true);
         $monthlyType = $this->makePackageType($year, 'اشتراك شهري', 'hybrid', buyAlone: true);
 
         // Full-course package (all lessons) — replaces the old "كورس الأحياء الشامل".
         $fullPkg = $this->makePackage($year, $fullType, [
-            'name' => 'كورس الأحياء الشامل — الثالث الثانوي',
+            'name' => 'الأحياء الشاملة — الثالث الثانوي',
             'description' => 'شرح منهج الأحياء للصف الثالث الثانوي بالكامل: الدعامة والحركة، التنسيق الهرموني، الإخراج، التكاثر، المناعة والوراثة.',
             'price_minor' => 120000,
             'access_mode' => AccessMode::Both,
@@ -987,9 +987,9 @@ class AhmedTammamAcademySeeder extends Seeder
         ], withExam: true, essay: true);
 
         // Full-course package (all lessons) — replaces the old "كورس الأحياء".
-        $fullType = $this->makePackageType($year, 'الكورس الكامل', 'hybrid', buyAlone: true);
+        $fullType = $this->makePackageType($year, 'الباقة الكاملة', 'hybrid', buyAlone: true);
         $fullPkg = $this->makePackage($year, $fullType, [
-            'name' => 'كورس الأحياء — الثاني الثانوي',
+            'name' => 'الأحياء — الثاني الثانوي',
             'description' => 'أساسيات الأحياء للصف الثاني الثانوي مع بنك أسئلة على كل درس.',
             'price_minor' => 90000,
             'access_mode' => AccessMode::Both,
@@ -1063,7 +1063,7 @@ class AhmedTammamAcademySeeder extends Seeder
         ], withExam: true, essay: false);
 
         // Full-course package (all lessons) — replaces the old "العلوم المتكاملة".
-        $fullType = $this->makePackageType($year, 'الكورس الكامل', 'online', buyAlone: true);
+        $fullType = $this->makePackageType($year, 'الباقة الكاملة', 'online', buyAlone: true);
         $fullPkg = $this->makePackage($year, $fullType, [
             'name' => 'العلوم المتكاملة — الأول الثانوي',
             'description' => 'شرح العلوم المتكاملة للصف الأول الثانوي بأسلوب مبسّط ومنظّم.',
