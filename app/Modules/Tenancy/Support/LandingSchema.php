@@ -436,14 +436,14 @@ final class LandingSchema
         return [
             ['key' => 'hero', 'type' => 'hero', 'variant' => 'split', 'visible' => true, 'order' => 1, 'content' => [
                 'eyebrow' => '', 'title_html' => '', 'description' => '', 'note' => '',
-                'primary_cta' => ['label' => 'ابدأ الآن'], 'secondary_cta' => ['label' => 'تصفّح الكورسات'],
+                'primary_cta' => ['label' => 'ابدأ الآن'], 'secondary_cta' => ['label' => 'تصفّح الدروس'],
                 'teacher' => ['name' => '', 'role' => '', 'image_url' => null, 'card_stats' => []],
                 'chips' => [],
             ]],
             ['key' => 'stats', 'type' => 'stats', 'variant' => 'bar', 'visible' => true, 'order' => 2, 'content' => ['items' => []]],
             ['key' => 'features', 'type' => 'features', 'variant' => 'grid', 'visible' => true, 'order' => 3, 'content' => ['title' => '', 'subtitle' => '', 'items' => []]],
             ['key' => 'about', 'type' => 'about', 'variant' => 'image_right', 'visible' => true, 'order' => 4, 'content' => ['badge' => '', 'title' => '', 'body' => '', 'image_url' => null, 'points' => []]],
-            ['key' => 'courses', 'type' => 'courses', 'variant' => 'grid', 'visible' => true, 'order' => 5, 'content' => ['title' => 'الكورسات', 'subtitle' => ''], 'config' => ['source' => 'featured', 'category_id' => null, 'course_ids' => [], 'limit' => 6]],
+            ['key' => 'courses', 'type' => 'courses', 'variant' => 'grid', 'visible' => true, 'order' => 5, 'content' => ['title' => 'الدروس', 'subtitle' => ''], 'config' => ['source' => 'featured', 'category_id' => null, 'course_ids' => [], 'limit' => 6]],
             ['key' => 'how', 'type' => 'steps', 'variant' => 'horizontal', 'visible' => true, 'order' => 6, 'content' => ['title' => '', 'subtitle' => '', 'items' => []]],
             ['key' => 'testimonials', 'type' => 'testimonials', 'variant' => 'cards', 'visible' => true, 'order' => 7, 'content' => ['title' => 'آراء الطلاب', 'subtitle' => ''], 'config' => ['source' => 'latest', 'min_rating' => 0, 'limit' => 6]],
             ['key' => 'packages', 'type' => 'packages', 'variant' => 'columns', 'visible' => false, 'order' => 8, 'content' => ['title' => '', 'subtitle' => '', 'items' => []]],
