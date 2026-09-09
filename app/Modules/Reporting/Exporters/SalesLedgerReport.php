@@ -85,16 +85,20 @@ class SalesLedgerReport extends TabularReport
     {
         $lines = [];
 
-        if (! empty($this->filters['from']) || ! empty($this->filters['to'])) {
-            $from = $this->filters['from'] ?? '…';
-            $to = $this->filters['to'] ?? '…';
+        if (! empty($this->filters['date_from']) || ! empty($this->filters['date_to'])) {
+            $from = $this->filters['date_from'] ?? '…';
+            $to = $this->filters['date_to'] ?? '…';
             $lines[] = $this->t("من {$from} إلى {$to}", "From {$from} to {$to}");
         }
+        // Both arrive as arrays from the ledger screen's multi-selects.
         if (! empty($this->filters['status'])) {
-            $lines[] = $this->t('الحالة: ', 'Status: ').$this->filters['status'];
+            $lines[] = $this->t('الحالة: ', 'Status: ').implode(', ', (array) $this->filters['status']);
         }
         if (! empty($this->filters['method'])) {
-            $lines[] = $this->t('طريقة الدفع: ', 'Method: ').$this->filters['method'];
+            $lines[] = $this->t('طريقة الدفع: ', 'Method: ').implode(', ', (array) $this->filters['method']);
+        }
+        if (! empty($this->filters['q'])) {
+            $lines[] = $this->t('بحث: ', 'Search: ').(string) $this->filters['q'];
         }
 
         return $lines;

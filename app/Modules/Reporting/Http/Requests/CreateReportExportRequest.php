@@ -32,11 +32,22 @@ class CreateReportExportRequest extends FormRequest
             'format' => ['required', Rule::enum(ExportFormat::class)],
             'locale' => ['sometimes', Rule::in(['ar', 'en'])],
 
+            // The ledger's own filter vocabulary — the same keys the sales
+            // screen sends to /teacher/sales, so an export reproduces exactly
+            // the slice the teacher is looking at. `status` and `method` arrive
+            // as arrays from the screen's multi-selects.
             'filters' => ['sometimes', 'array'],
-            'filters.from' => ['sometimes', 'nullable', 'date'],
-            'filters.to' => ['sometimes', 'nullable', 'date', 'after_or_equal:filters.from'],
-            'filters.status' => ['sometimes', 'nullable', 'string', 'max:32'],
-            'filters.method' => ['sometimes', 'nullable', 'string', 'max:32'],
+            'filters.date_from' => ['sometimes', 'nullable', 'date'],
+            'filters.date_to' => ['sometimes', 'nullable', 'date', 'after_or_equal:filters.date_from'],
+            // The ledger screen sends arrays (multi-select); the roster screen
+            // sends a single membership status. Both are legitimate, so the
+            // shape is not pinned — only the members are.
+            'filters.status' => ['sometimes', 'nullable'],
+            'filters.status.*' => ['string', 'max:32'],
+            'filters.method' => ['sometimes', 'nullable'],
+            'filters.method.*' => ['string', 'max:32'],
+            'filters.student_id' => ['sometimes', 'nullable', 'integer'],
+            'filters.item_id' => ['sometimes', 'nullable', 'string', 'max:64'],
             'filters.q' => ['sometimes', 'nullable', 'string', 'max:120'],
             // Resolved by the controller from the request's year context; a
             // client-supplied value is not trusted.

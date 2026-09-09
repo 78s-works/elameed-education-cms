@@ -112,7 +112,7 @@ class StudentsReport extends TabularReport
             $rows = TenantUser::query()
                 ->where('tenant_id', $this->tenantId)
                 ->where('role', TenantUserRole::Student->value)
-                ->when($this->filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
+                ->when($this->membershipStatus(), fn ($q, $status) => $q->where('status', $status))
                 ->when($this->academicYearId !== null, fn ($q) => $q->whereIn(
                     'user_id',
                     StudentProfile::withoutGlobalScopes()
@@ -183,5 +183,21 @@ class StudentsReport extends TabularReport
             'both' => $this->t('هجين', 'Hybrid'),
             default => '',
         };
+    }
+
+    /**
+     * The roster screen sends one membership status; the ledger screen sends an
+     * array. Accept either and compare against a single value — passing an array
+     * into a where() would be a silent type error in MySQL.
+     */
+    private function membershipStatus(): ?string
+    {
+        $status = $this->filters['status'] ?? null;
+
+        if (is_array($status)) {
+            $status = $status[0] ?? null;
+        }
+
+        return $status === null || $status === '' ? null : (string) $status;
     }
 }
