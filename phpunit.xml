@@ -43,8 +43,12 @@
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
         <!-- Paymob sandbox stand-ins: every test that reaches the gateway fakes
-             the HTTP call, so these only need to be present. -->
+             the HTTP call, so these only need to be present. Pinned here rather
+             than left to the config defaults, because an environment that copies
+             .env.example gets an EMPTY PAYMOB_HMAC_SECRET — empty is a value, so
+             the default never applies and every webhook signature check fails. -->
         <env name="PAYMOB_SECRET_KEY" value="test-secret-key"/>
+        <env name="PAYMOB_HMAC_SECRET" value="test-hmac-secret"/>
         <env name="PAYMOB_PUBLIC_KEY" value="test-public-key"/>
         <env name="PAYMOB_INTEGRATION_IDS" value="1111"/>
         <env name="PULSE_ENABLED" value="false"/>
