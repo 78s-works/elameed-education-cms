@@ -53,33 +53,30 @@ class OtpService
      */
     public function verify(string $identifier, OtpPurpose $purpose, string $code): bool
     {
+        $otp = OtpCode::query()
+            ->where('identifier', $identifier)
+            ->where('purpose', $purpose->value)
+            ->whereNull('consumed_at')
+            ->latest('id')
+            ->first();
 
-        // Don't remove verification logic, just comment it out for now. We will implement it later when we have a proper OTP system in place.
+        if ($otp === null || $otp->isExpired()) {
+            return false;
+        }
 
-        // $otp = OtpCode::query()
-        //     ->where('identifier', $identifier)
-        //     ->where('purpose', $purpose->value)
-        //     ->whereNull('consumed_at')
-        //     ->latest('id')
-        //     ->first();
+        if ($otp->attempts >= (int) config('otp.max_attempts', 5)) {
+            $otp->update(['consumed_at' => now()]); // burn it
 
-        // if ($otp === null || $otp->isExpired()) {
-        //     return false;
-        // }
+            return false;
+        }
 
-        // if ($otp->attempts >= (int) config('otp.max_attempts', 5)) {
-        //     $otp->update(['consumed_at' => now()]); // burn it
+        $otp->increment('attempts');
 
-        //     return false;
-        // }
+        if (! Hash::check($code, $otp->code_hash)) {
+            return false;
+        }
 
-        // $otp->increment('attempts');
-
-        // if (! Hash::check($code, $otp->code_hash)) {
-        //     return false;
-        // }
-
-        // $otp->update(['consumed_at' => now()]);
+        $otp->update(['consumed_at' => now()]);
 
         return true;
     }
