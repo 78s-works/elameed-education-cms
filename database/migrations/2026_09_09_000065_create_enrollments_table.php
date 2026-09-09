@@ -23,6 +23,14 @@ return new class extends Migration
             $table->foreignId('academic_year_id')->nullable()->constrained('academic_years')->cascadeOnDelete();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('lesson_id')->nullable()->constrained('lessons')->cascadeOnDelete();
+            // A teacher can grant one exam directly, without a content purchase
+            // (doc 11 R7 / decision D7): exactly one target per row.
+            $table->foreignId('exam_id')->nullable()->constrained('exams')->cascadeOnDelete();
+            // Provenance only, never an access key (B15 / VD LP-D2): a package
+            // purchase fans out into per-lesson rows, each recording the package
+            // it came from. Nulled — not cascaded — when the package is deleted,
+            // so the student keeps the lessons they paid for.
+            $table->foreignId('package_id')->nullable()->constrained('packages')->nullOnDelete();
             $table->string('source')->default('purchase');
             $table->timestamp('starts_at')->nullable();
             $table->timestamp('expires_at')->nullable();
@@ -30,6 +38,8 @@ return new class extends Migration
             $table->timestamps();
 
             $table->index(['tenant_id', 'user_id', 'lesson_id']);
+            $table->index(['tenant_id', 'user_id', 'exam_id']);
+            $table->index(['tenant_id', 'user_id', 'package_id']);
             $table->index(['tenant_id', 'academic_year_id']);
         });
 

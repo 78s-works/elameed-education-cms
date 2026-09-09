@@ -19,6 +19,10 @@ return new class extends Migration
             $table->uuid('uuid')->unique();
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->foreignId('academic_year_id')->constrained('academic_years')->cascadeOnDelete();
+            // Optional B27 type label. nullOnDelete: a type is a label, not an
+            // owner, so deleting one nulls its packages instead of deleting them.
+            $table->foreignId('package_type_id')->nullable()
+                ->constrained('package_types')->nullOnDelete();
             $table->string('name');
             $table->text('description')->nullable();
             $table->string('cover_url', 2048)->nullable();
