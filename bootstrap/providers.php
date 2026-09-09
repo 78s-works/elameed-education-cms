@@ -4,6 +4,7 @@ use App\Modules\Catalog\Providers\CatalogServiceProvider;
 use App\Modules\Commerce\Providers\CommerceServiceProvider;
 use App\Modules\Media\Providers\MediaServiceProvider;
 use App\Modules\Notifications\Providers\NotificationsServiceProvider;
+use App\Modules\Reporting\Providers\ReportingServiceProvider;
 use App\Modules\Tenancy\Providers\TenancyServiceProvider;
 use App\Providers\AppServiceProvider;
 
@@ -14,4 +15,5 @@ return [
     CommerceServiceProvider::class,
     NotificationsServiceProvider::class,
     MediaServiceProvider::class,
+    ReportingServiceProvider::class,
 ];

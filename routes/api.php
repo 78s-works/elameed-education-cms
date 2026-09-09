@@ -87,6 +87,7 @@ use App\Modules\PlatformAdmin\Http\Controllers\AdminTenantController;
 use App\Modules\PlatformAdmin\Http\Controllers\ImpersonationController;
 use App\Modules\Reporting\Http\Controllers\AuditLogController;
 use App\Modules\Reporting\Http\Controllers\StudentCoursesController;
+use App\Modules\Reporting\Http\Controllers\Teacher\ReportExportController;
 use App\Modules\Reporting\Http\Controllers\Teacher\SalesLedgerController;
 use App\Modules\Reporting\Http\Controllers\TeacherReportsController;
 use App\Modules\Tenancy\Http\Controllers\Teacher\DomainController;
@@ -743,6 +744,21 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
             Route::middleware('can:reports.view')->group(function (): void {
                 Route::get('/teacher/reports/students', [TeacherReportsController::class, 'students']);
                 Route::get('/teacher/reports/overview', [TeacherReportsController::class, 'overview']);
+
+                // Report exports (EDU-021). Three steps, because the work does
+                // not fit in a request: POST queues a job on the `exports` queue
+                // and returns 202 with the row, the client polls the row, then
+                // downloads. The file is private — it is streamed through this
+                // endpoint, which re-checks the academy, never from a public path.
+                //
+                // The sales ledger's own inline CSV/XLSX download stays where it
+                // is (/teacher/sales/export, under the finance key): it is small,
+                // synchronous, and already what the ledger screen offers. A ledger
+                // PDF over a year of orders is what needed the queue.
+                Route::get('/teacher/reports/exports', [ReportExportController::class, 'index']);
+                Route::post('/teacher/reports/exports', [ReportExportController::class, 'store']);
+                Route::get('/teacher/reports/exports/{reportExport:uuid}', [ReportExportController::class, 'show']);
+                Route::get('/teacher/reports/exports/{reportExport:uuid}/download', [ReportExportController::class, 'download']);
             });
 
             // The sales ledger names the student and the amount on every line, so

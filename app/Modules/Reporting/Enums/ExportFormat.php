@@ -2,13 +2,15 @@
 
 namespace App\Modules\Reporting\Enums;
 
+use App\Modules\Reporting\Services\PdfRenderer;
+
 /**
  * File formats an export can produce.
  *
  * CSV and XLSX are spreadsheets — rows a human sorts and re-totals. PDF is a
  * document: it is what gets printed, attached to a message, or handed to someone
  * who will not open a spreadsheet, so its layout matters and its Arabic has to
- * be shaped correctly (see {@see \App\Modules\Reporting\Services\PdfRenderer}).
+ * be shaped correctly (see {@see PdfRenderer}).
  */
 enum ExportFormat: string
 {

@@ -3,6 +3,7 @@
 namespace App\Modules\Reporting\Exporters;
 
 use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Centers\Models\CenterIdCode;
 use App\Modules\Commerce\Enums\OrderStatus;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Commerce\Models\Order;
@@ -10,6 +11,7 @@ use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use Generator;
+use Illuminate\Support\Collection;
 
 /**
  * The student roster with the figures a teacher actually chases: what they own,
@@ -54,39 +56,22 @@ class StudentsReport extends TabularReport
             ->where('tenant_id', $this->tenantId)
             ->pluck('name', 'id');
 
-        $memberships = TenantUser::query()
-            ->where('tenant_id', $this->tenantId)
-            ->where('role', TenantUserRole::Student->value)
-            ->when($this->filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
-            ->when($this->academicYearId !== null, fn ($q) => $q->whereIn(
-                'user_id',
-                StudentProfile::withoutGlobalScopes()
-                    ->where('tenant_id', $this->tenantId)
-                    ->where('academic_year_id', $this->academicYearId)
-                    ->select('user_id'),
-            ))
-            ->with('user')
-            ->orderBy('id');
-
-        foreach ($memberships->lazy(500) as $chunkStart => $membership) {
-            // Aggregates are resolved per chunk of ids, not per student.
-            unset($chunkStart);
-        }
-
-        // lazy() yields one model at a time; batch the aggregate lookups by
-        // walking in explicit chunks instead so each chunk costs 3 queries.
-        $memberships->chunkById(500, function ($rows) use ($years, &$out) {
-            $out = $rows;
-        });
-
         foreach ($this->chunks() as $rows) {
             $userIds = $rows->pluck('user_id')->all();
 
             $profiles = StudentProfile::withoutGlobalScopes()
                 ->where('tenant_id', $this->tenantId)
                 ->whereIn('user_id', $userIds)
-                ->get(['user_id', 'academic_year_id', 'study_mode', 'student_code'])
+                ->get(['user_id', 'academic_year_id', 'study_mode'])
                 ->keyBy('user_id');
+
+            // The student code is not a profile column: it is the center ID code
+            // the student redeemed, so it is looked up per chunk rather than
+            // joined per row. A student who never redeemed one has none.
+            $codes = CenterIdCode::withoutGlobalScopes()
+                ->where('tenant_id', $this->tenantId)
+                ->whereIn('used_by', $userIds)
+                ->pluck('code', 'used_by');
 
             $spend = Order::withoutGlobalScopes()
                 ->where('tenant_id', $this->tenantId)
@@ -105,7 +90,7 @@ class StudentsReport extends TabularReport
                 yield [
                     (string) ($membership->user?->name ?? '—'),
                     (string) ($membership->user?->phone ?? ''),
-                    (string) ($profile?->student_code ?? ''),
+                    (string) ($codes[$userId] ?? ''),
                     (string) ($years[$profile?->academic_year_id] ?? ''),
                     $this->studyModeLabel($profile?->study_mode),
                     (string) ($membership->status?->value ?? $membership->status),
@@ -118,7 +103,7 @@ class StudentsReport extends TabularReport
         }
     }
 
-    /** @return Generator<int, \Illuminate\Support\Collection> */
+    /** @return Generator<int, Collection> */
     private function chunks(): Generator
     {
         $lastId = 0;
