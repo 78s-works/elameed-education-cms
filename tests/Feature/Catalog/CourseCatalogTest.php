@@ -298,4 +298,84 @@ class CourseCatalogTest extends TestCase
             ->getJson('/api/v1/catalogue?view=bundles')
             ->assertStatus(422);
     }
+
+    // ── EDU-022: ?sort= on both discovery views ───────────────────────────────
+
+    public function test_catalogue_sorts_packages_by_price_in_both_directions(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $h = ['X-Tenant' => 'demo'];
+
+        $this->makePackage($tenant, ['name' => 'Mid', 'is_purchasable' => true, 'price_minor' => 5000]);
+        $this->makePackage($tenant, ['name' => 'Cheap', 'is_purchasable' => true, 'price_minor' => 1000]);
+        $this->makePackage($tenant, ['name' => 'Dear', 'is_purchasable' => true, 'price_minor' => 9000]);
+
+        $asc = collect($this->withHeaders($h)->getJson('/api/v1/catalogue?sort=price_asc')
+            ->assertOk()->json('data'))->pluck('name')->all();
+        $this->assertSame(['Cheap', 'Mid', 'Dear'], $asc);
+
+        $desc = collect($this->withHeaders($h)->getJson('/api/v1/catalogue?sort=price_desc')
+            ->assertOk()->json('data'))->pluck('name')->all();
+        $this->assertSame(['Dear', 'Mid', 'Cheap'], $desc);
+    }
+
+    public function test_catalogue_sorts_lessons_by_newest_first(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $h = ['X-Tenant' => 'demo'];
+        $published = ['is_purchasable' => true, 'visibility' => ContentVisibility::Visible->value];
+
+        // sort_order is deliberately the REVERSE of creation order, so a passing
+        // assertion can only come from the created_at ordering.
+        $old = $this->makeLesson($tenant, $published + ['title' => 'Old', 'sort_order' => 1]);
+        $new = $this->makeLesson($tenant, $published + ['title' => 'New', 'sort_order' => 2]);
+        $old->forceFill(['created_at' => now()->subDays(3)])->save();
+        $new->forceFill(['created_at' => now()])->save();
+
+        $names = collect($this->withHeaders($h)->getJson('/api/v1/catalogue?view=lessons&sort=newest')
+            ->assertOk()->json('data'))->pluck('name')->all();
+
+        $this->assertSame(['New', 'Old'], $names);
+    }
+
+    public function test_catalogue_keeps_the_authored_order_without_a_sort(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $h = ['X-Tenant' => 'demo'];
+        $published = ['is_purchasable' => true, 'visibility' => ContentVisibility::Visible->value];
+
+        $this->makeLesson($tenant, $published + ['title' => 'Second', 'sort_order' => 2, 'price_minor' => 100]);
+        $this->makeLesson($tenant, $published + ['title' => 'First', 'sort_order' => 1, 'price_minor' => 900]);
+
+        $names = collect($this->withHeaders($h)->getJson('/api/v1/catalogue?view=lessons')
+            ->assertOk()->json('data'))->pluck('name')->all();
+
+        $this->assertSame(['First', 'Second'], $names); // sort_order, not price
+    }
+
+    public function test_catalogue_rejects_an_unknown_sort(): void
+    {
+        $this->makeTenant('demo');
+
+        $this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson('/api/v1/catalogue?sort=cheapest')
+            ->assertStatus(422);
+    }
+
+    public function test_catalogue_lesson_rows_expose_created_at_for_the_newest_sort(): void
+    {
+        $tenant = $this->makeTenant('demo');
+
+        $this->makeLesson($tenant, [
+            'title' => 'Dated',
+            'is_purchasable' => true,
+            'visibility' => ContentVisibility::Visible->value,
+        ]);
+
+        $this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson('/api/v1/catalogue?view=lessons')
+            ->assertOk()
+            ->assertJsonPath('data.0.name', 'Dated')
+            ->assertJsonStructure(['data' => [['created_at']]]);
+    }
 }

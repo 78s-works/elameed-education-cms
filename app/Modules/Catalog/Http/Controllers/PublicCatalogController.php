@@ -30,10 +30,14 @@ use Illuminate\Validation\Rule;
  *   - ?view=lessons     → published, individually-purchasable standalone lessons.
  *
  * Both accept ?access_mode=center|online|both (channel filter, wildcard on `both`
- * via {@see AccessMode::isVisibleTo}) and an optional ?academic_year=<uuid> narrowing.
+ * via {@see AccessMode::isVisibleTo}), an optional ?academic_year=<uuid> narrowing,
+ * a ?q= title search and a ?sort= ordering (see {@see applySort}).
  */
 class PublicCatalogController
 {
+    /** Orderings the discovery views accept via ?sort= (anything else is rejected). */
+    private const SORTS = ['price_asc', 'price_desc', 'newest'];
+
     public function __construct(
         private readonly TenantContext $context,
         private readonly StudentPartVisibility $studyMode,
@@ -44,6 +48,7 @@ class PublicCatalogController
         $request->validate([
             'view' => ['sometimes', Rule::in(['lessons', 'packages'])],
             'access_mode' => ['sometimes', Rule::enum(AccessMode::class)],
+            'sort' => ['sometimes', Rule::in(self::SORTS)],
         ]);
 
         return match ((string) $request->string('view')) {
@@ -83,7 +88,7 @@ class PublicCatalogController
             ->tap(fn (Builder $q) => $this->applyAccessMode($q, $request))
             ->tap(fn (Builder $q) => $this->applyAcademicYear($q, $request))
             ->tap(fn (Builder $q) => $this->applyExcludeOwned($q, $request, 'lesson_id'))
-            ->orderBy('sort_order')
+            ->tap(fn (Builder $q) => $this->applySort($q, $request, 'sort_order'))
             ->orderBy('id')
             ->paginate(20);
 
@@ -104,9 +109,9 @@ class PublicCatalogController
             ->tap(fn (Builder $q) => $this->applyAccessMode($q, $request))
             ->tap(fn (Builder $q) => $this->applyAcademicYear($q, $request))
             ->tap(fn (Builder $q) => $this->applyExcludeOwned($q, $request, 'package_id'))
+            ->tap(fn (Builder $q) => $this->applySort($q, $request, 'name'))
             ->with('packageType')
             ->withCount('items')
-            ->orderBy('name')
             ->orderBy('id')
             ->paginate(20);
 
@@ -249,6 +254,23 @@ class PublicCatalogController
         if ($ownedIds !== []) {
             $query->whereNotIn('id', $ownedIds);
         }
+    }
+
+    /**
+     * Optional ?sort= ordering for the discovery views (Explore's sort control):
+     * `price_asc` / `price_desc` order by the item's own price, `newest` by
+     * creation time. Without it the view keeps its authored order, which is
+     * `$default` — `sort_order` for lessons, `name` for packages. `id` is always
+     * appended by the caller as the tie-breaker, so paging stays stable.
+     */
+    private function applySort(Builder $query, Request $request, string $default): void
+    {
+        match ((string) $request->string('sort')) {
+            'price_asc' => $query->orderBy('price_minor'),
+            'price_desc' => $query->orderByDesc('price_minor'),
+            'newest' => $query->orderByDesc('created_at'),
+            default => $query->orderBy($default),
+        };
     }
 
     /**

@@ -853,14 +853,14 @@ class AhmedTammamAcademySeeder extends Seeder
         // A content dependency: the quiz of lesson 2 requires passing lesson 1's quiz.
         $this->linkDependency($lessons[0], $lessons[1]);
 
-        // Package types: full-course + chapter (بابي) + monthly (شهري).
-        $fullType = $this->makePackageType($year, 'الكورس الكامل', 'hybrid', buyAlone: true);
+        // Package types: whole-year + chapter (بابي) + monthly (شهري).
+        $fullType = $this->makePackageType($year, 'الباقة الكاملة', 'hybrid', buyAlone: true);
         $chapterType = $this->makePackageType($year, 'اشتراك بابي', 'hybrid', buyAlone: true);
         $monthlyType = $this->makePackageType($year, 'اشتراك شهري', 'hybrid', buyAlone: true);
 
-        // Full-course package (all lessons) — replaces the old "كورس الأحياء الشامل".
+        // Whole-year package: every lesson of the year in one buy-alone package.
         $fullPkg = $this->makePackage($year, $fullType, [
-            'name' => 'كورس الأحياء الشامل — الثالث الثانوي',
+            'name' => 'الأحياء الشاملة — الثالث الثانوي',
             'description' => 'شرح منهج الأحياء للصف الثالث الثانوي بالكامل: الدعامة والحركة، التنسيق الهرموني، الإخراج، التكاثر، المناعة والوراثة.',
             'price_minor' => 120000,
             'access_mode' => AccessMode::Both,
@@ -992,10 +992,10 @@ class AhmedTammamAcademySeeder extends Seeder
             'sort_order' => 5,
         ], withExam: true, essay: true);
 
-        // Full-course package (all lessons) — replaces the old "كورس الأحياء".
-        $fullType = $this->makePackageType($year, 'الكورس الكامل', 'hybrid', buyAlone: true);
+        // Whole-year package: every lesson of the year in one buy-alone package.
+        $fullType = $this->makePackageType($year, 'الباقة الكاملة', 'hybrid', buyAlone: true);
         $fullPkg = $this->makePackage($year, $fullType, [
-            'name' => 'كورس الأحياء — الثاني الثانوي',
+            'name' => 'الأحياء — الثاني الثانوي',
             'description' => 'أساسيات الأحياء للصف الثاني الثانوي مع بنك أسئلة على كل درس.',
             'price_minor' => 90000,
             'access_mode' => AccessMode::Both,
@@ -1017,7 +1017,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $s1 = $this->makeStudent($year, '01200120001', 'حبيبة سمير', 'online', 'أنثى', 'الإسكندرية');
         $s2 = $this->makeStudent($year, '01200120002', 'كريم أشرف', 'center', 'ذكر', 'الجيزة', $this->centers[1]);
 
-        // Full-course package purchase (paid) with fixed-price flow, no coupon.
+        // Whole-year package purchase (paid) with fixed-price flow, no coupon.
         $this->paidPurchase($s1, $fullPkg, 'package', $fullPkg->price_minor);
         $this->progressAndAttempt($s1, $l2, passed: true);
         $this->reviewLesson($s1, $l2, 5, 'المنهج بقى سهل بعد الخرائط الذهنية.');
@@ -1068,8 +1068,8 @@ class AhmedTammamAcademySeeder extends Seeder
             'sort_order' => 3,
         ], withExam: true, essay: false);
 
-        // Full-course package (all lessons) — replaces the old "العلوم المتكاملة".
-        $fullType = $this->makePackageType($year, 'الكورس الكامل', 'online', buyAlone: true);
+        // Whole-year package: every lesson of the year in one buy-alone package.
+        $fullType = $this->makePackageType($year, 'الباقة الكاملة', 'online', buyAlone: true);
         $fullPkg = $this->makePackage($year, $fullType, [
             'name' => 'العلوم المتكاملة — الأول الثانوي',
             'description' => 'شرح العلوم المتكاملة للصف الأول الثانوي بأسلوب مبسّط ومنظّم.',
@@ -1141,7 +1141,7 @@ class AhmedTammamAcademySeeder extends Seeder
         $sb->academic_year_id = $year3->id;
         $sb->save();
 
-        // Center id-codes (batch) + activation codes (wallet + course, active/redeemed).
+        // Center id-codes (batch) + activation codes (wallet + content, active/redeemed).
         $this->centerIdCodes($year3, $this->centers[0], grade: 3, count: 3);
         $this->activationCodes();
 
@@ -1994,7 +1994,7 @@ class AhmedTammamAcademySeeder extends Seeder
 
     private function activationCodes(): void
     {
-        // Wallet code (active) + course code (redeemed).
+        // Wallet code (active) + content code (redeemed).
         $wallet = new ActivationCode([
             'code' => 'WAL-'.strtoupper(Str::random(6)),
             'type' => CodeType::Wallet->value,

@@ -58,6 +58,9 @@ class LessonResource extends JsonResource
             'video' => $this->whenLoaded('videoAsset', fn () => $this->videoAsset ? new MediaAssetResource($this->videoAsset) : null),
             'attachments' => MediaAssetResource::collection($this->whenLoaded('attachments')),
             'sections' => LessonSectionResource::collection($this->whenLoaded('sections')),
+            // Mirrors PackageResource — the discovery grid shows "newest" as a sort
+            // option and needs the same field on both granularities.
+            'created_at' => $this->created_at?->toIso8601String(),
         ];
     }
 
