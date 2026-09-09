@@ -23,11 +23,16 @@ return new class extends Migration
             $table->unsignedBigInteger('amount_minor');
             $table->string('status')->default('pending'); // pending|paid|failed
             $table->string('reference_number')->nullable(); // Fawry
+            // A payable reference (Fawry) stops being payable at a fixed moment;
+            // a card payment leaves this null. The reconciliation command sweeps
+            // on (status, expires_at) — see fawry:reconcile.
+            $table->timestamp('expires_at')->nullable();
             $table->json('raw_payload')->nullable();
             $table->timestamp('processed_at')->nullable();
             $table->timestamps();
 
             $table->index(['tenant_id', 'order_id']);
+            $table->index(['status', 'expires_at']);
         });
 
         TenantRls::enableFor('payments');
