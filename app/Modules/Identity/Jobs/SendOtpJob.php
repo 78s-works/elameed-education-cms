@@ -6,6 +6,7 @@ use App\Modules\Identity\Enums\OtpPurpose;
 use App\Modules\Notifications\Contracts\SmsSender;
 use App\Modules\Notifications\Services\Engine\TemplatedSmsNotifier;
 use App\Modules\Notifications\Support\RunsInTenantContext;
+use App\Support\Queue\QueueNames;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
@@ -31,7 +32,13 @@ class SendOtpJob implements ShouldQueue
         public OtpPurpose $purpose,
         public string $code,
         public ?int $tenantId = null,
-    ) {}
+    ) {
+        // A login code is worthless late, so it never waits behind a transcode or
+        // an export: its own queue, its own tight-timeout worker. Assigned here
+        // rather than as `public $queue` — the Queueable trait already declares
+        // that property, and redeclaring it is a fatal composition conflict.
+        $this->onQueue(QueueNames::Otp);
+    }
 
     public function handle(SmsSender $sms, TemplatedSmsNotifier $notifier): void
     {
