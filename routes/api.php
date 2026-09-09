@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\Assessment\Http\Controllers\AttemptController;
+use App\Modules\Assessment\Http\Controllers\StudentResultsController;
 use App\Modules\Assessment\Http\Controllers\Teacher\BubbleSheetController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamController;
 use App\Modules\Assessment\Http\Controllers\Teacher\ExamExtensionRequestController;
@@ -54,6 +55,7 @@ use App\Modules\Engagement\Http\Controllers\Teacher\SupportTicketController as T
 use App\Modules\Identity\Http\Controllers\Admin\RoleTemplateController;
 use App\Modules\Identity\Http\Controllers\AuthController;
 use App\Modules\Identity\Http\Controllers\MeController;
+use App\Modules\Identity\Http\Controllers\StudentLoginHistoryController;
 use App\Modules\Identity\Http\Controllers\ParentController;
 use App\Modules\Identity\Http\Controllers\Teacher\AssistantController;
 use App\Modules\Identity\Http\Controllers\Teacher\RoleController;
@@ -394,6 +396,13 @@ Route::prefix('v1')->middleware('tenant')->group(function (): void {
         Route::get('/exams/{exam:uuid}/attempts/{attempt}/corrected-file', [AttemptController::class, 'downloadCorrectedFile']);
         // Student asks for extra time on an exam/quiz (doc 11 R6).
         Route::post('/exams/{exam:uuid}/extension-request', [AttemptController::class, 'requestExtension']);
+
+        // The student's own grade history — online attempts + paper grades in one
+        // server-owned list, so the dashboard and the Exams screen agree on every
+        // device (they used to stitch it from a local attempt tracker).
+        Route::get('/me/results', StudentResultsController::class);
+        // Recent successful sign-ins (device, IP, time) for the profile screen.
+        Route::get('/me/login-history', StudentLoginHistoryController::class);
 
         Route::get('/me/courses', [StudentCoursesController::class, 'index']);
         // The student's own library (VD F1): purchased standalone lessons + packages.

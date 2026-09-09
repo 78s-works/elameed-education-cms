@@ -3,12 +3,11 @@
 namespace App\Modules\Identity\Http\Controllers\Teacher;
 
 use App\Models\User;
-use App\Modules\Assessment\Enums\AttemptStatus;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamAttempt;
+use App\Modules\Assessment\Services\StudentResultsQuery;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Centers\Models\AttendanceRecord;
-use App\Modules\Centers\Models\CenterExamGrade;
 use App\Modules\Centers\Models\CenterSession;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Engagement\Models\LessonProgress;
@@ -33,6 +32,7 @@ class StudentActivityController
     public function __construct(
         private readonly TenantContext $context,
         private readonly BroadcastService $broadcasts,
+        private readonly StudentResultsQuery $results,
     ) {}
 
     public function progress(User $student): JsonResponse
@@ -120,78 +120,21 @@ class StudentActivityController
      * paper (center) grades, merged newest-first and tagged with `kind` so the
      * panel can show one table.
      */
+    /**
+     * The student's grade history as the teacher sees it. Same builder as the
+     * student's own /me/results, so the two views cannot disagree; `crossYear`
+     * because the panel may sit on a different academic year than the exam.
+     */
     public function examResults(User $student): JsonResponse
     {
         $tenantId = $this->context->tenantOrFail()->getKey();
         $this->membershipOrFail($tenantId, $student);
-        $uid = $student->getKey();
 
-        $attempts = ExamAttempt::withoutGlobalScopes()
-            ->where('tenant_id', $tenantId)->where('user_id', $uid)
-            ->whereIn('status', [AttemptStatus::Graded->value, AttemptStatus::Submitted->value])
-            ->latest('id')
-            ->limit(100)
-            ->get();
-
-        // Same reason as above: the exam may belong to a year the panel isn't on.
-        $exams = Exam::withoutGlobalScopes()
-            ->whereIn('id', $attempts->pluck('exam_id')->filter()->unique())
-            ->get(['id', 'title', 'type'])
-            ->keyBy('id');
-
-        $online = $attempts
-            ->map(fn (ExamAttempt $a) => [
-                'kind' => 'online',
-                'id' => 'attempt-'.$a->id,
-                'title' => $exams->get($a->exam_id)?->title,
-                'exam_type' => $exams->get($a->exam_id)?->type?->value,
-                'score' => $a->score === null ? null : (float) $a->score,
-                'max_score' => $a->max_score === null ? null : (float) $a->max_score,
-                'percent' => ($a->max_score > 0 && $a->score !== null)
-                    ? (int) round((float) $a->score / (float) $a->max_score * 100)
-                    : null,
-                'status' => $a->status->value,
-                'at' => ($a->submitted_at ?? $a->created_at)?->toIso8601String(),
-                'attempt_number' => $a->attempt_number,
-            ]);
-
-        $paper = CenterExamGrade::withoutGlobalScopes()
-            ->where('tenant_id', $tenantId)->where('student_user_id', $uid)
-            ->with('center:id,name')
-            ->latest('sat_on')
-            ->limit(100)
-            ->get()
-            ->map(fn (CenterExamGrade $g) => [
-                'kind' => 'center',
-                'id' => 'grade-'.$g->id,
-                'title' => $g->title,
-                'exam_type' => null,
-                'score' => (float) $g->score,
-                'max_score' => (float) $g->total_marks,
-                'percent' => (float) $g->total_marks > 0
-                    ? (int) round((float) $g->score / (float) $g->total_marks * 100)
-                    : null,
-                'status' => 'graded',
-                'at' => $g->sat_on?->toIso8601String(),
-                'center' => $g->center?->name,
-                'note' => $g->note,
-            ]);
-
-        $rows = $online->concat($paper)
-            ->sortByDesc(fn ($r) => $r['at'] ?? '')
-            ->values();
-
-        $scored = $rows->filter(fn ($r) => $r['percent'] !== null);
-
-        return response()->json([
-            'data' => $rows,
-            'meta' => [
-                'total' => $rows->count(),
-                'average_percent' => $scored->count() > 0
-                    ? (int) round($scored->avg('percent'))
-                    : null,
-            ],
-        ]);
+        return response()->json($this->results->for(
+            (int) $tenantId,
+            (int) $student->getKey(),
+            crossYear: true,
+        ));
     }
 
     /** A merged, most-recent-first activity timeline: logins, playback, orders, exams. */
