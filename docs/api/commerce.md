@@ -58,11 +58,36 @@ were retired.
 Granting is **idempotent** (unique on `(user, lesson/course)`), so a replayed webhook
 or repeat purchase never stacks duplicate enrollments.
 
-> **Paymob is a P1 stub.** The merchant account is not live yet, so
-> `PaymobGateway::createCharge()` returns a placeholder hosted-payment URL
-> (`/pay/paymob/{uuid}`) and the webhook is verified with a shared HMAC secret.
-> The `PaymentGateway` contract and the idempotent webhook handling are real; only
-> the gateway internals get swapped when the account is approved.
+### Paymob (live integration, EDU-002)
+
+`PaymobGateway` talks to Paymob's unified **Intention API**:
+
+1. `createCharge()` POSTs the order to `config('commerce.paymob.intention_url')`
+   with `Authorization: Token <secret key>` — amount in minor units, currency,
+   the configured `payment_methods` (integration ids), the order's items,
+   `billing_data` from the student, and a unique `special_reference`
+   (`<order uuid>__<attempt>`, so a retried checkout gets a fresh intention).
+2. The response's `client_secret` builds the hosted checkout the student is sent
+   to: `<checkout_url>?publicKey=<public key>&clientSecret=<client secret>`.
+3. Paymob POSTs a **TRANSACTION** callback to `/v1/webhooks/paymob`;
+   `verifyWebhook()` authenticates it, `parseWebhook()` normalises it, and the
+   controller dedupes and fulfils.
+
+**Going live is an env change.** Sandbox and live differ only by credentials:
+
+| Env var | Meaning |
+|---|---|
+| `PAYMOB_SECRET_KEY` | authenticates the Intention call (server-side only) |
+| `PAYMOB_PUBLIC_KEY` | rides on the checkout URL |
+| `PAYMOB_HMAC_SECRET` | verifies the callback signature |
+| `PAYMOB_INTEGRATION_IDS` | comma-separated integration ids offered on the checkout |
+| `PAYMOB_INTENTION_URL` / `PAYMOB_CHECKOUT_URL` | Paymob endpoints (defaults are the Accept hosts) |
+| `PAYMOB_REDIRECTION_URL` / `PAYMOB_NOTIFICATION_URL` | optional per-environment overrides of the dashboard values |
+| `PAYMOB_TIMEOUT` | HTTP timeout in seconds (default 15) |
+
+Secrets are env-only — never stored in the database and never logged. When the
+intention call fails or Paymob is unconfigured, `POST /v1/checkout/pay` answers
+`503 payment_gateway_unavailable` and no `Payment` row is written.
 
 ## Models
 
@@ -268,7 +293,7 @@ Paymob payment (hosted redirect; order remains pending):
   "data": {
     "status": "pending",
     "order": "3d2b…-order-uuid",
-    "redirect_url": "https://academy.edu.raqeem-tech.com/pay/paymob/3d2b…-order-uuid"
+    "redirect_url": "https://accept.paymob.com/unifiedcheckout/?publicKey=egy_pk_live_…&clientSecret=egy_csk_live_…"
   }
 }
 ```
@@ -276,6 +301,7 @@ Paymob payment (hosted redirect; order remains pending):
 **Errors:**
 - `422` — `order`: "Order not found." (unknown UUID or not owned by caller)
 - `422` — `wallet`: "Insufficient wallet balance." (wallet balance < order total)
+- `503` — `payment_gateway_unavailable`: Paymob refused the intention, timed out, or is not configured
 
 ### Coupons (M21)
 
@@ -390,38 +416,59 @@ the `Host` header.
 | Header | Required | Example |
 |---|---|---|
 | Content-Type | Yes | `application/json` |
-| X-Paymob-Hmac | Yes* | `<hex sha512 signature>` |
+| X-Paymob-Hmac | No* | `<hex sha512 signature>` |
 
-\* The signature may instead be supplied as an `hmac` field in the body; the
-header `X-Paymob-Hmac` takes precedence. It is validated (`hash_equals`) against
-`hash_hmac('sha512', signingString, config('commerce.paymob.hmac_secret'))` where
-the signing string is `transaction_id|order_uuid|amount_cents|<true|false>`.
+**Path / Query params**
+| Param | Required | Notes |
+|---|---|---|
+| `hmac` | Yes* | The signature, as Paymob sends it |
 
-**Path / Query params:** None
+\* Paymob puts the signature in the **query string**; the `X-Paymob-Hmac` header
+is accepted as a fallback for a proxy that drops the query. It is validated with
+`hash_equals` against
+`hash_hmac('sha512', signingString, config('commerce.paymob.hmac_secret'))`.
 
-**Request body** — fields the P1 stub parser reads (flat, top-level):
+The signing string concatenates these `obj` fields, **in this order, with no
+separator**, booleans as `true`/`false`
+([Paymob HMAC docs](https://developers.paymob.com/paymob-docs/developers/webhook-callbacks-and-hmac)):
+
+```
+amount_cents · created_at · currency · error_occured · has_parent_transaction ·
+id · integration_id · is_3d_secure · is_auth · is_capture · is_refunded ·
+is_standalone_payment · is_voided · order.id · owner · pending ·
+source_data.pan · source_data.sub_type · source_data.type · success
+```
+
+**Request body** — Paymob's TRANSACTION callback (nested; abridged):
 ```json
 {
-  "transaction_id": "pmb_txn_123456789",
-  "order_uuid": "3d2b…-order-uuid",
-  "amount_cents": 15000,
-  "success": true,
-  "hmac": "computed-hmac-signature"
+  "type": "TRANSACTION",
+  "obj": {
+    "id": 987654321,
+    "amount_cents": 15000,
+    "created_at": "2026-09-09T10:00:00.000000",
+    "currency": "EGP",
+    "success": true,
+    "pending": false,
+    "is_voided": false,
+    "is_refunded": false,
+    "error_occured": false,
+    "integration_id": 1111,
+    "order": { "id": 555111, "merchant_order_id": "3d2b…-order-uuid__1" },
+    "source_data": { "pan": "2346", "sub_type": "MasterCard", "type": "card" }
+  }
 }
 ```
 
 | Field | Type | Notes |
 |---|---|---|
-| `transaction_id` | string | Stored as `Payment.gateway_txn_id`; dedupe key |
-| `order_uuid` | string | Resolves the order (and its tenant) |
-| `amount_cents` | integer | Minor units; falls back to order total if 0 |
-| `success` | boolean | `true` ⇒ `paid`, otherwise `failed` |
-| `hmac` | string | Signature (alternative to `X-Paymob-Hmac` header) |
+| `obj.id` | integer | Stored as `Payment.gateway_txn_id`; dedupe key |
+| `obj.order.merchant_order_id` | string | The `special_reference` — `<order uuid>__<attempt>`; the uuid before `__` resolves the order and its tenant |
+| `obj.amount_cents` | integer | Minor units; falls back to the order total if 0 |
+| `obj.success` | boolean | `paid` only when `success` **and** not `pending` / `is_voided` / `is_refunded` / `error_occured` |
 
-> The Postman sample uses Paymob's real **nested** shape
-> (`{ "type": "TRANSACTION", "obj": { "id", "success", "amount_cents", "order": { "id" }, "hmac" } }`).
-> The current stub parser reads the **flat** fields above; the nested→flat mapping
-> is part of the "swap when live" work.
+If `merchant_order_id` is absent, `obj.order.extras.creation_extras.order_uuid`
+(set on the intention) resolves the order instead.
 
 **Response** — `200 OK` acknowledgements:
 ```json
