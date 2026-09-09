@@ -6,12 +6,13 @@ use App\Models\User;
 use App\Modules\Catalog\Enums\ContentVisibility;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
+use App\Modules\Engagement\Models\Attachment;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\ParentLink;
 use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
-use App\Modules\Engagement\Models\Attachment;
+use App\Modules\Notifications\Contracts\SmsSender;
 use App\Modules\Notifications\Enums\NotificationChannel;
 use App\Modules\Notifications\Models\NotificationChannelSetting;
 use App\Modules\Notifications\Models\NotificationEvent;
@@ -27,7 +28,6 @@ use App\Modules\Wallet\Services\PaymentReceiptService;
 use Database\Seeders\NotificationCatalogSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
-use App\Modules\Notifications\Contracts\SmsSender;
 use Tests\TestCase;
 
 /**
@@ -269,9 +269,17 @@ class AutomaticNotificationTest extends TestCase
         // A second call (a later edit, or the scheduler) must not repeat it.
         $this->assertFalse($announcer->announce($hidden));
 
-        $this->assertSame(
-            1,
-            NotificationMessage::withoutGlobalScopes()->where('user_id', $student->id)->count(),
-        );
+        // Once per channel: the announcement now goes to the inbox AND to email
+        // (every type ships email copy since EDU-012), but neither repeats.
+        foreach ([NotificationChannel::Database, NotificationChannel::Email] as $channel) {
+            $this->assertSame(
+                1,
+                NotificationMessage::withoutGlobalScopes()
+                    ->where('user_id', $student->id)
+                    ->where('channel', $channel->value)
+                    ->count(),
+                "Expected exactly one {$channel->value} message.",
+            );
+        }
     }
 }
