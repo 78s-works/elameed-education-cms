@@ -19,7 +19,9 @@ use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Services\LedgerService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
+use Tests\Support\PaymobCallback;
 use Tests\TestCase;
 
 class CheckoutTest extends TestCase
@@ -235,25 +237,23 @@ class CheckoutTest extends TestCase
             'items' => [['type' => 'lesson', 'lesson' => $lesson->id]],
         ])->json('data.uuid');
 
+        Http::fake(['*/v1/intention/' => Http::response(['client_secret' => 'cs_test_123'], 201)]);
+
         $this->withHeaders($h)->postJson('/api/v1/checkout/pay', [
             'order' => $orderUuid, 'method' => 'paymob',
         ])->assertOk()->assertJsonPath('data.status', 'pending');
 
-        $payload = [
-            'transaction_id' => 'TXN-123',
-            'order_uuid' => $orderUuid,
-            'amount_cents' => 15000,
-            'success' => true,
-        ];
-        $hmac = hash_hmac('sha512', "TXN-123|{$orderUuid}|15000|true", config('commerce.paymob.hmac_secret'));
-        $headers = ['X-Paymob-Hmac' => $hmac];
+        // Paymob signs the transaction and sends the signature as ?hmac=…
+        $transaction = PaymobCallback::transaction($orderUuid.'__1');
+        $url = '/api/v1/webhooks/paymob?hmac='.PaymobCallback::hmac($transaction);
+        $payload = PaymobCallback::body($transaction);
 
         // First delivery → paid + enrolled
-        $this->withHeaders($headers)->postJson('/api/v1/webhooks/paymob', $payload)
+        $this->postJson($url, $payload)
             ->assertOk()->assertJsonPath('data.status', 'paid');
 
         // Replay → already processed, no double enrollment / double ledger
-        $this->withHeaders($headers)->postJson('/api/v1/webhooks/paymob', $payload)
+        $this->postJson($url, $payload)
             ->assertOk()->assertJsonPath('data.status', 'already_processed');
 
         $this->assertSame(1, Enrollment::withoutGlobalScopes()->where('user_id', $student->id)->count());
@@ -269,8 +269,9 @@ class CheckoutTest extends TestCase
             'items' => [['type' => 'lesson', 'lesson' => $lesson->id]],
         ])->json('data.uuid');
 
-        $this->withHeaders(['X-Paymob-Hmac' => 'wrong'])->postJson('/api/v1/webhooks/paymob', [
-            'transaction_id' => 'TXN-x', 'order_uuid' => $orderUuid, 'amount_cents' => 15000, 'success' => true,
-        ])->assertStatus(400);
+        $this->postJson(
+            '/api/v1/webhooks/paymob?hmac=wrong',
+            PaymobCallback::body(PaymobCallback::transaction($orderUuid.'__1')),
+        )->assertStatus(400);
     }
 }
