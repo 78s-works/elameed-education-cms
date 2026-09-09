@@ -51,6 +51,29 @@ It does **not** touch framework tables (`migrations`, `cache*`, `jobs`,
 `job_batches`, `failed_jobs`). Run it only against a database you're happy to
 reset (local/dev).
 
+### Production is never demo-seeded (EDU-034)
+
+Everything this document describes — both academies, the platform admin, the
+fake orders and payments — is **demo data**. Production holds real data only
+(ruled 8 Sep), so `DatabaseSeeder` splits in two:
+
+| What | When it runs |
+|---|---|
+| `PermissionCatalogSeeder`, `RoleTemplateSeeder`, `NotificationCatalogSeeder` | always — a tenant cannot be provisioned without them |
+| Platform admin, `farag-physics`, `ahmedtammam.com` | only when `APP_ENV !== production`, or `SEED_DEMO=true` |
+
+```bash
+APP_ENV=production php artisan db:seed                  # catalogs only
+APP_ENV=local      php artisan db:seed                  # + the demo academies
+APP_ENV=production SEED_DEMO=true php artisan db:seed   # explicit opt-in
+```
+
+Running a demo seeder directly on production (`php artisan db:seed --class=AhmedTammamAcademySeeder`)
+throws rather than writing demo rows; `SEED_DEMO=true` is the only way through.
+The gate lives in `Database\Seeders\Concerns\GuardsDemoSeeding` and reads
+`config('seeding.demo')` — a new demo seeder should `use` that trait and call
+`abortUnlessDemoSeedingAllowed()` first.
+
 ---
 
 ## 2. Login accounts & tenant selection

@@ -127,6 +127,7 @@ use App\Modules\Wallet\Models\LedgerEntry;
 use App\Modules\Wallet\Services\LedgerService;
 use App\Modules\Wallet\Services\PaymentReceiptService;
 use Carbon\CarbonInterface;
+use Database\Seeders\Concerns\GuardsDemoSeeding;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
@@ -159,6 +160,8 @@ use Spatie\Permission\PermissionRegistrar;
  */
 class AhmedTammamAcademySeeder extends Seeder
 {
+    use GuardsDemoSeeding;
+
     private const SLUG = 'ahmedtammam.com';
 
     private const CURRENCY = 'EGP';
@@ -288,6 +291,9 @@ class AhmedTammamAcademySeeder extends Seeder
 
     public function run(): void
     {
+        // Demo academy: never on production unless SEED_DEMO=true (EDU-034).
+        $this->abortUnlessDemoSeedingAllowed();
+
         if (Tenant::query()->where('slug', self::SLUG)->exists()) {
             $this->command?->info('Academy `'.self::SLUG.'` already seeded — skipping.');
 
