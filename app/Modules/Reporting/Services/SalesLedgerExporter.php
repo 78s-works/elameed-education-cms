@@ -20,7 +20,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 class SalesLedgerExporter
 {
-    private const HEADERS = [
+    public const HEADERS = [
         'Date & time',
         'Student',
         'Phone',
@@ -79,10 +79,14 @@ class SalesLedgerExporter
      * transaction-level money (discount, refund) is attributed to the first line
      * so the column still sums to the transaction's real total.
      *
+     * Public so the queued report exporters build their rows from the SAME
+     * mapping as the inline download — a ledger PDF and a ledger XLSX that
+     * disagreed about a discount would be worse than having no PDF.
+     *
      * @param  array<string, mixed>  $row
      * @return list<list<string|float|int>>
      */
-    private function lines(array $row): array
+    public function lines(array $row): array
     {
         $items = $row['items'] === [] ? [null] : $row['items'];
         $lines = [];
