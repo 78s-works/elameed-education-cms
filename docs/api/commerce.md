@@ -22,10 +22,12 @@ quote  →  order  →  pay  ──(wallet)──▶ fulfil immediately
   returns line items + total. No persistence.
 - **order** — re-prices and persists a `pending` Order + OrderItems.
 - **pay** — `method: wallet` debits the wallet and fulfils inline;
-  `method: paymob` opens a hosted charge and returns a `redirect_url`, leaving the
-  order `pending` until the webhook lands.
-- **webhook** — Paymob calls back; the handler verifies the signature, dedupes on
-  the gateway transaction id, and fulfils the order in a DB transaction.
+  `method: paymob` opens a hosted charge and returns a `redirect_url`;
+  `method: fawry` books a charge and returns a **reference number** plus its
+  `expires_at`. Both gateways leave the order `pending` until their webhook lands.
+- **webhook** — the gateway calls back; the handler verifies the signature, dedupes
+  on the gateway transaction id, and fulfils the order in a DB transaction. Both
+  `/webhooks/paymob` and `/webhooks/fawry` run through the same handler.
 
 **Fulfilment** (`FulfillOrderService`) is idempotent and shared by both the wallet
 path and the (possibly replayed) webhook: it posts a balanced ledger operation
@@ -88,6 +90,47 @@ or repeat purchase never stacks duplicate enrollments.
 Secrets are env-only — never stored in the database and never logged. When the
 intention call fails or Paymob is unconfigured, `POST /v1/checkout/pay` answers
 `503 payment_gateway_unavailable` and no `Payment` row is written.
+
+### Fawry (cash at an outlet, EDU-018)
+
+The second `PaymentGateway`. There is no redirect and no card: `createCharge()`
+POSTs to `/ECommerceWeb/Fawry/payments/charge` with `paymentMethod: PAYATFAWRY`
+and returns Fawry's **reference number** and the moment it stops being payable.
+The student pays cash at any Fawry outlet (or in the Fawry app) and Fawry POSTs a
+payment notification to `/v1/webhooks/fawry`.
+
+Signatures are SHA-256 over concatenated fields plus the merchant secure key:
+
+| Call | Signed string |
+|---|---|
+| charge | `merchantCode + merchantRefNum + customerProfileId + paymentMethod + amount + cardToken("") + secureKey` |
+| notification | `fawryRefNumber + merchantRefNumber + paymentAmount + orderAmount + orderStatus + paymentMethod + paymentReferenceNumber + secureKey` |
+| status | `merchantCode + merchantRefNumber + secureKey` |
+
+`merchantRefNum` is the order uuid without its dashes; a second attempt on the
+same order appends `-a2`, `-a3`… (Fawry requires a unique reference per charge).
+The notification maps back to the order through the `payments.reference_number`
+it was stored under.
+
+**Statuses.** `PAID` fulfils the order (enroll + ledger + invoice). `EXPIRED`
+closes the payment as `expired` — nothing is granted, and the student can start a
+new checkout. Anything else is recorded as `failed`.
+
+**Reconciliation.** A cash payment is invisible to us until the notification
+arrives, so a lost notification means collected money and a locked lesson.
+`php artisan fawry:reconcile` (scheduled hourly) asks Fawry's payment-status API
+about every reference still pending and settles what it finds — through the same
+idempotent fulfilment path, so a notification that turns up later changes
+nothing. A reference Fawry cannot answer for is closed once its own
+`expires_at` has passed.
+
+| Env var | Meaning |
+|---|---|
+| `FAWRY_MERCHANT_CODE` | merchant code from the Fawry dashboard |
+| `FAWRY_SECURE_KEY` | signs every call and verifies the notification |
+| `FAWRY_BASE_URL` | `https://atfawry.fawrystaging.com` (sandbox) → `https://www.atfawry.com` (live) |
+| `FAWRY_EXPIRY_HOURS` | how long a reference stays payable (default 72) |
+| `FAWRY_TIMEOUT` | HTTP timeout in seconds (default 15) |
 
 ## Models
 
@@ -278,7 +321,7 @@ webhook confirms).
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `order` | string | Yes | Order UUID; must belong to the caller |
-| `method` | string | Yes | `wallet` or `paymob` |
+| `method` | string | Yes | `wallet`, `paymob` or `fawry` |
 
 **Response** — `200 OK`
 
@@ -293,7 +336,21 @@ Paymob payment (hosted redirect; order remains pending):
   "data": {
     "status": "pending",
     "order": "3d2b…-order-uuid",
+    "gateway": "paymob",
     "redirect_url": "https://accept.paymob.com/unifiedcheckout/?publicKey=egy_pk_live_…&clientSecret=egy_csk_live_…"
+  }
+}
+```
+
+Fawry payment (reference number; order remains pending):
+```json
+{
+  "data": {
+    "status": "pending",
+    "order": "3d2b…-order-uuid",
+    "gateway": "fawry",
+    "reference_number": "9990001",
+    "expires_at": "2026-09-12T10:00:00+00:00"
   }
 }
 ```
@@ -484,6 +541,35 @@ If `merchant_order_id` is absent, `obj.order.extras.creation_extras.order_uuid`
 **Errors:**
 - `400` — `invalid_signature`: "Bad signature." (HMAC mismatch)
 - `404` — `order_not_found`: "Unknown order." (no order matches `order_uuid`)
+
+#### `POST /v1/webhooks/fawry`
+**Purpose:** Fawry payment notification (server-to-server). Same handler as
+Paymob: verify signature → dedupe on `fawryRefNumber` → fulfil.
+**Auth:** 🔐 `messageSignature` in the body (SHA-256, see the Fawry section above).
+**Middleware:** `throttle:120,1`. **Outside** the `tenant` group.
+
+**Request body** (abridged — Fawry's own field names):
+```json
+{
+  "requestId": "c72827d084ea4b88949d91dd2db4996e",
+  "fawryRefNumber": "970177",
+  "merchantRefNumber": "3d2b…orderuuidwithoutdashes",
+  "paymentAmount": "150.00",
+  "orderAmount": "150.00",
+  "orderStatus": "PAID",
+  "paymentMethod": "PAYATFAWRY",
+  "messageSignature": "b0175565…"
+}
+```
+
+| `orderStatus` | Result |
+|---|---|
+| `PAID` | order fulfilled; payment `paid` |
+| `EXPIRED` | payment `expired`; nothing granted |
+| anything else | payment `failed`; nothing granted |
+
+**Response** — `200 OK` with `status` of `paid`, `expired`, `failed` or
+`already_processed`. **Errors:** `400 invalid_signature`, `404 order_not_found`.
 
 An already-`paid` transaction (matched by `gateway_txn_id`) returns
 `200 { "data": { "status": "already_processed" } }` — the idempotent replay path.

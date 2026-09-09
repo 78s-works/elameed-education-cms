@@ -38,6 +38,21 @@ return [
         'timeout' => (int) env('PAYMOB_TIMEOUT', 15),
     ],
 
+    // Fawry (cash at an outlet, or the app). Same story as Paymob: sandbox and
+    // live differ by the merchant code, the secure key and the host.
+    'fawry' => [
+        // Staging by default; production is https://www.atfawry.com.
+        'base_url' => env('FAWRY_BASE_URL', 'https://atfawry.fawrystaging.com'),
+        'merchant_code' => env('FAWRY_MERCHANT_CODE'),
+        'secure_key' => env('FAWRY_SECURE_KEY'),
+
+        // How long a reference number stays payable. Fawry caps this per
+        // merchant; 72 hours is the usual default.
+        'expiry_hours' => (int) env('FAWRY_EXPIRY_HOURS', 72),
+
+        'timeout' => (int) env('FAWRY_TIMEOUT', 15),
+    ],
+
     // Minimum wallet top-up (minor units).
     'min_topup_minor' => (int) env('COMMERCE_MIN_TOPUP_MINOR', 1000),
 

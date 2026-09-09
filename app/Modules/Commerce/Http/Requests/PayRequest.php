@@ -2,6 +2,7 @@
 
 namespace App\Modules\Commerce\Http\Requests;
 
+use App\Modules\Commerce\Gateways\GatewayFactory;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -16,7 +17,7 @@ class PayRequest extends FormRequest
     {
         return [
             'order' => ['required', 'string'],           // order uuid
-            'method' => ['required', Rule::in(['wallet', 'paymob'])],
+            'method' => ['required', Rule::in(['wallet', ...GatewayFactory::names()])],
         ];
     }
 }

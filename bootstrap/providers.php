@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\Catalog\Providers\CatalogServiceProvider;
+use App\Modules\Commerce\Providers\CommerceServiceProvider;
 use App\Modules\Media\Providers\MediaServiceProvider;
 use App\Modules\Notifications\Providers\NotificationsServiceProvider;
 use App\Modules\Tenancy\Providers\TenancyServiceProvider;
@@ -10,6 +11,7 @@ return [
     AppServiceProvider::class,
     TenancyServiceProvider::class,
     CatalogServiceProvider::class,
+    CommerceServiceProvider::class,
     NotificationsServiceProvider::class,
     MediaServiceProvider::class,
 ];

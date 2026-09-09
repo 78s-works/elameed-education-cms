@@ -2,7 +2,8 @@
 
 namespace App\Modules\Commerce\Http\Controllers;
 
-use App\Modules\Commerce\Gateways\PaymobGateway;
+use App\Modules\Commerce\Contracts\PaymentGateway;
+use App\Modules\Commerce\Gateways\GatewayFactory;
 use App\Modules\Commerce\Models\Order;
 use App\Modules\Commerce\Models\Payment;
 use App\Modules\Commerce\Services\FulfillOrderService;
@@ -11,19 +12,33 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
- * POST /webhooks/paymob — signature-verified, idempotent (04_API_Spec §3/§4).
+ * POST /webhooks/{gateway} — signature-verified, idempotent (04_API_Spec §3/§4).
  * Runs on the platform host (no tenant resolved from host); the tenant comes
  * from the referenced order. Verify signature → dedupe on gateway_txn_id →
  * fulfil in a transaction.
+ *
+ * Both providers land here: Paymob's card callback and Fawry's payment
+ * notification differ only in how the gateway class reads them.
  */
 class PaymentWebhookController
 {
-    public function __construct(private readonly FulfillOrderService $fulfiller) {}
+    public function __construct(
+        private readonly FulfillOrderService $fulfiller,
+        private readonly GatewayFactory $gateways,
+    ) {}
 
     public function paymob(Request $request): JsonResponse
     {
-        $gateway = app(PaymobGateway::class);
+        return $this->handle($request, $this->gateways->make('paymob'));
+    }
 
+    public function fawry(Request $request): JsonResponse
+    {
+        return $this->handle($request, $this->gateways->make('fawry'));
+    }
+
+    private function handle(Request $request, PaymentGateway $gateway): JsonResponse
+    {
         if (! $gateway->verifyWebhook($request)) {
             return response()->json(['error' => ['code' => 'invalid_signature', 'message' => 'Bad signature.']], 400);
         }
@@ -42,12 +57,15 @@ class PaymentWebhookController
         }
 
         if ($data['status'] !== 'paid') {
-            $this->recordPayment($order, $data, Payment::STATUS_FAILED, $request->all());
+            // A lapsed Fawry reference closes as `expired`; anything else the
+            // gateway reports is a plain failure. Neither grants access.
+            $status = $data['status'] === 'expired' ? Payment::STATUS_EXPIRED : Payment::STATUS_FAILED;
+            $this->recordPayment($gateway, $order, $data, $status, $request->all());
 
-            return response()->json(['data' => ['status' => 'failed']]);
+            return response()->json(['data' => ['status' => $data['status']]]);
         }
 
-        $this->recordPayment($order, $data, Payment::STATUS_PAID, $request->all());
+        $this->recordPayment($gateway, $order, $data, Payment::STATUS_PAID, $request->all());
 
         // Idempotency guard #2: fulfil is a no-op if the order is already paid,
         // and the ledger post dedupes on its operation key.
@@ -56,12 +74,12 @@ class PaymentWebhookController
         return response()->json(['data' => ['status' => 'paid', 'order' => $order->uuid]]);
     }
 
-    private function recordPayment(Order $order, array $data, string $status, array $raw): void
+    private function recordPayment(PaymentGateway $gateway, Order $order, array $data, string $status, array $raw): void
     {
         $payment = Payment::withoutGlobalScopes()
             ->where('order_id', $order->id)
-            ->where('gateway', 'paymob')
-            ->first() ?? new Payment(['order_id' => $order->id, 'gateway' => 'paymob']);
+            ->where('gateway', $gateway->name())
+            ->first() ?? new Payment(['order_id' => $order->id, 'gateway' => $gateway->name()]);
 
         $payment->tenant_id = $order->tenant_id;
         $payment->gateway_txn_id = $data['gateway_txn_id'];

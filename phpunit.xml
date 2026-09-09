@@ -51,6 +51,8 @@
         <env name="PAYMOB_HMAC_SECRET" value="test-hmac-secret"/>
         <env name="PAYMOB_PUBLIC_KEY" value="test-public-key"/>
         <env name="PAYMOB_INTEGRATION_IDS" value="1111"/>
+        <env name="FAWRY_MERCHANT_CODE" value="test-merchant"/>
+        <env name="FAWRY_SECURE_KEY" value="test-secure-key"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>

@@ -25,3 +25,10 @@ Schedule::command('notifications:announce-lessons')
 Schedule::command('notifications:subscription-reminders')
     ->dailyAt('09:00')
     ->withoutOverlapping();
+
+// Fawry references whose payment notification never arrived. A student pays cash
+// at an outlet and only the notification tells us — hourly, ask Fawry directly
+// about everything still pending, and close what has lapsed.
+Schedule::command('fawry:reconcile')
+    ->hourly()
+    ->withoutOverlapping();
