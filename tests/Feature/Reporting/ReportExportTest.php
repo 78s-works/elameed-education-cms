@@ -388,6 +388,60 @@ class ReportExportTest extends TestCase
         $this->assertGreaterThanOrEqual(5000, (int) $export->row_count);
     }
 
+    // ── The admin console's platform report (EDU-021) ─────────────────────────
+
+    public function test_the_console_exports_the_platform_report(): void
+    {
+        $admin = User::factory()->create(['is_platform_admin' => true]);
+        Sanctum::actingAs($admin);
+
+        $uuid = $this->postJson('/api/v1/admin/reports/exports', [
+            'format' => 'xlsx',
+            'filters' => ['period_days' => 30],
+        ])->assertStatus(202)->json('data.uuid');
+
+        $export = ReportExport::query()->where('uuid', $uuid)->firstOrFail();
+        // No academy owns it — a platform report spans all of them.
+        $this->assertNull($export->tenant_id);
+
+        $this->runJobFor($uuid);
+        $export->refresh();
+
+        $this->assertSame(ExportStatus::Ready, $export->status);
+        Storage::disk('local')->assertExists($export->file_path);
+
+        $this->get("/api/v1/admin/reports/exports/{$uuid}/download")->assertOk();
+    }
+
+    public function test_the_console_will_not_hand_back_an_academys_export(): void
+    {
+        Sanctum::actingAs($this->teacher);
+        $uuid = $this->withHeaders($this->headers())
+            ->postJson('/api/v1/teacher/reports/exports', ['report' => 'students', 'format' => 'csv'])
+            ->json('data.uuid');
+        $this->runJobFor($uuid);
+
+        $admin = User::factory()->create(['is_platform_admin' => true]);
+        Sanctum::actingAs($admin);
+
+        // A report FILE was built for whoever asked for it. The console can see
+        // any academy's figures through its own screens; handing over one
+        // academy's student roster as a file is a different thing.
+        $this->getJson("/api/v1/admin/reports/exports/{$uuid}")->assertStatus(404);
+        $this->getJson("/api/v1/admin/reports/exports/{$uuid}/download")->assertStatus(404);
+    }
+
+    public function test_the_console_route_refuses_an_academy_report(): void
+    {
+        $admin = User::factory()->create(['is_platform_admin' => true]);
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/v1/admin/reports/exports', [
+            'report' => 'sales',
+            'format' => 'xlsx',
+        ])->assertStatus(422);
+    }
+
     private function runJobFor(string $uuid): void
     {
         $export = ReportExport::query()->where('uuid', $uuid)->firstOrFail();

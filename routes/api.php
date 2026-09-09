@@ -85,6 +85,7 @@ use App\Modules\Notifications\Http\Controllers\Teacher\TeacherNotificationContro
 use App\Modules\PlatformAdmin\Http\Controllers\AdminReportController;
 use App\Modules\PlatformAdmin\Http\Controllers\AdminTenantController;
 use App\Modules\PlatformAdmin\Http\Controllers\ImpersonationController;
+use App\Modules\Reporting\Http\Controllers\Admin\AdminReportExportController;
 use App\Modules\Reporting\Http\Controllers\AuditLogController;
 use App\Modules\Reporting\Http\Controllers\StudentCoursesController;
 use App\Modules\Reporting\Http\Controllers\Teacher\ReportExportController;
@@ -168,6 +169,15 @@ Route::prefix('v1')->middleware(['central', 'auth:sanctum', 'admin'])->group(fun
 
     Route::get('/admin/reports/overview', [AdminReportController::class, 'overview']);
     Route::get('/admin/reports/platform-business', [AdminReportController::class, 'platformBusiness']);
+
+    // The platform-business report as a file (EDU-021). Same queued cycle as the
+    // teacher exports — request, poll, download — but these rows belong to no
+    // academy, so they live behind the console's own routes and the teacher
+    // routes can never return one.
+    Route::get('/admin/reports/exports', [AdminReportExportController::class, 'index']);
+    Route::post('/admin/reports/exports', [AdminReportExportController::class, 'store']);
+    Route::get('/admin/reports/exports/{reportExport:uuid}', [AdminReportExportController::class, 'show']);
+    Route::get('/admin/reports/exports/{reportExport:uuid}/download', [AdminReportExportController::class, 'download']);
     Route::get('/admin/audit-logs', [AuditLogController::class, 'admin']);
     Route::get('/admin/audit-logs/actions', [AuditLogController::class, 'actions']);
     Route::get('/admin/audit-logs/export', [AuditLogController::class, 'export']);
