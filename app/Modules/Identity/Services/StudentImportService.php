@@ -3,8 +3,8 @@
 namespace App\Modules\Identity\Services;
 
 use App\Models\User;
-use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Catalog\Models\AcademicYear;
+use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\StudentProfile;
 use App\Modules\Identity\Models\TenantUser;
 use DateTimeInterface;
@@ -80,8 +80,8 @@ class StudentImportService
     private function readerFor(string $extension): ReaderInterface
     {
         return match (strtolower($extension)) {
-            'csv', 'txt' => new CsvReader(),
-            'xlsx' => new XlsxReader(),
+            'csv', 'txt' => new CsvReader,
+            'xlsx' => new XlsxReader,
             default => throw new \InvalidArgumentException("Unsupported import type: {$extension}"),
         };
     }

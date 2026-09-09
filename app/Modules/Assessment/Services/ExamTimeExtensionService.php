@@ -2,9 +2,9 @@
 
 namespace App\Modules\Assessment\Services;
 
+use App\Models\User;
 use App\Modules\Assessment\Models\Exam;
 use App\Modules\Assessment\Models\ExamTimeExtension;
-use App\Models\User;
 use App\Modules\Catalog\Enums\ExtensionStatus;
 use App\Modules\Identity\Enums\Permission;
 use App\Modules\Notifications\Services\Engine\NotificationEngineService;

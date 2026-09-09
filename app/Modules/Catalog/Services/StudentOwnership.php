@@ -2,6 +2,7 @@
 
 namespace App\Modules\Catalog\Services;
 
+use App\Modules\Catalog\Http\Controllers\StudentLibraryController;
 use App\Modules\Commerce\Models\Enrollment;
 
 /**
@@ -12,7 +13,7 @@ use App\Modules\Commerce\Models\Enrollment;
  * Access is always granted per-lesson (enrollment `lesson_id`); a package buy fans
  * out into per-lesson rows carrying the source `package_id` as provenance — so
  * "owns package X" = the student has an access-granting row with `package_id = X`
- * (mirrors {@see \App\Modules\Catalog\Http\Controllers\StudentLibraryController}).
+ * (mirrors {@see StudentLibraryController}).
  *
  * Registered as a singleton (CatalogServiceProvider) so the two id-sets are read
  * ONCE per request and reused across every resource row — no N+1 over a 20-item

@@ -14,7 +14,7 @@ class GradingService
 {
     /**
      * @param  array<int|string, mixed>  $submitted  question_id => answer
-     * @param  array<int|string, mixed>  $existing   prior attempt answers (holds files uploaded before submit)
+     * @param  array<int|string, mixed>  $existing  prior attempt answers (holds files uploaded before submit)
      * @return array{answers: array, score: int, max_score: int, needs_manual: bool}
      */
     public function gradeSubmission(Exam $exam, array $submitted, array $existing = []): array

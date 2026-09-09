@@ -3,10 +3,10 @@
 namespace App\Modules\Identity\Services;
 
 use App\Modules\Identity\Enums\Permission as PermissionEnum;
+use App\Modules\Identity\Support\RbacGuard;
 use App\Support\Exceptions\DomainException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use App\Modules\Identity\Support\RbacGuard;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;

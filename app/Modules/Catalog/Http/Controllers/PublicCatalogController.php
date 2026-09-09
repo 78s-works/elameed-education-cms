@@ -15,6 +15,7 @@ use App\Modules\Catalog\Services\StudentPartVisibility;
 use App\Modules\Commerce\Models\Enrollment;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
@@ -62,7 +63,7 @@ class PublicCatalogController
      * registration grade picker. Tenant-scoped (BelongsToTenant); no auth, no
      * year context needed (this is where a student CHOOSES their year).
      */
-    public function academicYears(): \Illuminate\Http\JsonResponse
+    public function academicYears(): JsonResponse
     {
         $years = AcademicYear::query()
             ->orderBy('sort_order')

@@ -16,7 +16,6 @@ use App\Modules\Notifications\Services\Resolvers\NotificationTemplateResolver;
 use App\Modules\Tenancy\Services\TenantContext;
 use App\Support\Audit\AuditLogger;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 
 /**

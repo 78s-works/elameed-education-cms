@@ -4,8 +4,8 @@ namespace Tests\Feature\Identity;
 
 use App\Models\User;
 use App\Modules\Billing\Models\SubscriptionPackage;
-use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Billing\Services\SubscriptionService;
+use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\RoleTemplateKey;
 use App\Modules\Identity\Enums\TenantUserRole;
@@ -25,8 +25,8 @@ use Tests\TestCase;
  */
 class AssistantManagementTest extends TestCase
 {
-    use RefreshDatabase;
     use GrantsTenantRoles;
+    use RefreshDatabase;
 
     private Tenant $tenant;
 

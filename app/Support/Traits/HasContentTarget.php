@@ -4,12 +4,13 @@ namespace App\Support\Traits;
 
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
+use App\Modules\Catalog\Models\PackageItem;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
  * A model that points at EITHER a standalone lesson OR a recursive package — the
  * two content anchors that replaced the retired `courses` entity (VD §7). Mirrors
- * {@see \App\Modules\Catalog\Models\PackageItem}'s domain-token convention:
+ * {@see PackageItem}'s domain-token convention:
  * `target_type` holds the token 'lesson'|'package' (NOT a class name), `target_id`
  * the target's internal id. The pair is nullable; a null target means "no specific
  * content" (e.g. a cart-wide coupon) — required-ness is enforced per consumer.

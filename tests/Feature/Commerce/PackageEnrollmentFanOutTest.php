@@ -14,6 +14,7 @@ use App\Modules\Commerce\Services\EnrollmentService;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 
@@ -87,7 +88,7 @@ class PackageEnrollmentFanOutTest extends TestCase
             ->count();
     }
 
-    private function lessonEnrollments(): \Illuminate\Support\Collection
+    private function lessonEnrollments(): Collection
     {
         return Enrollment::withoutGlobalScopes()
             ->where('tenant_id', $this->tenant->id)

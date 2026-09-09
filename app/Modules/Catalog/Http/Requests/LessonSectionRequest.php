@@ -8,6 +8,7 @@ use App\Modules\Catalog\Enums\GateRule;
 use App\Modules\Catalog\Enums\LessonSectionType;
 use App\Modules\Catalog\Enums\PdfKind;
 use App\Modules\Catalog\Models\Lesson;
+use App\Support\Youtube;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -51,7 +52,7 @@ class LessonSectionRequest extends FormRequest
             'media_asset_id' => ['nullable', 'integer', 'min:1', 'required_if:type,pdf'],
             'pdf_kind' => ['nullable', Rule::enum(PdfKind::class), 'required_if:type,pdf'],
             'youtube_url' => ['nullable', 'string', 'max:2048', function ($attr, $value, $fail): void {
-                if ($value !== null && $value !== '' && ! \App\Support\Youtube::isValid($value)) {
+                if ($value !== null && $value !== '' && ! Youtube::isValid($value)) {
                     $fail('The :attribute must be a valid YouTube link.');
                 }
             }],

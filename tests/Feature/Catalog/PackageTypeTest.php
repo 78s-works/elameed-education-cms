@@ -11,6 +11,7 @@ use App\Modules\Tenancy\Enums\TenantStatus;
 use App\Modules\Tenancy\Models\Tenant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -75,7 +76,7 @@ class PackageTypeTest extends TestCase
             ->assertStatus(201)->json('data');
     }
 
-    private function makePackage(?int $typeId = null, ?AcademicYear $year = null): \Illuminate\Testing\TestResponse
+    private function makePackage(?int $typeId = null, ?AcademicYear $year = null): TestResponse
     {
         $payload = ['name' => 'Package', 'access_mode' => 'both'];
         if ($typeId !== null) {

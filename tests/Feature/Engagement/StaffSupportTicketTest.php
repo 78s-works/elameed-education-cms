@@ -4,7 +4,6 @@ namespace Tests\Feature\Engagement;
 
 use App\Models\User;
 use App\Modules\Engagement\Models\SupportTicket;
-use App\Modules\Engagement\Models\TicketReply;
 use App\Modules\Identity\Enums\MembershipStatus;
 use App\Modules\Identity\Enums\TenantUserRole;
 use App\Modules\Identity\Models\TenantUser;
@@ -26,8 +25,8 @@ use Tests\TestCase;
  */
 class StaffSupportTicketTest extends TestCase
 {
-    use RefreshDatabase;
     use GrantsTenantRoles;
+    use RefreshDatabase;
 
     private Tenant $tenant;
 

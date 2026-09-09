@@ -13,6 +13,7 @@ use App\Modules\Tenancy\Models\Tenant;
 use App\Modules\Tenancy\Services\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -62,7 +63,7 @@ class RedeemCodeTest extends TestCase
         return $code;
     }
 
-    private function redeem(string $code): \Illuminate\Testing\TestResponse
+    private function redeem(string $code): TestResponse
     {
         return $this->withHeaders(['X-Tenant' => $this->tenant->slug])
             ->postJson('/api/v1/codes/redeem', ['code' => $code]);

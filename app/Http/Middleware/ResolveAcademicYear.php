@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Services\AcademicYearContext;
+use App\Modules\Tenancy\Services\TenantContext;
 use App\Support\Exceptions\DomainException;
 use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -101,7 +102,7 @@ class ResolveAcademicYear
     private function assertYearIsInScope(Request $request, int $yearId): void
     {
         $user = $request->user();
-        $tenant = app(\App\Modules\Tenancy\Services\TenantContext::class)->tenant();
+        $tenant = app(TenantContext::class)->tenant();
 
         if ($user === null || $tenant === null) {
             return;

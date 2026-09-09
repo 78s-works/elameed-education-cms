@@ -3,6 +3,7 @@
 namespace App\Modules\Commerce\Models;
 
 use App\Models\User;
+use App\Modules\Assessment\Models\Exam;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
 use App\Modules\Commerce\Enums\EnrollmentSource;
@@ -70,7 +71,7 @@ class Enrollment extends Model
 
     public function exam(): BelongsTo
     {
-        return $this->belongsTo(\App\Modules\Assessment\Models\Exam::class);
+        return $this->belongsTo(Exam::class);
     }
 
     /** Active, started, and not past its access window. */

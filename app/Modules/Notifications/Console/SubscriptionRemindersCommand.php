@@ -5,6 +5,7 @@ namespace App\Modules\Notifications\Console;
 use App\Modules\Notifications\Services\Engine\NotificationEngineService;
 use App\Modules\Notifications\Support\RunsInTenantContext;
 use Illuminate\Console\Command;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -58,7 +59,7 @@ class SubscriptionRemindersCommand extends Command
     }
 
     /**
-     * @param  \Illuminate\Support\Collection<int, object>  $rows
+     * @param  Collection<int, object>  $rows
      */
     private function fanOut(NotificationEngineService $engine, $rows, string $key): int
     {

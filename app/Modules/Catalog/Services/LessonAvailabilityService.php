@@ -2,6 +2,7 @@
 
 namespace App\Modules\Catalog\Services;
 
+use App\Models\User;
 use App\Modules\Catalog\Enums\ExtensionStatus;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonAccessWindow;
@@ -9,7 +10,6 @@ use App\Modules\Catalog\Models\LessonExtensionRequest;
 use App\Modules\Identity\Enums\Permission;
 use App\Modules\Notifications\Services\Engine\NotificationEngineService;
 use App\Modules\Notifications\Support\StaffRecipients;
-use App\Models\User;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /**

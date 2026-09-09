@@ -2,6 +2,7 @@
 
 namespace App\Modules\Catalog\Services;
 
+use App\Modules\Catalog\Events\LessonCompleted;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\LessonAccessWindow;
 use App\Modules\Catalog\Models\Package;
@@ -17,7 +18,7 @@ use Illuminate\Support\Collection;
  *   • on purchase — only the FIRST lesson's window opens (see {@see openFirst});
  *   • thereafter  — the next lesson's window opens ONLY when the previous lesson is
  *     COMPLETED (watched to completion → `lesson_progress.completed_at`, VD-D3:
- *     expiry alone never advances), driven by the {@see \App\Modules\Catalog\Events\LessonCompleted}
+ *     expiry alone never advances), driven by the {@see LessonCompleted}
  *     event ({@see advanceAfter}).
  *
  * Each opened lesson gets its OWN independent window (7-day default) starting from

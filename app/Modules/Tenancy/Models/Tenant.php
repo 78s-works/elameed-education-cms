@@ -4,6 +4,7 @@ namespace App\Modules\Tenancy\Models;
 
 use App\Models\User;
 use App\Modules\Billing\Models\TenantSubscription;
+use App\Modules\Billing\Services\SubscriptionService;
 use App\Modules\Tenancy\Enums\TenantStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -60,7 +61,7 @@ class Tenant extends Model
     /**
      * Every plan this academy has ever been on. Read by the platform console to
      * filter academies by subscription state; the CURRENT one is resolved by
-     * {@see \App\Modules\Billing\Services\SubscriptionService::current()}.
+     * {@see SubscriptionService::current()}.
      */
     public function subscriptions(): HasMany
     {

@@ -28,7 +28,7 @@ class TenantTeamResolver implements PermissionsTeamResolver
     /** The team the last lookup answered for — see clearStaleRelations(). */
     protected int|string|null $lastResolved = null;
 
-    /** @param  \Illuminate\Database\Eloquent\Model|int|string|null  $id */
+    /** @param  Model|int|string|null  $id */
     public function setPermissionsTeamId($id): void
     {
         if ($id instanceof Model) {
