@@ -51,8 +51,13 @@ class RebaseTenantSubdomainsCommand extends Command
         foreach ($rows as $row) {
             $host = HostNormalizer::normalize((string) $row->host);
 
-            if ($host === '' || Str::endsWith($host, '.'.$to)) {
-                continue; // already on the target base domain
+            // "Already on target" means a SINGLE label under the base domain,
+            // which is the only shape that resolves. A plain suffix test skips
+            // "<label>.back.{$to}" as done — the retired base can itself be a
+            // subdomain of the new one (EDU-OPS-036), and those rows resolve
+            // nowhere while the command reports nothing to do.
+            if ($host === '' || HostNormalizer::subdomainLabel($host, $to) !== null) {
+                continue;
             }
 
             // The label is everything before the old base domain. With --from we
