@@ -32,3 +32,12 @@ Schedule::command('notifications:subscription-reminders')
 Schedule::command('fawry:reconcile')
     ->hourly()
     ->withoutOverlapping();
+
+// Report files past their retention window (EDU-021). A report is a snapshot:
+// keeping it forever means stale revenue figures circulating as current, and a
+// growing pile of student names and phone numbers on disk with no reason to
+// still be there. The request row survives as `expired` so a teacher is told
+// the file is gone rather than shown a list that pretends it never existed.
+Schedule::command('reports:purge-exports')
+    ->dailyAt('03:20')
+    ->withoutOverlapping();

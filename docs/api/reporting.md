@@ -327,6 +327,64 @@ transaction-level discount / refund is attributed to the first line. **Amounts a
 in pounds here** — the only place minor units are converted, because a human reads
 the file.
 
+### Teacher · Report exports (EDU-021)
+
+Queued exports of the reports above, for the formats a table cannot give: PDF of
+the ledger, and XLSX/PDF of the students and overview reports. **Auth:**
+permission `reports.view` on every route.
+
+Three steps rather than one download, because the work does not fit in a
+request: a ledger over a year of orders takes minutes and an inline download
+times out at the web server. `POST` queues a job on the `exports` queue (see
+`docs/queues.md`), the client polls the row, then downloads. The
+`GET /v1/teacher/sales/export` above is unchanged and stays synchronous — it is
+small, and it is what the ledger screen already offers.
+
+Files are private: they carry student names, phone numbers and revenue, so they
+are streamed through the download route (which re-checks the academy) and never
+served from a storage URL. They are deleted after `reports.retention_days`
+(default 7) by `reports:purge-exports`; the request row survives as `expired`, so
+a teacher looking for last week's ledger is told the file is gone rather than
+shown a list that pretends the export never happened.
+
+#### `POST /v1/teacher/reports/exports`
+
+| Param | Type | Notes |
+|---|---|---|
+| `report` | `sales`\|`students`\|`overview` | Required. `platform` is admin-only and rejected here (422). |
+| `format` | `csv`\|`xlsx`\|`pdf` | Required. Every report supports all three. |
+| `locale` | `ar`\|`en` | Defaults to the caller's locale. Drives PDF direction and column headers. |
+| `filters` | object, optional | Passed to the report and stored on the row, so a file found later still says what it covers: `from`, `to`, `status`, `method`, `q`. |
+
+`filters.academic_year_id` is **prohibited** — the year comes from the
+`X-Academic-Year` header, resolved at request time and stored with the export,
+because the job runs in a worker with no request context.
+
+Returns **202** with the row. `status` is one of `queued`, `processing`, `ready`,
+`failed`, `expired`; `downloadable` is true only when the file is there, so a
+client can render the link without risking a 404.
+
+#### `GET /v1/teacher/reports/exports`
+
+**Purpose:** The caller's own exports, newest first (30). Scoped to the academy.
+
+#### `GET /v1/teacher/reports/exports/{uuid}`
+
+**Purpose:** Poll one export. Carries `row_count`, `file_size`,
+`failure_reason` (trimmed to 500 chars — a stack trace in a UI field helps
+nobody) and `expires_at`.
+
+#### `GET /v1/teacher/reports/exports/{uuid}/download`
+
+**Purpose:** Stream the file. `Cache-Control: no-store`. 404 when the export is
+not ready, has expired, or the file is no longer on disk — the row can say
+`ready` while the file was swept by hand, so the disk is the last word.
+
+**Arabic in PDF:** report PDFs render through mPDF, not the dompdf used for
+invoices. dompdf does no complex-text shaping and no bidi, so Arabic comes out
+as isolated letters in visual reverse — unreadable, and no font choice fixes it.
+mPDF shapes and lays out RTL natively.
+
 ### Teacher · Refunds (M17)
 
 #### `POST /v1/teacher/orders/{order:uuid}/refunds`
