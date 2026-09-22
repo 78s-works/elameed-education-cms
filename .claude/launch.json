@@ -6,6 +6,13 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "D:/work/elameed-web", "run", "dev"],
       "port": 5173
+    },
+    {
+      "name": "elameed-api",
+      "runtimeExecutable": "php",
+      "runtimeArgs": ["artisan", "serve", "--host=127.0.0.1", "--port=8010"],
+      "port": 8010,
+      "autoPort": false
     }
   ]
 }

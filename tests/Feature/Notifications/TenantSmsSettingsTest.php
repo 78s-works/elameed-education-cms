@@ -66,12 +66,14 @@ class TenantSmsSettingsTest extends TestCase
 
         $this->withHeaders($this->h)->putJson('/api/v1/teacher/sms-settings', [
             'enabled' => true,
+            'provider' => 'connekio',
             'sender' => 'Tammam',
             'username' => 'we-user',
             'password' => 'we-secret',
             'account_id' => '987654321',
         ])->assertOk()
             ->assertJsonPath('data.enabled', true)
+            ->assertJsonPath('data.provider', 'connekio')
             ->assertJsonPath('data.sender', 'Tammam')
             ->assertJsonPath('data.has_password', true)
             ->assertJsonMissingPath('data.password'); // write-only
@@ -94,9 +96,61 @@ class TenantSmsSettingsTest extends TestCase
 
         $this->withHeaders($this->h)->putJson('/api/v1/teacher/sms-settings', [
             'enabled' => true,
+            'provider' => 'connekio',
             'sender' => 'Tammam',
             // username / password / account_id missing
         ])->assertStatus(422);
+    }
+
+    public function test_teacher_stores_zadx_keys_and_enables_sms(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $this->withHeaders($this->h)->putJson('/api/v1/teacher/sms-settings', [
+            'enabled' => true,
+            'provider' => 'zadx',
+            'api_key' => 'pk_live',
+            'api_secret' => 'sk_live',
+            'sender_id' => 'ZADX',
+        ])->assertOk()
+            ->assertJsonPath('data.enabled', true)
+            ->assertJsonPath('data.provider', 'zadx')
+            // The public key IS returned: the teacher has to see which ZADX app
+            // his academy is wired to. The secret never is.
+            ->assertJsonPath('data.api_key', 'pk_live')
+            ->assertJsonPath('data.has_secret', true)
+            ->assertJsonMissingPath('data.api_secret');
+
+        $row = NotificationChannelSetting::withoutGlobalScopes()->firstOrFail();
+        $this->assertStringNotContainsString('sk_live', $row->getRawOriginal('config'));
+        $this->assertSame('sk_live', $row->config['api_secret']);
+    }
+
+    public function test_enabling_zadx_without_a_secret_is_rejected(): void
+    {
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $this->withHeaders($this->h)->putJson('/api/v1/teacher/sms-settings', [
+            'enabled' => true,
+            'provider' => 'zadx',
+            'api_key' => 'pk_live',
+            // api_secret missing
+        ])->assertStatus(422);
+    }
+
+    public function test_a_blank_zadx_sender_id_is_allowed_because_the_app_has_a_default(): void
+    {
+        // ZADX rejects a sender id that is not assigned to the app (403
+        // sender_id_not_allowed), so an academy that does not know its own must
+        // be able to leave it empty rather than guess.
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $this->withHeaders($this->h)->putJson('/api/v1/teacher/sms-settings', [
+            'enabled' => true,
+            'provider' => 'zadx',
+            'api_key' => 'pk_live',
+            'api_secret' => 'sk_live',
+        ])->assertOk()->assertJsonPath('data.enabled', true);
     }
 
     public function test_password_is_kept_when_omitted_on_a_later_edit(): void
@@ -104,14 +158,18 @@ class TenantSmsSettingsTest extends TestCase
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
 
         $this->withHeaders($this->h)->putJson('/api/v1/teacher/sms-settings', [
-            'enabled' => true, 'sender' => 'Tammam', 'username' => 'we-user',
+            'enabled' => true, 'provider' => 'connekio', 'sender' => 'Tammam', 'username' => 'we-user',
             'password' => 'we-secret', 'account_id' => '987654321',
         ])->assertOk();
 
-        // Edit the sender only — no password sent — should still be enabled.
+        // Edit the sender only — no password AND no provider sent. An academy
+        // already on WE must not be silently re-read as a ZADX academy and told
+        // its complete credentials are incomplete.
         $this->withHeaders($this->h)->putJson('/api/v1/teacher/sms-settings', [
             'enabled' => true, 'sender' => 'Tammam2',
-        ])->assertOk()->assertJsonPath('data.has_password', true);
+        ])->assertOk()
+            ->assertJsonPath('data.provider', 'connekio')
+            ->assertJsonPath('data.has_password', true);
 
         $row = NotificationChannelSetting::withoutGlobalScopes()->firstOrFail();
         $this->assertSame('we-secret', $row->config['password']);
