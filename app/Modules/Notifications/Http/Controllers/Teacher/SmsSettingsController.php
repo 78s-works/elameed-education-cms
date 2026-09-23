@@ -54,10 +54,16 @@ class SmsSettingsController
         $provider = $data['provider'] ?? $this->provider($setting);
         $config['provider'] = $provider;
 
-        // Merge submitted fields over the stored ones; a secret is only replaced
-        // when a non-empty one is sent.
+        // Merge submitted fields over the stored ones. A field the request omits
+        // entirely keeps its stored value; one that IS sent overwrites, even to
+        // null — Laravel's ConvertEmptyStringsToNull turns a cleared input into
+        // null before it reaches here, and an optional field (e.g. ZADX
+        // `sender_id`, meant to be left blank to use the app's own default) must
+        // be clearable back to empty, not stuck at whatever was saved once. Only
+        // the secret is different: it is only replaced when a non-empty one is
+        // sent, handled separately below.
         foreach (self::PUBLIC_FIELDS[$provider] as $key) {
-            if (array_key_exists($key, $data) && $data[$key] !== null) {
+            if (array_key_exists($key, $data)) {
                 $config[$key] = $data[$key];
             }
         }
