@@ -3,7 +3,7 @@
 namespace App\Modules\Identity\Jobs;
 
 use App\Modules\Identity\Enums\OtpPurpose;
-use App\Modules\Notifications\Contracts\SmsSender;
+use App\Modules\Notifications\Contracts\OtpSender;
 use App\Modules\Notifications\Services\Engine\TemplatedSmsNotifier;
 use App\Modules\Notifications\Support\RunsInTenantContext;
 use App\Support\Queue\QueueNames;
@@ -21,6 +21,12 @@ use Illuminate\Foundation\Queue\Queueable;
  * catalog entry, which is what lets an academy send the code in Arabic or
  * reword it; the hard-coded English line is only the fallback for an academy
  * whose copy was removed.
+ *
+ * Both the code and that rendered wording go to the OtpSender, because gateways
+ * disagree about which one they accept — ZADX renders its own approved template
+ * from the digits and ignores the wording, WE/Connekio and the log driver take
+ * the finished string. Rendering still happens here so the choice of gateway
+ * never changes what an academy sees in its notification settings.
  */
 class SendOtpJob implements ShouldQueue
 {
@@ -40,18 +46,18 @@ class SendOtpJob implements ShouldQueue
         $this->onQueue(QueueNames::Otp);
     }
 
-    public function handle(SmsSender $sms, TemplatedSmsNotifier $notifier): void
+    public function handle(OtpSender $otp, TemplatedSmsNotifier $notifier): void
     {
         if ($this->channel !== 'sms') {
             return; // email OTP arrives with the email channel work
         }
 
-        $this->inTenantContext($this->tenantId, function () use ($sms, $notifier): void {
+        $this->inTenantContext($this->tenantId, function () use ($otp, $notifier): void {
             $message = $this->tenantId === null
                 ? null
                 : $notifier->render('account.otp.requested', $this->tenantId, ['otp' => $this->code]);
 
-            $sms->send($this->identifier, $message ?? "Elameed code: {$this->code}");
+            $otp->send($this->identifier, $this->code, $message);
         });
     }
 }
