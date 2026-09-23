@@ -153,6 +153,35 @@ class TenantSmsSettingsTest extends TestCase
         ])->assertOk()->assertJsonPath('data.enabled', true);
     }
 
+    public function test_a_previously_set_sender_id_can_be_cleared_back_to_blank(): void
+    {
+        // Reproduces a live ZADX 403 (sender_id_not_allowed): once a wrong
+        // sender_id is saved, sending an empty string on a later edit must
+        // actually clear it back to "use the app's default" rather than
+        // silently keeping the rejected value forever.
+        Sanctum::actingAs($this->member(TenantUserRole::Teacher));
+
+        $this->withHeaders($this->h)->putJson('/api/v1/teacher/sms-settings', [
+            'enabled' => true,
+            'provider' => 'zadx',
+            'api_key' => 'pk_live',
+            'api_secret' => 'sk_live',
+            'sender_id' => 'zadx',
+        ])->assertOk()->assertJsonPath('data.sender_id', 'zadx');
+
+        $this->withHeaders($this->h)->putJson('/api/v1/teacher/sms-settings', [
+            'enabled' => true,
+            'provider' => 'zadx',
+            'api_key' => 'pk_live',
+            'sender_id' => '',
+        ])->assertOk()->assertJsonPath('data.sender_id', null);
+
+        $row = NotificationChannelSetting::withoutGlobalScopes()->firstOrFail();
+        $this->assertNull($row->config['sender_id']);
+        // The secret survives even though this edit didn't resend it.
+        $this->assertSame('sk_live', $row->config['api_secret']);
+    }
+
     public function test_password_is_kept_when_omitted_on_a_later_edit(): void
     {
         Sanctum::actingAs($this->member(TenantUserRole::Teacher));
