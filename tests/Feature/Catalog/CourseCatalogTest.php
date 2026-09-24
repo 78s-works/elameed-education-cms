@@ -378,4 +378,90 @@ class CourseCatalogTest extends TestCase
             ->assertJsonPath('data.0.name', 'Dated')
             ->assertJsonStructure(['data' => [['created_at']]]);
     }
+
+    // ── EDU-BE-055: the public list never carries a lesson's video link ────────
+
+    private const PAID_YOUTUBE = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+
+    private function makePaidYoutubeLesson(Tenant $tenant, array $attrs = []): Lesson
+    {
+        return $this->makeLesson($tenant, array_merge([
+            'title' => 'Paid YouTube',
+            'is_purchasable' => true,
+            'is_free_preview' => false,
+            'price_minor' => 5000,
+            'visibility' => ContentVisibility::Visible->value,
+            'active_video_source' => 'youtube',
+            'youtube_url' => self::PAID_YOUTUBE,
+        ], $attrs));
+    }
+
+    public function test_anonymous_catalogue_lessons_omit_the_youtube_url_key(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $this->makePaidYoutubeLesson($tenant);
+
+        $response = $this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson('/api/v1/catalogue?view=lessons')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            // The rest of the card is intact — the student app still renders it.
+            ->assertJsonPath('data.0.name', 'Paid YouTube')
+            ->assertJsonPath('data.0.price_minor', 5000)
+            ->assertJsonPath('data.0.has_video', true)
+            ->assertJsonPath('data.0.owned', false)
+            ->assertJsonStructure(['data' => [['access_terms', 'active_video_source']]]);
+
+        foreach ($response->json('data') as $row) {
+            $this->assertArrayNotHasKey('youtube_url', $row); // absent, not just null
+        }
+        $this->assertStringNotContainsString('dQw4w9WgXcQ', $response->getContent());
+    }
+
+    public function test_signed_in_student_catalogue_lessons_omit_the_youtube_url_key(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        $year = $this->makeYear($tenant);
+        $this->makePaidYoutubeLesson($tenant, ['academic_year_id' => $year->id]);
+
+        $student = User::factory()->create();
+        TenantUser::create([
+            'tenant_id' => $tenant->id,
+            'user_id' => $student->id,
+            'role' => TenantUserRole::Student->value,
+            'status' => MembershipStatus::Active->value,
+            'joined_at' => now(),
+        ]);
+        $profile = new StudentProfile(['study_mode' => 'both', 'academic_year_id' => $year->id]);
+        $profile->tenant_id = $tenant->id;
+        $profile->user_id = $student->id;
+        $profile->save();
+
+        Sanctum::actingAs($student);
+
+        $response = $this->withHeaders(['X-Tenant' => 'demo'])
+            ->getJson('/api/v1/catalogue?view=lessons')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
+
+        $this->assertArrayNotHasKey('youtube_url', $response->json('data.0'));
+        $this->assertStringNotContainsString('dQw4w9WgXcQ', $response->getContent());
+    }
+
+    public function test_teacher_lesson_endpoints_still_return_the_youtube_url(): void
+    {
+        $tenant = $this->makeTenant('demo');
+        Sanctum::actingAs($this->makeTeacher($tenant));
+        $lesson = $this->makePaidYoutubeLesson($tenant);
+        $year = AcademicYear::where('tenant_id', $tenant->id)->firstOrFail();
+        $h = ['X-Tenant' => 'demo', 'X-Academic-Year' => $year->uuid];
+
+        $this->withHeaders($h)->getJson("/api/v1/teacher/lessons/{$lesson->id}")
+            ->assertOk()
+            ->assertJsonPath('data.youtube_url', self::PAID_YOUTUBE);
+
+        $this->withHeaders($h)->getJson('/api/v1/teacher/lessons')
+            ->assertOk()
+            ->assertJsonPath('data.0.youtube_url', self::PAID_YOUTUBE);
+    }
 }

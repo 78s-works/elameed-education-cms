@@ -3,9 +3,9 @@
 namespace App\Modules\Catalog\Http\Controllers;
 
 use App\Modules\Catalog\Enums\AccessMode;
-use App\Modules\Catalog\Http\Resources\LessonResource;
 use App\Modules\Catalog\Http\Resources\PackageResource;
 use App\Modules\Catalog\Http\Resources\PackageTypeResource;
+use App\Modules\Catalog\Http\Resources\PublicLessonResource;
 use App\Modules\Catalog\Models\AcademicYear;
 use App\Modules\Catalog\Models\Lesson;
 use App\Modules\Catalog\Models\Package;
@@ -93,7 +93,8 @@ class PublicCatalogController
             ->orderBy('id')
             ->paginate(20);
 
-        return LessonResource::collection($lessons);
+        // Public projection: no video link on this no-auth route (EDU-BE-055).
+        return PublicLessonResource::collection($lessons);
     }
 
     /** view=packages — purchasable recursive content packages (R8 modules/bundles). */
