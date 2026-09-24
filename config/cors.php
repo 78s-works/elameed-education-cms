@@ -65,7 +65,10 @@ return [
 
     'exposed_headers' => [],
 
-    'max_age' => 0,
+    // Let browsers cache the preflight: every SPA call is cross-origin with an
+    // X-Tenant header, so max_age 0 cost an OPTIONS round-trip per request.
+    // Browsers clamp this (Chrome to 2h, Firefox to 24h).
+    'max_age' => 86400,
 
     // Bearer tokens, not cookies → no credentials. (If you switch to Sanctum
     // SPA cookie mode, set this true, drop any '*' origin, and configure
